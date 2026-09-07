@@ -11,6 +11,23 @@
   `kana_in_voice` に挙げて **TTS に渡す文の中で仮名に置き換える**。全部を仮名にしない理由: 辞書に無い仮名の並びは
   抑揚が崩れる（probe で「としかね」が引用符つきに聞こえた）。**覆る条件**: hear で捕まらなかった誤読をオーナーが耳で
   見つけたら、`yomi` の語を全部 置換する形へ（`FORCE_ALL_KANA`）。
+
+**もう1つの口（SSML `<sub alias>`）も測ってあります。使っていません**
+（2026-09-07 14:3x・optimizer・Opus が同じ周に別々に撃った ＝ 上の hourly の実測と同じ結論に別の道で着いた）:
+
+    ja-JP-Neural2-D   plain 44d9ecbea9 / customPronunciations 44d9ecbea9（同じ音 ＝ 無視）
+                      plain 44d9ecbea9 / SSML <sub alias>    bde60721b0（効く）
+    ja-JP-Chirp3-HD   plain 0fe1ca3a58 / customPronunciations 98bb59a423（効く）
+
+`<sub>` は **customPronunciations より強い**: Chirp3 が無視した語（`script.YOMI_IGNORED` の 年金・額・市場・十分）を
+5/5 とも置き換えた（わざと「年金 → としかね」と読ませて whisper で聞いた。Chirp3 は同じ指示を無視して「ねんきん」と読む）。
+送り仮名つきの語（「長生き」）も `<sub>` は受ける（customPronunciations は phrase ごと拒む）。
+
+**それでも上の `voice_text`（文中で仮名に置換）を残したのは、`<sub>` に勝ち目が無いからです** ——
+`<sub alias="かな">漢字</alias>` は **alias のほうを読む** ので、出てくる音は仮名に置き換えたのと同じで、
+「辞書に無い仮名の並びは抑揚が崩れる」も**同じだけ起きます**。SSML の逃がし（`&` `<`）とキャッシュの鍵が増えるだけ。
+**＝ `<sub>` へ「強いから」と乗り換えないこと。強さの差は `FORCE_ALL_KANA` で同じだけ出せます。**
+**覆る条件**: 抑揚を保ったまま読みだけ変える口が要るなら、`<sub>` ではなく SSML の `<phoneme>`（アクセント指定つき）を測ること。
 """
 from __future__ import annotations
 

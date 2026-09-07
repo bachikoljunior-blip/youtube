@@ -102,6 +102,7 @@
 {"at": "2026-09-05T20:31:31+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 2, "n_real": 5, "done": false}
 {"at": "2026-09-05T20:34:36+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 90.6, "image": true, "chars": 479}
 {"at": "2026-09-05T20:35:26+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
+{"at": "2026-09-06T02:07:23+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 92.8, "image": true, "chars": 478}
 {"at": "2026-09-06T02:08:16+09:00", "id": "uhR8msMW9k4", "event": "unscheduled", "was_at": "2026-09-06T06:00+09:00", "reason": "旧 ahead_sweep.py（next_round.py の kick）が 09/06 00:01 JST に置いた旧作りの本。1日1本・きょうの枠は studio の本"}
 {"at": "2026-09-06T02:08:17+09:00", "id": "hKCwPvuqviw", "event": "unscheduled", "was_at": "2026-09-06T08:00+09:00", "reason": "旧 ahead_sweep.py（next_round.py の kick）が 09/06 00:01 JST に置いた旧作りの本。1日1本・きょうの枠は studio の本"}
 {"at": "2026-09-06T02:09:00+09:00", "id": "fMlY_uzHOMw", "event": "measured", "views": 0, "likes": 0, "age_h": 9.1, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受"}
@@ -129,9 +130,7 @@
 {"at": "2026-09-06T02:09:00+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 160.1, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-06T02:09:00+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 160.6, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-06T02:09:00+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 161.1, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
-{"at": "2026-09-06T02:07:23+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 92.8, "image": true, "chars": 478}
 {"at": "2026-09-06T02:09:03+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
-{"at": "2026-09-06T10:00+09:00", "id": "2026-09-06-zaishoku-62man", "event": "scheduled", "video_id": "s3hb9Tl1jLw", "replaced": null, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Shorts"}
 {"at": "2026-09-06T02:10:11+09:00", "id": "2026-09-06-zaishoku-62man", "event": "cold_read", "takeaway": "2026年4月から、65歳以上で働きながら年金をもらう人が、給料と厚生年金の合計が月62万円を超えた場合、超過分の半分だけ年金が減額される仕組みに変わった。", "unclear": ["国民年金と厚生年金の具体的な金額の違い", "「土台」「上乗せ」という表現が実際にいくらなのか", "ボーナスを12で割る理由", "「止まった分はあとでまとめてもらえない」の具体的な意味", "「働いて払った保険料の分は毎年10月に年金に足される」という仕組みの詳細", "年金の通知書がいつ何月に届くのか正確なタイミング"]}
 {"at": "2026-09-06T02:15:56+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金のもらい始めを65歳から70歳に遅延させると月額が42%増えて生涯続くが、その増加分で遅延期間の損失を取り戻すには81歳11か月まで生きる必要があり、それ以上長生きすれば得になる。", "unclear": ["ねんきん定期便とは何か", "なぜ増えた年金には税金と保険料が多くかかるのか、その仕組み", "『年金が月10万円でも20万円でも同じです』という説明の理由"]}
 {"at": "2026-09-06T02:17:14+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 3, "done": false}
@@ -175,12 +174,13 @@
 {"at": "2026-09-06T08:10:37+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 166.7, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-06T08:10:37+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 167.2, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
 {"at": "2026-09-06T08:14:36+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 91.9, "image": true, "chars": 478}
-{"at": "2026-09-06T08:16:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 1, "model": "small"}
-{"at": "2026-09-06T08:18:28+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small"}
 {"at": "2026-09-06T08:14:36+09:00", "id": "2026-09-06-zaishoku-62man", "event": "built", "seconds": 90.8, "image": true, "chars": 480}
 {"at": "2026-09-06T08:14:52+09:00", "id": "2026-09-06-zaishoku-62man", "event": "cold_read", "takeaway": "65歳以上で働きながら年金をもらう場合、給料と年金の合計が月62万円（2026年4月から）を超えると、超えた分の半分だけ年金の支給が停止される仕組みの説明。", "unclear": ["「国民年金」と「厚生年金」の具体的な違いと役割", "「年金に足される」「減るのも足すのも」の正確な計算メカニズム", "「止まった分はあとでもらえません」の意味（完全に失うのか、後で別の形で受け取るのか）", "「毎年10月に年金に足される」働いて払った保険料がどのような形で加算されるのか", "「月給とボーナスの12分の1を足す」の具体的な計算例"]}
 {"at": "2026-09-06T08:15:54+09:00", "id": "2026-09-06-zaishoku-62man", "event": "critique", "understand": 2, "n_real": 6, "done": false}
+{"at": "2026-09-06T08:16:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 1, "model": "small"}
 {"at": "2026-09-06T08:17:09+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 0, "model": "small"}
+{"at": "2026-09-06T08:18:28+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small"}
+{"at": "2026-09-06T10:00+09:00", "id": "2026-09-06-zaishoku-62man", "event": "scheduled", "video_id": "s3hb9Tl1jLw", "replaced": null, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Shorts"}
 {"at": "2026-09-06T10:00+09:00", "id": "2026-09-06-zaishoku-62man", "event": "scheduled", "video_id": "EkNqtkK49Bw", "replaced": "s3hb9Tl1jLw", "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Shorts"}
 {"at": "2026-09-06T14:15:32+09:00", "id": "EkNqtkK49Bw", "event": "measured", "views": 85, "likes": 0, "age_h": 4.3, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho"}
 {"at": "2026-09-06T14:15:32+09:00", "id": "fMlY_uzHOMw", "event": "measured", "views": 0, "likes": 0, "age_h": 21.3, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受"}
@@ -208,10 +208,6 @@
 {"at": "2026-09-06T14:15:32+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 172.2, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-06T14:15:32+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 172.8, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-06T14:15:32+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 173.3, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
-{"at": "2026-09-06T14:51:09+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 6, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["ねんよんが", "しな"]]}, {"i": 3, "d": [["", "りん"]]}, {"i": 5, "d": [["んえ", "よ"]]}, {"i": 6, "d": [["んえ", "げ"]]}, {"i": 9, "d": [["ごと", "い"]]}, {"i": 10, "d": [["", "よん"], ["うじ", "ち"], ["きん", ""], ["", "ろく"]]}]}
-{"at": "2026-09-06T14:52:59+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 3, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["ねんよんが", "しな"]]}, {"i": 3, "d": [["", "りん"]]}, {"i": 10, "d": [["うじ", "ち"], ["きん", ""]]}]}
-{"at": "2026-09-06T14:55:16+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 4, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["ねんよんが", "しな"]]}, {"i": 3, "d": [["きん", "りんきい"]]}, {"i": 6, "d": [["んえ", "うんげ"]]}, {"i": 10, "d": [["うじ", "ち"], ["きん", ""]]}]}
-{"at": "2026-09-06T14:59:03+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 5, "model": "medium", "mode": "kana", "diffs": [{"i": 3, "d": [["せね", "おせにゃ"]]}, {"i": 5, "d": [["んえん", ""]]}, {"i": 7, "d": [["んえ", "いあ"]]}, {"i": 8, "d": [["じゅ", "いち"], ["んえ", "いあ"]]}, {"i": 10, "d": [["じぶんのすうじ", "いちじゅにのめか"], ["がつ", "ろく"], ["", "いち"], ["ぶんのいち", ""]]}]}
 {"at": "2026-09-06T14:25:06+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 92.7, "image": true, "chars": 480}
 {"at": "2026-09-06T14:26:15+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 1, "model": "small"}
 {"at": "2026-09-06T14:27:25+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small"}
@@ -228,22 +224,10 @@
 {"at": "2026-09-06T14:41:26+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 92.7, "image": true, "chars": 480}
 {"at": "2026-09-06T14:44:46+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.8, "image": true, "chars": 478}
 {"at": "2026-09-06T14:45:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small"}
-{"at": "2026-09-06T17:07:02+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.0, "image": true, "chars": 480}
-{"at": "2026-09-06T17:08:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 3, "model": "small", "mode": "kana", "diffs": [{"i": 3, "d": [["ばい", ""]]}, {"i": 8, "d": [["はなしです", ""]]}, {"i": 9, "d": [["さいから", ""]]}]}
-{"at": "2026-09-06T17:14:11+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.0, "image": true, "chars": 480}
-{"at": "2026-09-06T17:14:26+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金を65歳からもらうか70歳まで遅らせるかは、82～86歳を目安に生きられるかで判断すると良い。", "unclear": ["「10か月で7%」の増加率がどういう仕組み・ルールなのか", "「ねんきん定期便」が具体的にどの書類を指すのか", "税金と健康保険料がどれくらい引かれて、実際にはいつ頃元が取れるのか"]}
-{"at": "2026-09-06T17:15:27+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
-{"at": "2026-09-06T17:17:56+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 94.2, "image": true, "chars": 480}
-{"at": "2026-09-06T17:18:12+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金受給を70歳に遅らせると毎月の受取額は42%増えるが、5年間受け取らない損失を回収し、さらに得になるには84～86歳以上まで生きる必要がある。", "unclear": ["「10か月で7%増える」という増加率の具体的な根拠や計算式", "「ねんきん定期便」とは何か（年金関連の専門用語）", "増えた年金に対して「健康保険料が多くかかる」理由やメカニズム", "税金と健康保険料を引いた場合の具体的な計算プロセス"]}
-{"at": "2026-09-06T17:19:18+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 3, "done": false}
-{"at": "2026-09-06T17:21:29+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 89.9, "image": true, "chars": 470}
-{"at": "2026-09-06T17:21:45+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金の受け取りを65歳から70歳まで5年遅延させると42%増えるが、その間の900万円のロスを取り戻すには約11年11か月かかり、税金などを考慮すると84～86歳以上まで生きることで初めて得になる。", "unclear": ["ねんきん定期便（毎年届く書類の詳しい説明がないため、何かは文脈から推測できるが、正式名称や詳細は不明）"]}
-{"at": "2026-09-06T17:22:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
-{"at": "2026-09-06T17:24:22+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 91.6, "image": true, "chars": 480}
-{"at": "2026-09-06T17:25:12+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金の受給を70歳まで延期すると42%増えるが、税金と保険料を考えると84～86歳まで生きて初めて損得が同じになり、それ以上長く生きれば得になる。", "unclear": ["ねんきん定期便"]}
-{"at": "2026-09-06T17:25:25+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 3, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["げつ", "けず"]]}, {"i": 7, "d": [["ねん", "いね"]]}, {"i": 9, "d": [["さいから", ""]]}]}
-{"at": "2026-09-06T17:26:16+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
-{"at": "2026-09-06T17:28:05+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard_judged", "mismatched": 3, "tts_misread": 0, "note": "3つとも whisper 側（1か月→1かけず・11年→11イネ・84歳から86歳→84~86）。medium の漢字ありで 1ヶ月・11年・84歳から86歳 と聞こえた。TTS の誤読 0"}
+{"at": "2026-09-06T14:51:09+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 6, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["ねんよんが", "しな"]]}, {"i": 3, "d": [["", "りん"]]}, {"i": 5, "d": [["んえ", "よ"]]}, {"i": 6, "d": [["んえ", "げ"]]}, {"i": 9, "d": [["ごと", "い"]]}, {"i": 10, "d": [["", "よん"], ["うじ", "ち"], ["きん", ""], ["", "ろく"]]}]}
+{"at": "2026-09-06T14:52:59+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 3, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["ねんよんが", "しな"]]}, {"i": 3, "d": [["", "りん"]]}, {"i": 10, "d": [["うじ", "ち"], ["きん", ""]]}]}
+{"at": "2026-09-06T14:55:16+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 4, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["ねんよんが", "しな"]]}, {"i": 3, "d": [["きん", "りんきい"]]}, {"i": 6, "d": [["んえ", "うんげ"]]}, {"i": 10, "d": [["うじ", "ち"], ["きん", ""]]}]}
+{"at": "2026-09-06T14:59:03+09:00", "id": "2026-09-06-zaishoku-62man", "event": "heard", "mismatched": 5, "model": "medium", "mode": "kana", "diffs": [{"i": 3, "d": [["せね", "おせにゃ"]]}, {"i": 5, "d": [["んえん", ""]]}, {"i": 7, "d": [["んえ", "いあ"]]}, {"i": 8, "d": [["じゅ", "いち"], ["んえ", "いあ"]]}, {"i": 10, "d": [["じぶんのすうじ", "いちじゅにのめか"], ["がつ", "ろく"], ["", "いち"], ["ぶんのいち", ""]]}]}
 {"at": "2026-09-06T17:03:20+09:00", "id": "EkNqtkK49Bw", "event": "measured", "views": 126, "likes": 0, "age_h": 7.0, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho"}
 {"at": "2026-09-06T17:03:20+09:00", "id": "fMlY_uzHOMw", "event": "measured", "views": 0, "likes": 0, "age_h": 24.1, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受"}
 {"at": "2026-09-06T17:03:20+09:00", "id": "a23e696j0f8", "event": "measured", "views": 191, "likes": 0, "age_h": 31.1, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts"}
@@ -270,6 +254,22 @@
 {"at": "2026-09-06T17:03:20+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 175.0, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-06T17:03:20+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 175.6, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-06T17:03:20+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 176.1, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
+{"at": "2026-09-06T17:07:02+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.0, "image": true, "chars": 480}
+{"at": "2026-09-06T17:08:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 3, "model": "small", "mode": "kana", "diffs": [{"i": 3, "d": [["ばい", ""]]}, {"i": 8, "d": [["はなしです", ""]]}, {"i": 9, "d": [["さいから", ""]]}]}
+{"at": "2026-09-06T17:14:11+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.0, "image": true, "chars": 480}
+{"at": "2026-09-06T17:14:26+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金を65歳からもらうか70歳まで遅らせるかは、82～86歳を目安に生きられるかで判断すると良い。", "unclear": ["「10か月で7%」の増加率がどういう仕組み・ルールなのか", "「ねんきん定期便」が具体的にどの書類を指すのか", "税金と健康保険料がどれくらい引かれて、実際にはいつ頃元が取れるのか"]}
+{"at": "2026-09-06T17:15:27+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
+{"at": "2026-09-06T17:17:56+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 94.2, "image": true, "chars": 480}
+{"at": "2026-09-06T17:18:12+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金受給を70歳に遅らせると毎月の受取額は42%増えるが、5年間受け取らない損失を回収し、さらに得になるには84～86歳以上まで生きる必要がある。", "unclear": ["「10か月で7%増える」という増加率の具体的な根拠や計算式", "「ねんきん定期便」とは何か（年金関連の専門用語）", "増えた年金に対して「健康保険料が多くかかる」理由やメカニズム", "税金と健康保険料を引いた場合の具体的な計算プロセス"]}
+{"at": "2026-09-06T17:19:18+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 3, "done": false}
+{"at": "2026-09-06T17:21:29+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 89.9, "image": true, "chars": 470}
+{"at": "2026-09-06T17:21:45+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金の受け取りを65歳から70歳まで5年遅延させると42%増えるが、その間の900万円のロスを取り戻すには約11年11か月かかり、税金などを考慮すると84～86歳以上まで生きることで初めて得になる。", "unclear": ["ねんきん定期便（毎年届く書類の詳しい説明がないため、何かは文脈から推測できるが、正式名称や詳細は不明）"]}
+{"at": "2026-09-06T17:22:44+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
+{"at": "2026-09-06T17:24:22+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 91.6, "image": true, "chars": 480}
+{"at": "2026-09-06T17:25:12+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "年金の受給を70歳まで延期すると42%増えるが、税金と保険料を考えると84～86歳まで生きて初めて損得が同じになり、それ以上長く生きれば得になる。", "unclear": ["ねんきん定期便"]}
+{"at": "2026-09-06T17:25:25+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 3, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["げつ", "けず"]]}, {"i": 7, "d": [["ねん", "いね"]]}, {"i": 9, "d": [["さいから", ""]]}]}
+{"at": "2026-09-06T17:26:16+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
+{"at": "2026-09-06T17:28:05+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard_judged", "mismatched": 3, "tts_misread": 0, "note": "3つとも whisper 側（1か月→1かけず・11年→11イネ・84歳から86歳→84~86）。medium の漢字ありで 1ヶ月・11年・84歳から86歳 と聞こえた。TTS の誤読 0"}
 {"at": "2026-09-06T19:37:52+09:00", "id": "EkNqtkK49Bw", "event": "measured", "views": 127, "likes": 0, "age_h": 9.6, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho"}
 {"at": "2026-09-06T19:37:52+09:00", "id": "fMlY_uzHOMw", "event": "measured", "views": 0, "likes": 0, "age_h": 26.6, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受"}
 {"at": "2026-09-06T19:37:52+09:00", "id": "a23e696j0f8", "event": "measured", "views": 191, "likes": 0, "age_h": 33.6, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts"}
@@ -296,10 +296,10 @@
 {"at": "2026-09-06T19:37:52+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 177.6, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-06T19:37:52+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 178.1, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-06T19:37:52+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 178.6, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
-{"at": "2026-09-06T19:44:42+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small", "mode": "kana", "diffs": []}
 {"at": "2026-09-06T19:40:07+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.3, "image": true, "chars": 480}
 {"at": "2026-09-06T19:43:06+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 93.3, "image": true, "chars": 480}
 {"at": "2026-09-06T19:44:34+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 2, "model": "small", "mode": "kana", "diffs": [{"i": 6, "d": [["せんえ", "ぜんげ"], ["せんえんおおく", "ぜんげんぶ"]]}, {"i": 9, "d": [["さいから", ""]]}]}
+{"at": "2026-09-06T19:44:42+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 0, "model": "small", "mode": "kana", "diffs": []}
 {"at": "2026-09-06T19:45:16+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "cold_read", "takeaway": "Delaying pension from age 65 to 70 increases monthly payments by 42%, but you break even (accounting for taxes and insurance) around age 84-86, so it's beneficial only if you expect to live longer.", "unclear": ["ねんきん定期便 - What is this annual notification and where do you get it?", "健康保険料 - How does this health insurance cost change affect the final calculation?", "Why exactly 42% increase - what is the rule behind this specific percentage?", "How the break-even calculation works - why is 143 months the exact number needed?", "Tax implications mentioned - how significantly do taxes reduce the benefit?"]}
 {"at": "2026-09-06T19:46:18+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "critique", "understand": 3, "n_real": 2, "done": false}
 {"at": "2026-09-06T19:46:29+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 96.9, "image": true, "chars": 480}
@@ -362,7 +362,10 @@
 {"at": "2026-09-07T00:49:52+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 182.8, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-07T00:49:52+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 183.3, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-07T00:49:52+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 183.8, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
+{"at": "2026-09-07T00:49:52+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 92.9, "image": true, "chars": 473, "scenes": [7.3, 6.4, 5.3, 10.2, 7.0, 8.0, 8.9, 11.9, 12.5, 9.9, 5.5]}
+{"at": "2026-09-07T00:52:35+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 1, "model": "small", "mode": "kana", "diffs": [{"i": 6, "d": [["えんお", "げむ"]]}], "escalated": [1, 3, 10]}
 {"at": "2026-09-07T00:54:45+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "image_ordered", "order": "2026-09-08-kuriage-80sai-10kagetsu-bg"}
+{"at": "2026-09-07T00:55:45+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard_judged", "mismatched": 1, "tts_misread": 0, "note": "コマ6「3千円多く」: small「ゼンゲームオーク」・medium「63,00 エーンオーク」（円多く を正しく聞き、数を桁区切りで書いたぶんが num_to_kana で ろくせんさんびゃく に化けた）。2つとも whisper 側。同じ「3千円」は コマ4・7 で small が正しく聞いた。TTS の誤読 0"}
 {"at": "2026-09-07T00:55:58+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "built", "seconds": 92.0, "image": false, "chars": 453, "scenes": [7.3, 6.5, 5.8, 10.2, 8.2, 7.8, 10.4, 10.4, 8.6, 11.0, 5.6]}
 {"at": "2026-09-07T00:56:19+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "cold_read", "takeaway": "年金を60歳から受け取ると24%減額されるが、早めにもらえる684万円分は約16年（80歳10か月）で追いつかれるので、自分の予想寿命で受給開始年齢を判断すべき。", "unclear": ["ねんきん定期便（毎年届く書類が何か、どこで見るのか）", "なぜ60歳に5年早めると正確に24%と決まっているのか", "月3万6千円の減額は65歳までずっと続くのか、それとも別の仕組みなのか"]}
 {"at": "2026-09-07T00:57:35+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "critique", "understand": 3, "n_real": 3, "done": false}
@@ -382,10 +385,6 @@
 {"at": "2026-09-07T01:17:10+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "heard", "mismatched": 3, "model": "medium", "mode": "kana", "diffs": [{"i": 5, "d": [["さい", ""], ["さい", ""], ["ねん", ""], ["えんかける", "かげつから"], ["ぴゃく", "くじゅ"], ["じゅよん", ""], ["", "せん"]]}, {"i": 7, "d": [["ぴゃ", "ぱ"], ["", "ぎょ"]]}, {"i": 10, "d": [["がく", ""]]}], "escalated": []}
 {"at": "2026-09-07T01:23:30+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "heard", "mismatched": 2, "model": "small", "mode": "kana", "diffs": [{"i": 7, "d": [["ぴゃ", "ぱ"], ["", "ぎょ"]]}, {"i": 10, "d": [["がく", ""]]}], "escalated": [5, 7, 10]}
 {"at": "2026-09-07T01:23:48+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "heard_judged", "mismatched": 2, "tts_misread": 0, "note": "コマ7（ぴゃ→ぱ・ぎょ の混入）・コマ10（末尾の 金額→きん。漢字ありの medium は台本と同文）は whisper 側。コマ5 は medium+prompt で 0差（hear.check に足した段）"}
-{"at": "2026-09-07T00:49:52+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "built", "seconds": 92.9, "image": true, "chars": 473, "scenes": [7.3, 6.4, 5.3, 10.2, 7.0, 8.0, 8.9, 11.9, 12.5, 9.9, 5.5]}
-{"at": "2026-09-07T00:52:35+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard", "mismatched": 1, "model": "small", "mode": "kana", "diffs": [{"i": 6, "d": [["えんお", "げむ"]]}], "escalated": [1, 3, 10]}
-{"at": "2026-09-07T00:55:45+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "heard_judged", "mismatched": 1, "tts_misread": 0, "note": "コマ6「3千円多く」: small「ゼンゲームオーク」・medium「63,00 エーンオーク」（円多く を正しく聞き、数を桁区切りで書いたぶんが num_to_kana で ろくせんさんびゃく に化けた）。2つとも whisper 側。同じ「3千円」は コマ4・7 で small が正しく聞いた。TTS の誤読 0"}
-{"at": "2026-09-07T10:00+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "scheduled", "video_id": "nQbVxuWpWw8", "replaced": null, "title": "年金を70歳まで遅らせると 得になるのは81歳11か月から #Shorts"}
 {"at": "2026-09-07T03:14:28+09:00", "id": "EkNqtkK49Bw", "event": "measured", "views": 127, "likes": 0, "age_h": 17.2, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho"}
 {"at": "2026-09-07T03:14:28+09:00", "id": "fMlY_uzHOMw", "event": "measured", "views": 0, "likes": 0, "age_h": 34.2, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受"}
 {"at": "2026-09-07T03:14:28+09:00", "id": "a23e696j0f8", "event": "measured", "views": 191, "likes": 0, "age_h": 41.2, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts"}
@@ -438,9 +437,9 @@
 {"at": "2026-09-07T05:45:46+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 187.8, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-07T05:45:46+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 188.3, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-07T05:45:46+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 188.8, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
+{"at": "2026-09-07T05:47:14+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "meta_updated", "video_id": "nQbVxuWpWw8", "what": "説明欄: 「65歳より前に亡くなった場合」→「待っている間（70歳より前）に亡くなると増額は付かず、65歳からの分をご遺族がまとめて受け取る」（実の誤り・本文は不変・再アップロード無し・yt.update_meta 50単位）"}
 {"at": "2026-09-07T05:49:35+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "built", "seconds": 92.1, "image": true, "chars": 450, "scenes": [8.4, 4.8, 5.2, 10.2, 8.1, 9.1, 12.8, 9.0, 9.3, 9.6, 5.6]}
 {"at": "2026-09-07T05:52:14+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "heard", "mismatched": 1, "model": "small", "mode": "kana", "diffs": [{"i": 7, "d": [["ぴゃ", "ぱ"], ["", "ぎょ"]]}], "escalated": [4, 5, 7], "how": {"4": "small→medium", "5": "small→medium+prompt", "7": "small→medium"}}
-{"at": "2026-09-07T05:47:14+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "meta_updated", "video_id": "nQbVxuWpWw8", "what": "説明欄: 「65歳より前に亡くなった場合」→「待っている間（70歳より前）に亡くなると増額は付かず、65歳からの分をご遺族がまとめて受け取る」（実の誤り・本文は不変・再アップロード無し・yt.update_meta 50単位）"}
 {"at": "2026-09-07T05:54:44+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "heard_judged", "mismatched": 1, "tts_misread": 0, "note": "背景つきで build し直して 10/11（01:2x の 9/11 から コマ10 が通った）。残った コマ7（ろっぴゃく→ろっぱく・15年→15ぎょねん）は 01:2x と同じ whisper 側。コマ4 は medium・コマ5 は medium+prompt で 0差"}
 {"at": "2026-09-07T08:21:20+09:00", "id": "EkNqtkK49Bw", "event": "measured", "views": 127, "likes": 0, "age_h": 22.3, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho"}
 {"at": "2026-09-07T08:21:20+09:00", "id": "fMlY_uzHOMw", "event": "measured", "views": 0, "likes": 0, "age_h": 39.4, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受"}
@@ -468,6 +467,7 @@
 {"at": "2026-09-07T08:21:20+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 190.3, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-07T08:21:20+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 190.9, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-07T08:21:20+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 191.4, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
+{"at": "2026-09-07T10:00+09:00", "id": "2026-09-07-kurisage-81sai-11kagetsu", "event": "scheduled", "video_id": "nQbVxuWpWw8", "replaced": null, "title": "年金を70歳まで遅らせると 得になるのは81歳11か月から #Shorts"}
 {"at": "2026-09-07T10:19:55+09:00", "id": "nQbVxuWpWw8", "event": "measured", "views": 0, "likes": 0, "age_h": 0.3, "title": "年金を70歳まで遅らせると 得になるのは81歳11か月から #Shorts"}
 {"at": "2026-09-07T10:19:55+09:00", "id": "EkNqtkK49Bw", "event": "measured", "views": 127, "likes": 0, "age_h": 24.3, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho"}
 {"at": "2026-09-07T10:19:55+09:00", "id": "fMlY_uzHOMw", "event": "measured", "views": 0, "likes": 0, "age_h": 41.3, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受"}
@@ -522,6 +522,33 @@
 {"at": "2026-09-07T12:23:05+09:00", "id": "CVXm-NyIhMA", "event": "measured", "views": 209, "likes": 0, "age_h": 194.4, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts"}
 {"at": "2026-09-07T12:23:05+09:00", "id": "9WWpJUWjs4E", "event": "measured", "views": 260, "likes": 0, "age_h": 194.9, "title": "介護の上限140100円 3割でも届かない #Shorts"}
 {"at": "2026-09-07T12:23:05+09:00", "id": "a21yvpWHuRM", "event": "measured", "views": 92, "likes": 0, "age_h": 195.4, "title": "配当控除は1000万円で6.505ポイント差 #Shorts"}
+{"views": 28, "likes": 0, "age_h": 4.4, "title": "年金を70歳まで遅らせると 得になるのは81歳11か月から #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "nQbVxuWpWw8", "event": "measured"}
+{"views": 122, "likes": 0, "age_h": 28.4, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho", "at": "2026-09-07T14:27:18+09:00", "id": "EkNqtkK49Bw", "event": "measured"}
+{"views": 0, "likes": 0, "age_h": 45.4, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受", "at": "2026-09-07T14:27:18+09:00", "id": "fMlY_uzHOMw", "event": "measured"}
+{"views": 191, "likes": 0, "age_h": 52.5, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "a23e696j0f8", "event": "measured"}
+{"views": 189, "likes": 0, "age_h": 53.4, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "kzefG44_APU", "event": "measured"}
+{"views": 3, "likes": 0, "age_h": 77.4, "title": "【知らないと損】2026年4月 働く年金受給者は年54万円増える", "at": "2026-09-07T14:27:18+09:00", "id": "1huadpEk6HY", "event": "measured"}
+{"views": 59, "likes": 0, "age_h": 101.5, "title": "小規模企業共済を11か月でやめるといくらか #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "9zkfjEH48PY", "event": "measured"}
+{"views": 15, "likes": 0, "age_h": 121.9, "title": "雇用保険料率 会社は労働者の1.636倍 #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "dg-5ml7GRZQ", "event": "measured"}
+{"views": 5, "likes": 0, "age_h": 124.0, "title": "ふるさと納税の上限が医療費控除30万円で7520円下がる", "at": "2026-09-07T14:27:18+09:00", "id": "8hJnwkC8NU0", "event": "measured"}
+{"views": 7, "likes": 0, "age_h": 136.5, "title": "変動金利の5年ルール 総支払額は5,716,767円多い", "at": "2026-09-07T14:27:18+09:00", "id": "ICmIBsZRYFE", "event": "measured"}
+{"views": 197, "likes": 0, "age_h": 168.9, "title": "7割軽減の線 5人世帯は年金収入141万6000円", "at": "2026-09-07T14:27:18+09:00", "id": "4woC2YuX7ig", "event": "measured"}
+{"views": 84, "likes": 0, "age_h": 169.4, "title": "医療費控除 総所得10万円増で還付755円減る #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "bGwW9Xp1Fiw", "event": "measured"}
+{"views": 32, "likes": 0, "age_h": 170.9, "title": "遺族年金 妻35歳で末子が1歳ちがうと総額はどう変わるか", "at": "2026-09-07T14:27:18+09:00", "id": "1Nyl3aLUOgo", "event": "measured"}
+{"views": 234, "likes": 0, "age_h": 171.4, "title": "年金78万円の手取りは何円になるか #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "t8sUIqnv7o8", "event": "measured"}
+{"views": 200, "likes": 1, "age_h": 171.9, "title": "標準報酬10万円で傷病手当金は何日止まるか #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "R6H23zZ8f-Y", "event": "measured"}
+{"views": 122, "likes": 0, "age_h": 172.5, "title": "個人事業税は複式簿記の45万円でどこまで変わるか", "at": "2026-09-07T14:27:18+09:00", "id": "m_uUwS0Tsy0", "event": "measured"}
+{"views": 120, "likes": 0, "age_h": 172.9, "title": "配当100万円 総合課税と分離課税どちらが安いか", "at": "2026-09-07T14:27:18+09:00", "id": "n6vbjM1xQGk", "event": "measured"}
+{"views": 2, "likes": 1, "age_h": 186.5, "title": "総所得500万 雑損控除と災害減免法どちらが得 #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "5oActL0uzuQ", "event": "measured"}
+{"views": 3, "likes": 1, "age_h": 193.0, "title": "自動車税13年目の増額 4400円と16600円 #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "75KVaJ_na4I", "event": "measured"}
+{"views": 131, "likes": 0, "age_h": 193.4, "title": "勤続1年で解雇の上乗せは何日に変わる #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "jSNrwSJO_Oo", "event": "measured"}
+{"views": 192, "likes": 0, "age_h": 194.5, "title": "ふるさと納税 年収300万・扶養4人で枠は何円か #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "mQ017S6275o", "event": "measured"}
+{"views": 97, "likes": 0, "age_h": 195.0, "title": "雑損控除の繰越3年 交差点は0円しか動かない #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "O9lRBzCLAAI", "event": "measured"}
+{"views": 83, "likes": 0, "age_h": 195.5, "title": "高額療養費 医療費100万円で何か月目に並ぶか", "at": "2026-09-07T14:27:18+09:00", "id": "bpdCgOhmGzo", "event": "measured"}
+{"views": 149, "likes": 0, "age_h": 195.9, "title": "予定納税15万円の崖は課税所得いくらか #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "178_WLomK4Y", "event": "measured"}
+{"views": 209, "likes": 0, "age_h": 196.4, "title": "マイホーム売却 取得費4,000万円で税額はいくらか #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "CVXm-NyIhMA", "event": "measured"}
+{"views": 260, "likes": 0, "age_h": 197.0, "title": "介護の上限140100円 3割でも届かない #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "9WWpJUWjs4E", "event": "measured"}
+{"views": 92, "likes": 0, "age_h": 197.5, "title": "配当控除は1000万円で6.505ポイント差 #Shorts", "at": "2026-09-07T14:27:18+09:00", "id": "a21yvpWHuRM", "event": "measured"}
 {"seconds": 93.3, "image": true, "chars": 450, "scenes": [8.6, 4.9, 5.4, 9.4, 8.3, 8.8, 13.7, 9.1, 9.0, 10.0, 6.0], "at": "2026-09-07T14:32:58+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "built"}
 {"mismatched": 1, "model": "small", "mode": "kana", "diffs": [{"i": 7, "d": [["ぴゃ", "ぺ"], ["のさは", "どさわ"]]}], "escalated": [4, 5, 7], "how": {"4": "small→medium", "5": "small→medium+prompt", "7": "small→medium"}, "at": "2026-09-07T14:36:45+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "heard"}
 {"mismatched": 1, "tts_misread": 0, "voice": "ja-JP-Neural2-D", "rate": 1.08, "note": "声を Neural2-D・1.08 に戻して build 93.3秒 → hear 10/11。コマ7（ろっぴゃく→ろっぺく・のさは→どさわ）は 1〜2音の揺れ ＝ whisper 側（Chirp のときも同じコマが同じ型）。Neural2-D は yomi 16語を置換なしで全部 正しく読んだ ＝ kana_in_voice は空", "at": "2026-09-07T14:37:19+09:00", "id": "2026-09-08-kuriage-80sai-10kagetsu", "event": "heard_judged"}
