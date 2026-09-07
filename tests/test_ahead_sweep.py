@@ -136,6 +136,11 @@ def test_印を落とせば次が取れる(砂場):
 
 
 # ---------------------------------------------------------------- 配線
+@pytest.mark.skip(reason="この配線は 2026-09-06 02:11 JST (454081a1) に**わざと**外した —— 旧 ahead_sweep が "
+                         "09/06 00:01 に旧作りの本 8本 へ きょうの publishAt を打っていた（docs/METHOD.md §8）。"
+                         "この検査は、いまの決めの**逆**を主張したまま 32時間 赤で、本物の赤を埋めていた。"
+                         "消さない（§8「在るが前提にしない・消さない」）。"
+                         "戻す条件: METHOD に旧 ahead_sweep を使う判断が書かれ、SessionStart に戻したとき —— docs/JOURNAL.md 2026-09-07 10:2x")
 def test_SessionStart_に配線されていること():
     """**外したら、ここで分かること。** 消すと「その回が選べば撃つ」形に戻ります。"""
     cfg = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
