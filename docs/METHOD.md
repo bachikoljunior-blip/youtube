@@ -428,7 +428,15 @@ hourly が自分で直すつもりの欠陥は申し送りに書かず、その�
 > —— `data/rounds.jsonl` に載るのは **GO で立てた周だけ**だからです。
 >
 > → **原因を当てにいかず、次に同じ穴が開いたら読めるようにしました**（`scripts/next_round.log_wake()`・
-> `data/parent_wakes.jsonl`・検査 `tests/test_parent_wake_log.py` 6件）。**GO も WAIT も1行 残します。**
+> `data/parent_wakes.jsonl`・検査 `tests/test_parent_wake_log.py` 9件）。**GO も WAIT も1行 残します。**
+> **行には「誰が撃ったか」が入ります**（`who`）—— **穴を読むときは `who == "owner"` の行だけ数えること。**
+> この2つは、足した回自身が押す直前に踏んで足しました: (1) `python -m pytest tests/` を撃つだけで
+> **本物の控えに 2行**入っていた（§8 06:5x「検査を撃つことに副作用」と同じ形）→ 検査からは書かない。
+> (2) 動作確認で撃った1行が「親が起きて待った」と見分けられなかった → `who` を足した。
+> **その `who` も、最初は `sys.modules` だけを見ていて外れました** —— 親は
+> `python scripts/next_round_owner.py` と**直に**走らせるので `__main__` に入り、
+> 実測で本物の呼びが `direct` と出た（argv も見る形に直し、検査を1件 足した）。
+> **足した台帳は、本物の呼びで1回 撃って確かめること。**
 > 親が毎周 撃つ `next_round_owner.py --live N` の中で書かれるので、**親が覚えている必要はありません**
 > （覚えていないと残らない形は 08-24 に踏んだ形そのもの）。**この回は原因を書いていません。**
 > **覆る条件**: `data/parent_wakes.jsonl` が 1週間 たまったら数えること ——

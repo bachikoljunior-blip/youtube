@@ -105,6 +105,25 @@ WAKES = ROOT / "data" / "parent_wakes.jsonl"
 _WAKES_REAL = WAKES   # 本物の控え。検査が差し替えたかどうかを、これで見分ける
 
 
+def _who() -> str:
+    """**誰が撃ったか。** 親は必ず `next_round_owner.py` を通す（`docs/trigger_parent.md` 第1節）。
+
+    これが無いと、道具を確かめただけの回が「親が起きて待った」に化けます ——
+    足した回自身が、押す直前の動作確認で本物の控えに 1行 入れて気づきました（2026-09-08 17:3x）。
+    **穴を読むときは `who` が `owner` の行だけ数えること。**
+
+    **`sys.modules` だけでは足りません**（同じ回に撃って分かった）——
+    親は `python scripts/next_round_owner.py` と**直に**走らせるので、
+    あれは `__main__` に入り、`scripts.next_round_owner` という名前では載りません。
+    実測: `next_round_owner.py --live 2` を撃っても `direct` と出た。だから argv も見ます。
+    """
+    if "scripts.next_round_owner" in sys.modules:
+        return "owner"
+    if sys.argv and Path(sys.argv[0]).name == "next_round_owner.py":
+        return "owner"
+    return "direct"
+
+
 def log_wake(d: dict, now: datetime | None = None) -> dict:
     """親が起きて `decide()` が答えを出すたびに、その答えを1行 足す。**GO も WAIT も。**
 
@@ -120,6 +139,12 @@ def log_wake(d: dict, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     row = {
         "at": now.isoformat(),
+        # **誰が撃ったか**。親は必ず `next_round_owner.py` を通す（`docs/trigger_parent.md` 第1節）ので、
+        # それが読み込まれていない回は**サブや人が手で撃った回**です。
+        # これが無いと、道具を確かめただけの回が「親が起きて待った」に化けます
+        # ——足した回自身が、押す直前の動作確認で本物の控えに 1行 入れて気づきました（2026-09-08 17:3x）。
+        # **穴を読むときは `who` が `owner` の行だけ数えること。**
+        "who": _who(),
         "go": bool(d.get("go")),
         "live": d.get("live"),
         "live_source": d.get("live_source"),

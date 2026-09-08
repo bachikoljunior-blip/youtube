@@ -93,3 +93,34 @@ def test_検査からは本物の控えへ書かない():
     next_round.log_wake({"go": True, "live": 0, "wait_min": 0, "roles": ["hourly"], "why": "x"})
     after = real.read_text(encoding="utf-8") if real.exists() else ""
     assert after == before, "検査から本物の控えへ書いている"
+
+
+def test_誰が撃ったかを残す(tmp_path, monkeypatch):
+    """**親か、手で撃ったか。** 親は必ず `next_round_owner.py` を通す（`docs/trigger_parent.md` 第1節）。
+    これが無いと、道具を確かめただけの回が「親が起きて待った」に化ける ——
+    **足した回自身が、押す直前の動作確認で本物の控えに 1行 入れて気づいた**（2026-09-08 17:3x）。
+    穴を読むときは `who == "owner"` の行だけ数えること。
+    """
+    import sys
+    p = _use(tmp_path, monkeypatch)
+    monkeypatch.delitem(sys.modules, "scripts.next_round_owner", raising=False)
+    monkeypatch.setattr(sys, "argv", ["scripts/next_round.py", "--live", "0"])
+    next_round.log_wake({"go": False, "live": 0, "wait_min": 5, "roles": [], "why": "x"})
+    monkeypatch.setitem(sys.modules, "scripts.next_round_owner", object())
+    next_round.log_wake({"go": True, "live": 0, "wait_min": 0, "roles": ["hourly"], "why": "y"})
+    hand, parent = _read(p)
+    assert hand["who"] == "direct", hand
+    assert parent["who"] == "owner", parent
+
+
+def test_親は直に走らせるのでargvも見る(tmp_path, monkeypatch):
+    """**`sys.modules` だけでは足りない**（同じ回に撃って分かった）——
+    親は `python scripts/next_round_owner.py` と直に走らせるので、あれは `__main__` に入り、
+    `scripts.next_round_owner` という名前では載らない。実測: 本物の呼びが `direct` と出た。"""
+    import sys
+    p = _use(tmp_path, monkeypatch)
+    monkeypatch.delitem(sys.modules, "scripts.next_round_owner", raising=False)
+    monkeypatch.setattr(sys, "argv", ["scripts/next_round_owner.py", "--live", "2"])
+    next_round.log_wake({"go": False, "live": 2, "wait_min": 9, "roles": [], "why": "z"})
+    (row,) = _read(p)
+    assert row["who"] == "owner", row
