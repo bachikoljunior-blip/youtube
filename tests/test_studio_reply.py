@@ -83,3 +83,26 @@ def test_空の文と_dry_runは撃たない(tmp_path, monkeypatch):
     assert cli.cmd_reply(_A("c1", "本文", dry_run=True)) == 0
     assert svc.bodies == []
     assert "replied" not in p.read_text(encoding="utf-8")
+
+
+def test_人間だと名乗る文とAIを否定する文は撃たない_はいと答える文は通る(tmp_path, monkeypatch):
+    # 2026-09-08 21:4x（hourly・Fable）: オーナー「コメントで視聴者にAIですかって聞かれたら何で答えるの？」→ 答えは「はい」。
+    # 声は聞けば分かる（08/29「ＡＩナレーショングダグダ」）ので隠せず、嘘が1つ見つかると数字まで疑われる。
+    # 陽性対照: 否定の形 3つ と 名乗りの形 1つ が止まり、定型の答え（data/studio/replies/ai-desu.txt）は通る。
+    _ledger(tmp_path, monkeypatch, [VC])
+    svc = _Svc()
+    monkeypatch.setattr(yt, "svc", lambda: svc)
+    for bad in ("いいえ、AIではありません。", "ＡＩじゃないですよ。", "人間が書いています。", "私は元社労士として答えます。"):
+        assert cli.cmd_reply(_A("c1", bad)) == 1, bad
+    assert svc.bodies == []
+    honest = "はい。声は機械の読み上げで、台本もAIが書いています。数字は日本年金機構などの公表ページで確かめてから出しています。"
+    assert cli.cmd_reply(_A("c1", honest)) == 0
+    assert len(svc.bodies) == 1
+
+
+def test_定型の答えのファイルは門を通る():
+    from pathlib import Path
+    import studio.script as script
+    text = Path("data/studio/replies/ai-desu.txt").read_text(encoding="utf-8").strip()
+    assert text.startswith("はい")
+    assert not script.AI_DENIAL.search(text) and not script.HUMAN_CLAIM.search(text)
