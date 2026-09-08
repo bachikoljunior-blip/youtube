@@ -111,11 +111,23 @@ def test_long_ids_は控えの尺を見る():
         "読む形に戻っていないか見ること（`_long_by_duration()` の節）")
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="旧道具（`src/day_cap._long_by_duration()`）の側。**この検査が待っていた「覆る条件」は、"
+           "2026-09-05 に実際に引かれました** —— 旧 `uploader.py` が上げた `3gZ38lfsJpY`（156.2秒）と "
+           "`vmAll8GDkU8`（153.0秒）が 65〜175秒 の帯に入り、**二山は割れています**。"
+           "直す先が無いのは、`data/video_forms.json` と突き合わせる道を作る相手が旧道具だから ＝ "
+           "**当てにしている前提のほうを捨てた**（`docs/METHOD.md` §8。`studio/` は "
+           "`uploaded.jsonl` も `day_cap` も読まない）。**消さない**（§8）。"
+           "strict なので、控えから帯の本が消えて**通るようになったら赤**になり、そこで気づける。"
+           "生きている信号は `python -m pytest -m live -q`（`studio/livetests.py`）",
+)
 def test_尺の分布は二山のまま():
     """**180秒 の境目が、どちらの山も切っていないこと。**
 
     切りはじめたら尺だけでは形を割れません（`_long_by_duration()` の「覆る条件」）。
     実測 2026-08-30: 控えの 178本 に **55〜260秒 の本は 1本もありません**。
+    **2026-09-08 追記**: その 55〜260秒 が 2本 出たので、この検査は xfail（上の reason）。
     """
     if not LEDGER.exists():
         pytest.skip("控えがありません")
