@@ -116062,3 +116062,24 @@ session: https://claude.ai/code/session_01AHfq4FUVAd5fxDM29yG1Cm
 → §4 に **(0-a)** を足した（声にも画面にも出ない数を、出どころか式へ戻す。額を書き写さない）。
 **hear はこの周の終わりにも走っていた**（whisper が medium へ escalate 中）。**結果は次の回が読むこと** ——
 `work/2026-09-10-izoku-kosei-4bunno3/` は 455字 の版で焼けている。
+
+### 【2026-09-09 02:5x・親が転記】前の周の optimizer の hear の結果（作業木は畳まれた後に届いた・原文のまま）
+
+> The worktree was removed mid-run (the parent folded it), so I can no longer edit or push. Everything through commit `a29aa44e` is safe on `claude/youtube-auto-post-revenue-ggedij`. The hear result never made it into the repo, so it has to be handed over here.
+>
+> **hear on the 09/10 book (455字 build): 一致 5/11 — and all six misses are one word.**
+>
+> Every mismatched scene (コマ2・3・5・8・9・10) shows the same line: `予定「ねん」 聞こえた「とし」`. The TTS is reading bare **年 + number** as **とし**: 「年に120万円」→ "としに120万円".
+>
+> This is **TTS-side, not whisper-side**, and METHOD §3 already names it:
+> - §3 records this exact word as a known split — *「実測で割れた語: 裸の「年」＋数字（「年66万円」→ とし）→「1年で」「12か月で」に書き換える」*
+> - §3 also records that Neural2-D **accepts `customPronunciations` with 200 and ignores it**, so the existing `yomi` entry `"年": "ねん"` cannot fix it. Rewording is the only lever.
+>
+> So the previous optimizer's script walked straight into the documented trap by using 「年に◯◯万円」 as its default phrasing, and it survived five critique rounds because critique never hears the audio. **The book must not ship until those six scenes are reworded** (e.g. 「年に120万円」→「1年に120万円」or「毎年120万円」), then rebuilt and re-heard.
+>
+> The remaining non-`年` diffs are whisper-side and pass per §4 (2): tail truncation in コマ2/8/10 (`聞こえた「」`) and 妻→すま in コマ9.
+>
+> **Files for the next round** (all pushed): `data/studio/scripts/2026-09-10-izoku-kosei-4bunno3.json`, built artifacts under `work/2026-09-10-izoku-kosei-4bunno3/`, and `docs/JOURNAL.md`, which already says hear was running and its result belongs to the next round — this message supplies that result.
+
+**親がしたこと（事実）**: 完了の知らせを受けて `.claude/worktrees/agent-a02310807d72e8b6e` を畳んだ。
+そのときサブはまだ hear の結果を持っており、押す先を失った。**`work/` も一緒に消えている。**
