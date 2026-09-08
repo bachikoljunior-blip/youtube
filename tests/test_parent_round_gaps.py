@@ -89,3 +89,77 @@ def test_decideの台帳に中央値と_floorとの比が載る(rounds, monkeypa
     got = nr.decide(live=0)
     assert got["gap_median_min"] == 80.0, got
     assert got["gap_over_floor"] == 1.0, got
+
+
+# ---------------------------------------------------------------------------
+# **2026-09-09 02:5x（optimizer・Opus）に足したぶん** ——
+# §5 の覆る条件 (2) の分母が、条件に答えられない行で埋まっていた件（`rounding_evidence`）。
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def wakes(tmp_path, monkeypatch):
+    """`data/parent_wakes.jsonl` を tmp に差し替える（本物へは書かない・`log_wake` の註）。"""
+    p = tmp_path / "parent_wakes.jsonl"
+
+    def _set(rows):
+        p.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+                     encoding="utf-8")
+        monkeypatch.setattr(nr, "WAKES", p)
+        return p
+    return _set
+
+
+def _wake(live, go=False, floor=76.0, target=None, who="owner"):
+    row = {"at": "2026-09-08T09:00:00+00:00", "who": who, "go": go, "live": live}
+    if target is not None:
+        row["floor_min"] = floor
+        row["target_min"] = target
+    return row
+
+
+def test_数を持たない古い行は分母に入らない(wakes):
+    """**この検査が本体** —— `live>0` でも `decide()` の数が無ければ、丸めを評価できない。
+
+    実測（2026-09-09 02:5x）: `who=owner` 19行 のうち `live>0` は **3行**、
+    そのうち `target_min` を持つ行は **0**（3行 とも、数を書き写すようにした 13:00 UTC より前）。
+    ＝ 00:2x の「`live > 0` が 3回 溜まったら評価する」は、**開いても答えの無い門**だった。
+    """
+    wakes([_wake(1), _wake(1), _wake(1)])
+    assert nr.rounding_evidence() == (0, 0)
+
+
+def test_数を持つ行だけを数える(wakes):
+    wakes([_wake(1),
+           _wake(1, go=False, target=63.0),
+           _wake(1, go=True, target=63.0),
+           _wake(1, go=True, target=76.0)])
+    assert nr.rounding_evidence() == (3, 1)
+
+
+def test_0体の回とサブの回は数えない(wakes):
+    """`decide()` は `live > 0` の回しか丸めない・`who != owner` は親ではない（`_who()` の註）。"""
+    wakes([_wake(0, go=True, target=63.0),
+           _wake(1, go=True, target=63.0, who="sub")])
+    assert nr.rounding_evidence() == (0, 0)
+
+
+def test_decideの台帳に丸めの分母が載る(rounds, wakes, monkeypatch):
+    """次の回が手で数えずに読めること（00:2x が `round_gaps` でやった直しと同じ形）。"""
+    rounds(_round("2026-09-08T12:40:00+00:00") + _round("2026-09-08T14:00:00+00:00"))
+    wakes([_wake(1, go=True, target=63.0), _wake(1, go=False, target=70.0)])
+    monkeypatch.setattr(nr, "floor_minutes", lambda: (80.0, "検査"))
+    got = nr.decide(live=0)
+    assert got["rounding_live"] == 2, got
+    assert got["rounding_gos"] == 1, got
+
+
+def test_log_wakeが丸めの分母を書き写す(tmp_path, monkeypatch):
+    """`decide()` が返した数が、行に残ること（19:1x/21:4x が「数の側を捨てていた」と直した続き）。"""
+    p = tmp_path / "parent_wakes.jsonl"
+    monkeypatch.setattr(nr, "WAKES", p)
+    nr.log_wake({"go": True, "live": 1, "roles": ["hourly"], "why": "検査",
+                 "floor_min": 76.0, "target_min": 63.0,
+                 "rounding_live": 2, "rounding_gos": 1})
+    row = json.loads(p.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["rounding_live"] == 2 and row["rounding_gos"] == 1, row

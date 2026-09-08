@@ -185,7 +185,8 @@ def log_wake(d: dict, now: datetime | None = None) -> dict:
     # （2026-09-09 00:2x に足した。手で数えると 1周 2行 のせいで半分に出る ——`round_gaps` の註）。
     for key in ("floor_min", "passed_min", "target_min", "idle",
                 "heartbeat_min", "heartbeat_source", "patch",
-                "gap_median_min", "gap_over_floor"):
+                "gap_median_min", "gap_over_floor",
+                "rounding_live", "rounding_gos"):
         got = d.get(key)
         if got is None:
             continue
@@ -473,6 +474,46 @@ def gap_median(limit: int = 10) -> float | None:
     return median(got) if got else None
 
 
+def rounding_evidence(rows: list[dict] | None = None) -> tuple[int, int]:
+    """**19:1x の丸めが効いたかを、「答えられる行」だけで数える**
+    （2026-09-09 02:5x JST・optimizer・Opus が踏んで足した）。
+
+    返すのは **(評価できる `live>0` の回, 丸めの枝を通った GO)**。
+
+    **なぜ要るか —— 条件の分母が、条件に答えられない行で埋まっていました。**
+    21:4x は覆る条件 (2) を「丸めの枝を通った GO が 3回 出ても…」と書き、
+    00:2x は「そこが溜まらないので、**`live > 0` で親が起きた回が 3回**と読み替えること」と直しました。
+    **その 3回 は、この回に届いています。** 実測（`data/parent_wakes.jsonl`・API 0単位）:
+
+        who=owner の行            19
+        うち `live > 0`            **3**   ← 21:4x/00:2x の門は、これで開く
+        うち `target_min` を持つ   **0**   ← **1行も答えられない**
+
+    3行 は 09/08 08:59・09:59・10:22 UTC で、**`decide()` の数を書き写すようにしたのは 13:00 UTC**
+    （00:2x の直し）。＝ **門が開く条件は満たされるのに、開けた先に数が1つも無い。**
+    `decide()` は `live > 0` の回しか丸めないので、**丸めが効いたかは `target_min` の在る行でしか読めません。**
+
+    **これは §5 が2回 踏んだ形の3つ目です**: 12:4x の `merge-base --is-ancestor` は
+    **必ず通る確かめ**、00:2x の「1.25倍」は **必ず通らない門**、そしてこれは
+    **通っても何も言えない門**。どれも「数えている物」と「訊きたいこと」がずれています。
+
+    → 数えるのは `live > 0` の回ではなく、**`live > 0` かつ `decide()` の数を持つ回**にしました。
+    `decide()` が毎回この2つを返し、`log_wake` が書き写すので、**次の回は撃つだけで読めます**
+    （手で数えない ——00:2x が `round_gaps` で同じ直しをした形）。
+
+    **覆る条件**: 評価できる回が **3回** 溜まって、なお丸めの枝を通った GO が 0 なら、
+    `decide()` は `live > 0` の回に一度も当たっていない ＝ 19:1x の丸めは**効くかどうか測れない直し**なので、
+    残すか戻すかを `live` の分布で決めること（21:4x の (2) のまま。消すのは、面が減るぶんだけ得）。
+    """
+    if rows is None:
+        rows = wake_rows()
+    live_rows = [r for r in rows
+                 if r.get("who") == "owner" and (r.get("live") or 0) > 0
+                 and r.get("target_min") is not None and r.get("floor_min") is not None]
+    gos = sum(1 for r in live_rows if r.get("go") and r["target_min"] < r["floor_min"])
+    return len(live_rows), gos
+
+
 def _at(row: dict) -> datetime | None:
     """記録の時刻。読めなければ `None`（**捨てずに、無い扱い**）。"""
     try:
@@ -733,6 +774,10 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     if gm is not None:
         base["gap_median_min"] = round(gm, 1)
         base["gap_over_floor"] = round(gm / floor, 2) if floor else None
+    # **丸めが効いたかを読むための分母**（2026-09-09 02:5x・§5 の覆る条件 (2)）。
+    # `live > 0` の回だけを数えると、`decide()` の数を持たない古い行まで分母に入り、
+    # **門は開くのに答えが無い**という形になります（`rounding_evidence` の註）。
+    base["rounding_live"], base["rounding_gos"] = rounding_evidence()
     group = current_round(span_min=round_span(floor))
 
     # **0体 は「間隔を見ない」ではなく「起こしを置いて待つ」**（2026-09-03・上の節）。
