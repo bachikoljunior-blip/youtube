@@ -64,10 +64,13 @@ def cmd_status(a):
         cs = yt.viewer_comments()
         seen = {r.get("comment_id") for r in ledger_rows() if r.get("event") == "viewer_comment"}
         fresh = [c for c in cs if c["id"] not in seen]
-        print(f"視聴者コメント: {len(cs)}件（台帳に無い新着 {len(fresh)}件）")
+        held = [c for c in cs if c.get("status", "published") != "published"]
+        note = f"・**保留/迷惑 {len(held)}件**" if held else "・保留/迷惑 0件"
+        print(f"視聴者コメント: {len(cs)}件（台帳に無い新着 {len(fresh)}件{note}）")
         for c in cs[:3]:
             mark = "★新" if c["id"] in {f["id"] for f in fresh} else "  "
-            print(f"  {mark} {c['at'][:16]} {c['video_id']} {c['author']}: {c['text'][:60]}")
+            st = "" if c.get("status", "published") == "published" else f"[{c['status']}]"
+            print(f"  {mark}{st} {c['at'][:16]} {c['video_id']} {c['author']}: {c['text'][:60]}")
     except Exception as e:  # noqa: BLE001
         print("視聴者コメントは引けなかった:", str(e)[:100])
     print("台帳 直近 5行:")
@@ -262,12 +265,20 @@ def cmd_comments(a):
         return 0
     for c in cs:
         new = c["id"] not in seen
+        st = c.get("status", "published")
         print(f"{'★新着' if new else '     '} {c['at'][:16]} {c['video_id']} いいね{c['likes']} "
-              f"{c['author']}\n       {c['text'][:400]}")
+              f"{'' if st == 'published' else '[' + st + '] '}{c['author']}\n       {c['text'][:400]}")
         if new:
             ledger("viewer_comment", c["video_id"], comment_id=c["id"], author=c["author"],
-                   posted_at=c["at"], text=c["text"][:500])
+                   posted_at=c["at"], status=st, text=c["text"][:500])
+    held = [c for c in cs if c.get("status", "published") != "published"]
     print(f"—— {len(cs)}件（うち台帳に無かった新着 {sum(1 for c in cs if c['id'] not in seen)}件）")
+    # 保留・迷惑の列は 2026-09-08 15:0x まで1度も引かれていなかった（`yt.viewer_comments()` の註）。
+    # **0件 でも印字すること** —— 「消えた」と言われたときに、こちらが握り潰したかどうかは
+    # この行が 0 かどうかでしか答えられない。
+    print(f"   保留 heldForReview {sum(1 for c in held if c['status'] == 'heldForReview')}件"
+          f"・迷惑 likelySpam {sum(1 for c in held if c['status'] == 'likelySpam')}件"
+          + ("（＝ こちらが止めているコメントは無い）" if not held else "（**読むこと**）"))
     return 0
 
 

@@ -19,10 +19,18 @@ def _thread(tid, author, cid, text, at, video="v1", likes=0):
 
 
 class _Svc:
-    """`channels().list()` と `commentThreads().list()` だけを持つ贋物。"""
+    """`channels().list()` と `commentThreads().list()` だけを持つ贋物。
 
-    def __init__(self, pages):
-        self.pages = pages
+    `moderationStatus` の列ごとに別のページの束を返す（`published` は既定で `pages`、
+    `heldForReview` と `likelySpam` は既定で空）。**本物の API と同じで、列を訊かなければ
+    published しか返らない** —— それが 2026-09-08 15:0x まで見えていなかった穴。
+    """
+
+    def __init__(self, pages, held=None, spam=None, fail=()):
+        self.by_col = {"published": pages,
+                       "heldForReview": held or [{"items": []}],
+                       "likelySpam": spam or [{"items": []}]}
+        self.fail = set(fail)
         self.asked = []
 
     def channels(self):
@@ -37,9 +45,12 @@ class _Svc:
             return _Exec({"items": [{"id": CID, "snippet": {"title": "t"},
                                      "statistics": {"subscriberCount": "26"},
                                      "contentDetails": {"relatedPlaylists": {"uploads": "UU"}}}]})
+        col = kw.get("moderationStatus", "published")
+        if col in self.fail:
+            raise RuntimeError(f"{col} は引けない")
         tok = kw.get("pageToken")
         idx = 0 if tok is None else int(tok)
-        return _Exec(self.pages[idx])
+        return _Exec(self.by_col[col][idx])
 
 
 class _Exec:
@@ -50,8 +61,8 @@ class _Exec:
         return self.v
 
 
-def _install(monkeypatch, pages):
-    svc = _Svc(pages)
+def _install(monkeypatch, pages, held=None, spam=None, fail=()):
+    svc = _Svc(pages, held=held, spam=spam, fail=fail)
     monkeypatch.setattr(yt, "svc", lambda: svc)
     return svc
 
@@ -93,13 +104,64 @@ def test_ページを最後までたどる(monkeypatch):
 
 
 def test_チャンネル全部を1度に引く(monkeypatch):
-    """本ごとに引くと 227単位。`allThreadsRelatedToChannelId` なら 1単位。"""
+    """本ごとに引くと 227単位。`allThreadsRelatedToChannelId` なら 列ごとに 1単位 ＝ 3単位。"""
     svc = _install(monkeypatch, [{"items": []}])
     yt.viewer_comments()
     asked = [k for k in svc.asked if "mine" not in k]
-    assert len(asked) == 1
-    assert asked[0]["allThreadsRelatedToChannelId"] == CID
-    assert "videoId" not in asked[0]
+    assert len(asked) == 3
+    assert [k["moderationStatus"] for k in asked] == ["published", "heldForReview", "likelySpam"]
+    for k in asked:
+        assert k["allThreadsRelatedToChannelId"] == CID
+        assert "videoId" not in k
+
+
+def test_保留と迷惑の列も引く(monkeypatch):
+    """**これが 2026-09-08 15:0x に塞いだ穴**（`yt.viewer_comments()` の註）。
+
+    `moderationStatus` を省くと API は `published` しか返さない。省いていたので、
+    保留・迷惑に落ちたコメントは道具から1件も見えず、しかも「新着 0件」と
+    published と同じ顔で印字されていた。視聴者の「コメントしたのに消えた」に答えられない。
+    """
+    _install(monkeypatch, [{"items": [
+        _thread("p1", "@a", "UC_a", "出ている", "2026-09-01T00:00:00Z")]}],
+        held=[{"items": [_thread("h1", "@b", "UC_b", "保留された", "2026-09-02T00:00:00Z")]}],
+        spam=[{"items": [_thread("s1", "@c", "UC_c", "迷惑あつかい", "2026-09-03T00:00:00Z")]}])
+    got = yt.viewer_comments()
+    assert [c["id"] for c in got] == ["s1", "h1", "p1"]
+    assert {c["id"]: c["status"] for c in got} == {
+        "p1": "published", "h1": "heldForReview", "s1": "likelySpam"}
+
+
+def test_保留の列でも自分のコメントは落ちる(monkeypatch):
+    _install(monkeypatch, [{"items": []}],
+             held=[{"items": [
+                 _thread("h1", "@自分", CID, "自動コメント", "2026-09-02T00:00:00Z"),
+                 _thread("h2", "@b", "UC_b", "視聴者", "2026-09-02T00:01:00Z")]}])
+    assert [c["id"] for c in yt.viewer_comments()] == ["h2"]
+
+
+def test_保留の列が引けなくても_published_は返る(monkeypatch):
+    """保留・迷惑は権限や仕様で落ちうる。**そこで published まで失うと、退化する。**"""
+    _install(monkeypatch, [{"items": [
+        _thread("p1", "@a", "UC_a", "出ている", "2026-09-01T00:00:00Z")]}],
+        fail=("heldForReview", "likelySpam"))
+    got = yt.viewer_comments()
+    assert [c["id"] for c in got] == ["p1"]
+    assert got[0]["status"] == "published"
+
+
+def test_published_が引けなければ_黙って握り潰さない(monkeypatch):
+    """published が落ちたら例外を上げる（`status` の except が「引けなかった」と印字する）。"""
+    import pytest
+    _install(monkeypatch, [{"items": []}], fail=("published",))
+    with pytest.raises(RuntimeError):
+        yt.viewer_comments()
+
+
+def test_with_moderation_False_なら_published_だけ(monkeypatch):
+    svc = _install(monkeypatch, [{"items": []}])
+    yt.viewer_comments(with_moderation=False)
+    assert len([k for k in svc.asked if "mine" not in k]) == 1
 
 
 def test_コメントが無くても落ちない(monkeypatch):

@@ -197,8 +197,10 @@ def stats(video_ids: list[str]) -> dict[str, dict]:
     return out
 
 
-def viewer_comments() -> list[dict]:
+def viewer_comments(with_moderation: bool = True) -> list[dict]:
     """**視聴者が書いたコメント**を、新しい順に。自分のチャンネルが書いた分は落とす。
+
+    返す各行に `status` が付く: `published` / `heldForReview` / `likelySpam`。
 
     `commentThreads.list(allThreadsRelatedToChannelId=...)` は**チャンネル全部**を1度に引く
     （1ページ 100件・実測 21件 ＝ **1単位**。本ごとに引くと 227単位 かかる）。
@@ -218,23 +220,60 @@ def viewer_comments() -> list[dict]:
     likes は 0/1 しか動かないので分解能が無いが、コメントは文で来る。**数えること。**
 
     自分の分を落とすのは `authorChannelId` == 自分のチャンネル ID（表示名では見ない）。
+    **保留と迷惑の列も引くこと（2026-09-08 15:0x JST・optimizer・Opus が足した）**:
+    `commentThreads.list` は `moderationStatus` を省くと **`published` だけ**を返す。
+    上の 20:4x の実装はそれを省いていたので、**保留（`heldForReview`）と迷惑（`likelySpam`）に
+    落ちたコメントは、道具からは1件も見えなかった** —— 見えないだけでなく、
+    「新着 0件」と**published と同じ顔で**印字されていた。
+
+    これを引いた事の起こり: 09/08 12:39 JST、`lQHX9LJ80Sg`（新しい作りの3本目）に
+    視聴者 `@sakimura5257` が **「コメントしたのに消えた」**と書いた（その 70秒前に
+    「65歳までに死んだら丸々損したことにならないの？そこが知りたい」＝ このチャンネルが
+    受け取った**初めての中身のある質問**）。**道具にはこの問いに答える口が無く**、
+    その回は使い捨ての script を書いて API を直に叩くことになった。
+
+    そのとき実測した数（2026-09-08 15:0x JST）:
+
+        published      23スレッド（うち自分 18 ＝ 旧 pipeline の自動コメント）
+        heldForReview  **0**
+        likelySpam     **0**
+
+    ＝ **消えたコメントは、こちらの保留にも迷惑にも入っていない**（YouTube 側が黙って
+    消したか、投稿が届いていない）。**この回については「こちらが握り潰した」ではないと言える。**
+    値打ちは、次にこれを訊かれたときに **`comments` を撃つだけで答えが出る**こと。
+
+    API は列ごとに 1単位 ＝ **3単位**（前は 1単位）。1日の枠 10,000 に対して無視できる。
+
     **覆る条件**: スパムや無関係なコメントが視聴者側に混ざり始めたら、ここで選り分けず
-    そのまま出して、読む側（次の回）が判断する（いまは 3件なので選り分けは要らない）。
+    そのまま出して、読む側（次の回）が判断する（いまは 5件なので選り分けは要らない）。
+    保留・迷惑が常に 0 のまま 1か月 続いたら、その2列は引かずに `published` だけへ戻してよい
+    （そのときは、この註と `with_moderation` を消すこと）。
     """
     cid = channel()["id"]
-    out, tok = [], None
-    while True:
-        r = svc().commentThreads().list(part="snippet", allThreadsRelatedToChannelId=cid,
-                                        maxResults=100, pageToken=tok, textFormat="plainText").execute()
-        for t in r.get("items", []):
-            s = t["snippet"]["topLevelComment"]["snippet"]
-            if s.get("authorChannelId", {}).get("value") == cid:
-                continue
-            out.append({"id": t["id"], "video_id": t["snippet"].get("videoId", ""),
-                        "author": s.get("authorDisplayName", ""),
-                        "at": s.get("publishedAt", ""), "likes": int(s.get("likeCount", 0)),
-                        "text": (s.get("textDisplay") or "").strip()})
-        tok = r.get("nextPageToken")
-        if not tok:
-            break
+    cols = ("published", "heldForReview", "likelySpam") if with_moderation else ("published",)
+    out = []
+    for col in cols:
+        tok = None
+        while True:
+            try:
+                r = svc().commentThreads().list(
+                    part="snippet", allThreadsRelatedToChannelId=cid, moderationStatus=col,
+                    maxResults=100, pageToken=tok, textFormat="plainText").execute()
+            except Exception:  # noqa: BLE001
+                # 保留・迷惑の列は権限や仕様で落ちることがある。published を落とさない。
+                if col == "published":
+                    raise
+                break
+            for t in r.get("items", []):
+                s = t["snippet"]["topLevelComment"]["snippet"]
+                if s.get("authorChannelId", {}).get("value") == cid:
+                    continue
+                out.append({"id": t["id"], "video_id": t["snippet"].get("videoId", ""),
+                            "author": s.get("authorDisplayName", ""),
+                            "at": s.get("publishedAt", ""), "likes": int(s.get("likeCount", 0)),
+                            "status": col,
+                            "text": (s.get("textDisplay") or "").strip()})
+            tok = r.get("nextPageToken")
+            if not tok:
+                break
     return sorted(out, key=lambda c: c["at"], reverse=True)
