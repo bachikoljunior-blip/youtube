@@ -167,6 +167,26 @@ def log_wake(d: dict, now: datetime | None = None) -> dict:
         "roles": list(d.get("roles") or []),
         "why": str(d.get("why") or "")[:300],
     }
+    # **決めるのに使った数も残す**（2026-09-08 21:4x・optimizer・Opus が実測して足した。§5）。
+    #
+    # 17:0x はこの台帳を「間隔の途中／サブが走っている／起きなかった」を分けるために足し、
+    # 19:1x は `decide()` に**丸め**（`target = floor - 心拍/2`）を足しました。
+    # ところが `log_wake` は `why` の**日本語の文**しか残しておらず、
+    # **その丸めが効いた回かどうかを、次の回が数で読めませんでした。**
+    #
+    # 実測（この回が踏んだ）: 19:1x の直し以降の GO は 2件 とも `idle`（0体）で、
+    # **丸めの枝は1度も通っていません**。それを確かめるのに、
+    # `why` の「走っているサブは 0体」という**文字列を探す**しかありませんでした
+    # ——「数で見る」ための台帳が、数の側を捨てていた形です。
+    #
+    # `decide()` は既に全部 数で返しているので、**足すのは書き写しだけ**（API 0単位・新しい判断なし）。
+    # `None` は落とします（古い行と混ぜても「無い」と読める。列を増やさない）。
+    for key in ("floor_min", "passed_min", "target_min", "idle",
+                "heartbeat_min", "heartbeat_source", "patch"):
+        got = d.get(key)
+        if got is None:
+            continue
+        row[key] = round(got, 1) if isinstance(got, float) else got
     try:
         WAKES.parent.mkdir(parents=True, exist_ok=True)
         with WAKES.open("a", encoding="utf-8") as fh:
@@ -301,6 +321,17 @@ def heartbeat_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
     **数は写しを持ちません。** 心拍が変われば（オーナーが cron を触る・別の親になる）、
     `data/parent_wakes.jsonl` の `who == "owner"` の行の間隔が先に変わります。
     間隔が `HEARTBEAT_MIN_GAPS` 本 たまるまでは `HEARTBEAT_FALLBACK_MIN`（cron の写し）。
+
+    **【2026-09-08 21:4x・optimizer・Opus】上の「親は毎時1回しか起きません」は、
+    この関数が読む台帳自身に 1日 で覆されました。** `who == "owner"` の 9行・間隔 8本 は
+    **15.2・15.8・16.7・22.5・25.6・25.7・39.1・60.0分 ＝ 中央値 24.1分**で、
+    **60分 は 8本 中 1本 だけ**（`:59` に来ているのは最初の 2行 だけ）。
+    親は `decide()` の idle の枝で **自分に `send_later` の起こしを置く**ので、
+    cron の刻みに縛られず**分の粒度で起きています。**
+    **直す所はここにありません** —— 写しを持たない形に書いてあるので、間隔が 3本 たまった時点で
+    この関数は 60 → 24.1 へ自分で乗り換えました（本物の呼びで `heartbeat_min: 24.1` と出た）。
+    **古いのは上の 289〜299行 の説明のほうで、あれは 19:1x の時点の読みとして残してあります。**
+    **いまの 24.1分 は間隔 8本 と薄い**ので、20本 たまったら数え直すこと（§5 の覆る条件 (4)）。
 
     **中央値で取るのは、送り込みの起こし（`send_later`）や穴が混ざるから**です
     （平均だと 378分 の穴が1つ入るだけで倍になる）。

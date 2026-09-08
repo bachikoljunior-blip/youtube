@@ -148,3 +148,46 @@ def test_作業木の外なら_親の入口を通った回は_owner(tmp_path, mo
     monkeypatch.setattr(next_round, "ROOT", tmp_path / "youtube")
     monkeypatch.setitem(__import__("sys").modules, "scripts.next_round_owner", object())
     assert next_round._who() == "owner"
+
+
+def test_決めるのに使った数も残す_これが2つ目の本題(tmp_path, monkeypatch):
+    """**`why` の日本語を読まないと分からない、では次の回が数えられない**
+    （2026-09-08 21:4x・optimizer・Opus。§5）。
+
+    19:1x が `decide()` に足した丸め（`target = floor - 心拍/2`）が効いた回かどうかは、
+    `target_min` と `idle` が無いと**文字列を探す**しかありませんでした
+    （実測: 直し以降の GO 2件 は、`why` の「走っているサブは 0体」で idle と判った）。
+    `decide()` は既に数で返しているので、落とさずに書き写すだけ。
+    """
+    p = _use(tmp_path, monkeypatch)
+    next_round.log_wake({"go": True, "live": 1, "wait_min": 0, "roles": ["hourly"],
+                         "why": "x", "floor_min": 76.0, "passed_min": 64.2,
+                         "target_min": 63.95, "idle": False,
+                         "heartbeat_min": 24.09, "heartbeat_source": "台帳の実測"})
+    (row,) = _read(p)
+    assert row["target_min"] == 64.0 and row["floor_min"] == 76.0
+    assert row["idle"] is False and row["heartbeat_min"] == 24.1
+    assert row["heartbeat_source"] == "台帳の実測"
+
+
+def test_無い数は列を作らない_古い行と混ぜて読めるように(tmp_path, monkeypatch):
+    """`decide()` が早く返した枝（最初の1周・穴埋め）には `target_min` が在りません。
+    `None` を書くと、**古い行の「無い」と、新しい行の「決めなかった」が同じ顔**になります。"""
+    p = _use(tmp_path, monkeypatch)
+    next_round.log_wake({"go": True, "live": 0, "wait_min": 0, "roles": ["hourly"],
+                         "why": "前の周の記録がありません（最初の1周）", "floor_min": 76.0})
+    (row,) = _read(p)
+    assert row["floor_min"] == 76.0
+    assert "target_min" not in row and "idle" not in row
+
+
+def test_丸めの枝を通った回を数で拾える_陽性対照(tmp_path, monkeypatch):
+    """**この検査が守っている当のもの**: `target_min < floor_min` なら丸めが効いた回。
+    書き写しを外すと、この見分けは `why` の文字列探しに戻ります。"""
+    p = _use(tmp_path, monkeypatch)
+    next_round.log_wake({"go": True, "live": 2, "wait_min": 0, "roles": ["hourly"],
+                         "why": "x", "floor_min": 76.0, "target_min": 64.0, "idle": False})
+    next_round.log_wake({"go": True, "live": 0, "wait_min": 0, "roles": ["hourly"],
+                         "why": "y", "floor_min": 76.0, "target_min": 76.0, "idle": True})
+    rounded = [r for r in _read(p) if r.get("target_min", 0) < r.get("floor_min", 0)]
+    assert len(rounded) == 1 and rounded[0]["idle"] is False
