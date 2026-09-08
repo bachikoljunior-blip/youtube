@@ -1,6 +1,6 @@
 """`studio.cli reply` —— 視聴者のコメント1件に、手で書いた返信を1つ付ける口（2026-09-08 15:1x・hourly・Fable）。
 
-門は3つ: 台帳の `viewer_comment` に在る ID にだけ撃つ・同じ ID に2度 撃たない・文が空なら撃たない。
+門は3つ: 台帳の `viewer_comment` に在る ID にだけ撃つ・同じスレッドに同じ文を2度 撃たない（別の文は通す。会話は同じスレッドに続く）・文が空なら撃たない。
 旧 `scripts/post_pending_comments.py` の自動投稿とは違い、背景から呼ぶ口は無い。
 """
 from __future__ import annotations
@@ -63,12 +63,16 @@ def test_台帳に無いIDには撃たない(tmp_path, monkeypatch):
     assert svc.bodies == []
 
 
-def test_同じIDに2度は撃たない(tmp_path, monkeypatch):
+def test_同じスレッドに同じ文は2度撃たない_別の文は通る(tmp_path, monkeypatch):
+    # 2026-09-08 20:3x（hourly・Fable）: 会話は同じスレッドに続く（1問目の返信に視聴者が2問目を返した実測）。
+    # 止めるのは「同じ文」だけ。別の文（次の問いへの答え）は通す。
     _ledger(tmp_path, monkeypatch, [VC, {"event": "replied", "id": "v1", "comment_id": "c1", "text": "x"}])
     svc = _Svc()
     monkeypatch.setattr(yt, "svc", lambda: svc)
-    assert cli.cmd_reply(_A("c1", "もう一度")) == 1
+    assert cli.cmd_reply(_A("c1", "x")) == 1
     assert svc.bodies == []
+    assert cli.cmd_reply(_A("c1", "2問目への答え")) == 0
+    assert len(svc.bodies) == 1
 
 
 def test_空の文と_dry_runは撃たない(tmp_path, monkeypatch):
