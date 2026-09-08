@@ -205,6 +205,39 @@ def stats(video_ids: list[str]) -> dict[str, dict]:
     return out
 
 
+def _comment_row(cid_: str, video_id: str, sn: dict, status: str, parent_id: str, is_reply: bool) -> dict:
+    """`viewer_comments()` の1行。最上位コメントと返信で同じ形にする（読む側が分けなくてよい）。"""
+    return {"id": cid_, "video_id": video_id,
+            "author": sn.get("authorDisplayName", ""),
+            "at": sn.get("publishedAt", ""), "likes": int(sn.get("likeCount", 0)),
+            "status": status, "parent_id": parent_id, "reply": is_reply,
+            "text": (sn.get("textDisplay") or "").strip()}
+
+
+def _replies(thread: dict, cid: str) -> list[dict]:
+    """スレッド1つの返信を全部。`commentThreads` は最大 5件 しか載せないので、足りなければ足で引く。
+
+    `comments.list` は 1単位／スレッド。**5件 を越えるスレッドが在るときだけ**撃つ
+    （2026-09-09 現在 0件 ＝ 実際の追加は 0単位）。
+    """
+    got = thread.get("replies", {}).get("comments", [])
+    total = int(thread["snippet"].get("totalReplyCount", 0) or 0)
+    if total <= len(got):
+        return got
+    out, tok = [], None
+    while True:
+        try:
+            r = svc().comments().list(part="snippet", parentId=thread["id"], maxResults=100,
+                                      pageToken=tok, textFormat="plainText").execute()
+        except Exception:  # noqa: BLE001
+            # 足で引けなくても、載っていた 5件 は失わない（退化させない）。
+            return got
+        out.extend(r.get("items", []))
+        tok = r.get("nextPageToken")
+        if not tok:
+            return out or got
+
+
 def viewer_comments(with_moderation: bool = True) -> list[dict]:
     """**視聴者が書いたコメント**を、新しい順に。自分のチャンネルが書いた分は落とす。
 
@@ -252,10 +285,41 @@ def viewer_comments(with_moderation: bool = True) -> list[dict]:
 
     API は列ごとに 1単位 ＝ **3単位**（前は 1単位）。1日の枠 10,000 に対して無視できる。
 
+    **スレッドの中の返信も引くこと（2026-09-09 04:2x JST・optimizer・Opus が足した）**:
+    `commentThreads.list` は `part="snippet"` だけだと **最上位コメントしか返しません**。
+    ＝ **こちらが返信したあとに視聴者が同じスレッドへ書いた続きは、道具から1件も見えない。**
+
+    実測（この回に API を直に撃って確かめた。スレッド `Ugxalw5necUowSfrP1t4AaABAg`）:
+
+        09/08 03:38Z  @sakimura5257  「65歳までに死んだら丸々損したことにならないの？」  ← 最上位・**見えていた**
+        09/08 08:10Z  こちら          返信1
+        09/08 09:41Z  @sakimura5257  **「遺族年金は必ず受給できますか？」**              ← 返信・**見えていなかった**
+        09/08 11:29Z  こちら          返信2
+
+    台帳には **2問目の `viewer_comment` 行が1行も無く**、`replied` 行だけが在ります
+    （`grep '遺族年金は必ず' data/studio/ledger.jsonl` ＝ 0件）——
+    **答えは残っているのに、問いは残っていない。** 20:2x の回が使い捨ての script で API を直に見て
+    気づいたから答えられただけで、道具は「新着 0件」と言い続けていました
+    （§7 は 20:4x・21:4x・23:0x・00:2x・01:5x・02:5x の 6周 それを書き写しています）。
+    **`status` の「新着 0件」は、いちばん濃い反応（会話の続き）を構造的に見ていませんでした。**
+
+    **もう1つ、同じ穴の大きいほう**: 最上位が**自分**のスレッド（旧 pipeline の自動コメント **18本**）は
+    `continue` でスレッドごと落としていたので、**そこに視聴者が返信しても永久に見えません**。
+    いまは「自分の**行**を落とす」だけにし、返信は必ず見ます。
+
+    API: `part="snippet,replies"` は `commentThreads.list` の単位を増やしません（列ごと 1単位 ＝ 3単位のまま）。
+    `replies` は**最大 5件**しか返らないので、`totalReplyCount` がそれより多いスレッドだけ
+    `comments.list(parentId=...)` を足で引きます（そのスレッド 1つにつき 1単位。いまは 0件）。
+
+    返る行: `parent_id`（スレッド ID ＝ 返信先）と `reply`（True なら返信）が付きます。
+    `cli reply` は `parent_id` へ撃つこと（返信の ID は `parentId` に渡せない）。
+
     **覆る条件**: スパムや無関係なコメントが視聴者側に混ざり始めたら、ここで選り分けず
     そのまま出して、読む側（次の回）が判断する（いまは 5件なので選り分けは要らない）。
     保留・迷惑が常に 0 のまま 1か月 続いたら、その2列は引かずに `published` だけへ戻してよい
     （そのときは、この註と `with_moderation` を消すこと）。
+    返信を1件も持たないスレッドしか 1か月 出なくなったら…では**戻さないこと**:
+    返信が来ない証拠は、返信を引いて初めて得られる（引くのをやめると、また見えなくなる）。
     """
     cid = channel()["id"]
     cols = ("published", "heldForReview", "likelySpam") if with_moderation else ("published",)
@@ -265,7 +329,7 @@ def viewer_comments(with_moderation: bool = True) -> list[dict]:
         while True:
             try:
                 r = svc().commentThreads().list(
-                    part="snippet", allThreadsRelatedToChannelId=cid, moderationStatus=col,
+                    part="snippet,replies", allThreadsRelatedToChannelId=cid, moderationStatus=col,
                     maxResults=100, pageToken=tok, textFormat="plainText").execute()
             except Exception:  # noqa: BLE001
                 # 保留・迷惑の列は権限や仕様で落ちることがある。published を落とさない。
@@ -273,14 +337,16 @@ def viewer_comments(with_moderation: bool = True) -> list[dict]:
                     raise
                 break
             for t in r.get("items", []):
-                s = t["snippet"]["topLevelComment"]["snippet"]
-                if s.get("authorChannelId", {}).get("value") == cid:
-                    continue
-                out.append({"id": t["id"], "video_id": t["snippet"].get("videoId", ""),
-                            "author": s.get("authorDisplayName", ""),
-                            "at": s.get("publishedAt", ""), "likes": int(s.get("likeCount", 0)),
-                            "status": col,
-                            "text": (s.get("textDisplay") or "").strip()})
+                vid = t["snippet"].get("videoId", "")
+                tls = t["snippet"]["topLevelComment"]["snippet"]
+                # 最上位が自分でも **スレッドは落とさない**（返信に視聴者が居る）。落とすのはこの行だけ。
+                if tls.get("authorChannelId", {}).get("value") != cid:
+                    out.append(_comment_row(t["id"], vid, tls, col, t["id"], False))
+                for c in _replies(t, cid):
+                    cs = c["snippet"]
+                    if cs.get("authorChannelId", {}).get("value") == cid:
+                        continue
+                    out.append(_comment_row(c["id"], vid or cs.get("videoId", ""), cs, col, t["id"], True))
             tok = r.get("nextPageToken")
             if not tok:
                 break

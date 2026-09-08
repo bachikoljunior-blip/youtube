@@ -130,11 +130,16 @@ def cmd_status(a):
         fresh = [c for c in cs if c["id"] not in seen]
         held = [c for c in cs if c.get("status", "published") != "published"]
         note = f"・**保留/迷惑 {len(held)}件**" if held else "・保留/迷惑 0件"
-        print(f"視聴者コメント: {len(cs)}件（台帳に無い新着 {len(fresh)}件{note}）")
-        for c in cs[:3]:
+        nrep = sum(1 for c in cs if c.get("reply"))
+        print(f"視聴者コメント: {len(cs)}件（台帳に無い新着 {len(fresh)}件{note}"
+              + (f"・うちスレッドの返信 {nrep}件" if nrep else "") + "）")
+        # 新着は必ず出す（3件で切って隠さない）。2026-09-09 04:2x: 返信を引くようにしたので、
+        # いちばん濃い反応（会話の続き）がここに来る。
+        for c in (fresh + [c for c in cs if c not in fresh])[:3 + len(fresh)]:
             mark = "★新" if c["id"] in {f["id"] for f in fresh} else "  "
             st = "" if c.get("status", "published") == "published" else f"[{c['status']}]"
-            print(f"  {mark}{st} {c['at'][:16]} {c['video_id']} {c['author']}: {c['text'][:60]}")
+            arrow = "↳" if c.get("reply") else " "
+            print(f"  {mark}{st}{arrow} {c['at'][:16]} {c['video_id']} {c['author']}: {c['text'][:60]}")
     except Exception as e:  # noqa: BLE001
         print("視聴者コメントは引けなかった:", str(e)[:100])
     print("台帳 直近 5行:")
@@ -338,11 +343,14 @@ def cmd_comments(a):
     for c in cs:
         new = c["id"] not in seen
         st = c.get("status", "published")
-        print(f"{'★新着' if new else '     '} {c['at'][:16]} {c['video_id']} いいね{c['likes']} "
+        # 返信は「スレッドの続き」と分かる形で出す（`parent_id` が返信先 ＝ `cli reply` が撃つ先）。
+        head = f"↳返信 親 {c['parent_id']}" if c.get("reply") else c["video_id"]
+        print(f"{'★新着' if new else '     '} {c['at'][:16]} {head} いいね{c['likes']} "
               f"{'' if st == 'published' else '[' + st + '] '}{c['author']}\n       {c['text'][:400]}")
         if new:
             ledger("viewer_comment", c["video_id"], comment_id=c["id"], author=c["author"],
-                   posted_at=c["at"], status=st, text=c["text"][:500])
+                   posted_at=c["at"], status=st, parent_id=c.get("parent_id", c["id"]),
+                   reply=bool(c.get("reply")), text=c["text"][:500])
     held = [c for c in cs if c.get("status", "published") != "published"]
     print(f"—— {len(cs)}件（うち台帳に無かった新着 {sum(1 for c in cs if c['id'] not in seen)}件）")
     # 保留・迷惑の列は 2026-09-08 15:0x まで1度も引かれていなかった（`yt.viewer_comments()` の註）。
@@ -380,7 +388,14 @@ def cmd_reply(a):
     # 門 (2) は「同じスレッドに同じ文を2度」だけ止める（2026-09-08 20:3x・hourly・Fable に緩めた）。
     # 会話は同じスレッドに続く —— 実測: 1問目の返信（17:10・オーナーの手）に視聴者が 18:41 に2問目を返し、
     # 2つ目の返信が要った。「同じ ID に2度 撃たない」のままだと、台帳に `replied` が1行 在るだけで 3問目に答えられない。
-    prev = [r for r in rows if r.get("event") == "replied" and r.get("comment_id") == a.comment_id]
+    # **撃つ先はスレッド ID**（`parentId` に返信の ID は渡せない）。台帳の行が返信なら親へ向け直す。
+    # 2026-09-09 04:2x: `viewer_comments()` が返信も返すようになり、`--comment-id` に返信の ID が
+    # 渡りうるようになった（それまでは最上位しか台帳に無かったので、必ず自分自身が親だった）。
+    parent = src.get("parent_id") or a.comment_id
+    threads = {r.get("comment_id") for r in rows
+               if r.get("event") == "viewer_comment" and (r.get("parent_id") or r.get("comment_id")) == parent}
+    threads.add(parent)
+    prev = [r for r in rows if r.get("event") == "replied" and r.get("comment_id") in threads]
     if any((r.get("text") or "").strip() == text[:1000].strip() for r in prev):
         print("同じ文をもう返信ずみ（台帳 replied）。2度は撃たない")
         return 1
@@ -392,8 +407,8 @@ def cmd_reply(a):
     if a.dry_run:
         print("[dry-run] 撃っていない")
         return 0
-    rid = yt.reply(a.comment_id, text)
-    ledger("replied", video_id, comment_id=a.comment_id, reply_id=rid, text=text[:1000])
+    rid = yt.reply(parent, text)
+    ledger("replied", video_id, comment_id=a.comment_id, parent_id=parent, reply_id=rid, text=text[:1000])
     print("返信した:", rid)
     return 0
 
