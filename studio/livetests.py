@@ -20,22 +20,36 @@
 `test_studio_*` に当たらず、**`pytest tests/test_studio_*.py` という自然な近道から黙って落ちていました。**
 
     規則A（腐らない側）  `studio` を import している検査は、全部 live
-    規則B（名指し）      親の手続き（`scripts/spawn_prompt.py`・`scripts/next_round.py` の GO の枝・
-                         `docs/trigger_parent.md`）を見る検査 —— import では引けないので名指し
+    規則C（腐らない側）  **親の手続き**（`scripts/next_round.py`・`next_round_owner.py`・
+                         `spawn_prompt.py`）を **import** している検査は、全部 live
+    規則B（名指し）      import でも引けない側（本文や `docs/` を**読む**検査）だけ、名指し
 
 規則B を「本文に `spawn_prompt` と書いてあれば live」に広げると **31ファイル** が当たります
 （大半は散文で名前に触れているだけの旧道具の検査）。**広げないこと。**
+**規則C は「本文への言及」ではなく import で引くので、当たるのは 7ファイル**（2026-09-08 19:2x に数えた）。
+
+> **【2026-09-08 19:2x】規則B は、この註が予言したとおりに忘れられました**（optimizer・Opus）。
+> 09/08 17:3x の回が `data/parent_wakes.jsonl` と検査 `tests/test_parent_wake_log.py`（**9件**）を
+> 足しましたが、**`EXTRA` に名前を足していません** ＝ `-m live` はその 9件 を **1度も撃っていませんでした。**
+> **規則B が書かれた次の回に、規則B が拾えない検査が生まれています** ——
+> 「14個目を書いた回が忘れます」と下に書いてあるのと**同じ形**が、名簿の側で起きました。
+> → 規則C（import で引く）を足し、`-m live` は **111件 → 174件**（8.3秒）になりました。
+> **覆る条件**: 親の手続きの本体が増えたら `PARENT_MODULES` に足す
+> （`tests/test_live_marker.py` が**自前の写しで**突き合わせるので、片方だけ直すと落ちます）。
 
 ## 使い方
 
-    python -m pytest -m live -q      生きている信号（実測 13ファイル・85件・**15秒**）
+    python -m pytest -m live -q      生きている信号（実測 23ファイル・174件・**8.3秒**）
     python -m pytest tests/ -q       旧道具ごと全部（約9分。上の2件は xfail なので赤くない）
+
+**この数を写して引かないこと。撃って読むこと**（増えるのが正しい方向です）。
 
 印を付けるのは `conftest.py` の `pytest_collection_modifyitems` で、**検査の側には1行も書きません**
 （13ファイルに `pytestmark` を書く形にすると、14個目を書いた回が忘れます）。
 
-**覆る条件**: (1) `studio` を import しないのに生きている道具の検査が出たら、規則B に名指しで足す
+**覆る条件**: (1) 規則A にも C にも当たらないのに生きている道具の検査が出たら、規則B に名指しで足す
 （`tests/test_live_marker.py` が「名指しした名前が実在すること」を見ているので、改名では黙って落ちない）。
+**足す前に、import で引けないかを先に見ること** —— 名簿は忘れられます（上の 19:2x）。
 (2) 旧道具を使う判断が `docs/METHOD.md` に書かれたら（§8 の覆る条件）、この分け方ごと要らなくなる。
 """
 from __future__ import annotations
@@ -49,7 +63,26 @@ TESTS = ROOT / "tests"
 #: 規則A —— `from studio …` / `import studio…`（行頭の空白は許す ＝ 関数の中の import も拾う）
 IMPORTS_STUDIO = re.compile(r"^[ \t]*(?:from|import)[ \t]+studio\b", re.M)
 
-#: 規則B —— import では引けない、親の手続きの検査。**名指し。広げないこと**（上の註）。
+#: 規則C —— **親の手続きを import している検査**（2026-09-08 19:2x・optimizer・Opus が足した）。
+#:
+#: **なぜ足したか（実測）**: 規則B は手で書く名簿なので、**その註が予言したとおりに忘れられました。**
+#: 09/08 17:3x の回が親の起きの台帳（`data/parent_wakes.jsonl`）と検査 `tests/test_parent_wake_log.py`
+#: **9件** を足しましたが、**`EXTRA` に名前を足していません** ——
+#: ＝ `pytest -m live` はその 9件 を **1度も撃っていませんでした**（この回に `is_live()` を撃って確かめた）。
+#: **規則B が作られた次の回に、規則B が拾えない検査が生まれています。**
+#:
+#: **規則A と同じ形（import で引く）にすれば腐りません。** 親の手続きの本体は
+#: `scripts/next_round.py`・`scripts/next_round_owner.py`・`scripts/spawn_prompt.py` の3つで、
+#: **それを import する検査は、親の手続きの検査です。**
+#: 註が警戒していたのは「**本文に名前が出てくれば live**」に広げる形（31ファイル 当たる）で、
+#: **import に限れば 7ファイル**（この回に数えた。全部 緑・1.53秒）。**本文への言及では引かないこと。**
+PARENT_MODULES = ("next_round", "next_round_owner", "spawn_prompt")
+IMPORTS_PARENT = re.compile(
+    r"^[ \t]*(?:from|import)[ \t]+scripts[ \t.].*?\b(?:%s)\b" % "|".join(PARENT_MODULES),
+    re.M)
+
+#: 規則B —— import でも引けない、親の手続きの検査（本文や `docs/` を**読む**側）。
+#: **名指し。広げないこと**（上の註）。規則C が引けるものは、ここに足さないこと。
 EXTRA = frozenset({
     "test_spawn_prompt_main_gap.py",
     "test_spawn_siblings_touched.py",
@@ -67,9 +100,10 @@ def is_live(path: Path | str) -> bool:
     if not p.name.startswith("test_") or p.suffix != ".py":
         return False
     try:
-        return bool(IMPORTS_STUDIO.search(p.read_text(encoding="utf-8")))
+        text = p.read_text(encoding="utf-8")
     except OSError:
         return False
+    return bool(IMPORTS_STUDIO.search(text) or IMPORTS_PARENT.search(text))
 
 
 def live_files() -> list[Path]:

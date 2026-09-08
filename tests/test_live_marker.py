@@ -50,6 +50,44 @@ def test_studio_を_import_する検査は全部_live() -> None:
         "`studio/livetests.py` の規則A が効いていません")
 
 
+#: **`livetests.PARENT_MODULES` を読まずに、ここに書き下す。**
+#: 最初の形は `L.PARENT_MODULES` を借りていて、**陽性対照で通り抜けました**
+#: （名前を壊すと候補も 0件 になり、差が空のまま緑 —— 06:5x に規則A で踏んだのと同じ穴を、
+#:  同じファイルの中でもう一度 踏みました）。**借りると、見張りは規則と一緒に死にます。**
+_PARENT_MODULES_HERE = ("next_round", "next_round_owner", "spawn_prompt")
+
+
+def _imports_parent(p: Path) -> bool:
+    """**規則C を、`livetests.IMPORTS_PARENT` とは別の実装で数え直す**（上と同じ理由）。"""
+    for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+        s = line.strip()
+        if not (s.startswith("from scripts") or s.startswith("import scripts")):
+            continue
+        if any(m in s for m in _PARENT_MODULES_HERE):
+            return True
+    return False
+
+
+def test_親の手続きを_import_する検査は全部_live() -> None:
+    """**規則C。** 規則B（手で書く名簿）は、作られた次の回に忘れられました ——
+    09/08 17:3x が足した `tests/test_parent_wake_log.py`（9件）は `EXTRA` に無く、
+    `-m live` から**黙って落ちて**いました。import で引けば、忘れても落ちません。
+    """
+    missed = [p.name for p in L.TESTS.glob("test_*.py")
+              if _imports_parent(p) and not L.is_live(p)]
+    assert not missed, (
+        f"親の手続きを import しているのに live でない検査があります: {missed}。"
+        "`studio/livetests.py` の規則C が効いていません")
+
+
+def test_忘れられていた_親の起きの台帳の検査が_live_であること() -> None:
+    """**実際に落ちていた1件を名指しで見張る**（規則C が消えたら、ここが教える）。"""
+    p = L.TESTS / "test_parent_wake_log.py"
+    if not p.exists():           # 消したのなら、この検査は役目を終えている
+        return
+    assert L.is_live(p), "親の起きの台帳の検査が live から外れています"
+
+
 def test_名指しした検査が実在すること() -> None:
     """**規則B は名指しなので、改名すると黙って落ちます。** ここで落とす。"""
     gone = sorted(n for n in L.EXTRA if not (L.TESTS / n).exists())

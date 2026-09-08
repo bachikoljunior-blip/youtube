@@ -70,6 +70,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from statistics import median
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -161,6 +162,35 @@ def log_wake(d: dict, now: datetime | None = None) -> dict:
         pass
     return row
 
+def wake_rows() -> list[dict]:
+    """親の起きの台帳を読む（壊れた行は捨てる。**止めない**）。"""
+    if not WAKES.exists():
+        return []
+    out = []
+    try:
+        lines = WAKES.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def _wake_at(row: dict) -> datetime | None:
+    """起きの時刻。読めなければ `None`（**捨てずに、無い扱い**。`_at()` と同じ形）。"""
+    try:
+        got = datetime.fromisoformat(str(row.get("at")))
+    except (TypeError, ValueError):
+        return None
+    return got if got.tzinfo else got.replace(tzinfo=timezone.utc)
+
+
 #: **いま走っているサブの数**を、親が置いていく台帳（`--live-set` で書く）。
 #: `--live` を渡さなかった回は、ここを読みます。
 LIVE = ROOT / "data" / "live_subs.json"
@@ -219,6 +249,60 @@ IDLE_WAIT_MAX_MIN = 360.0
 
 #: 印字に使う、上限の言葉（数は `quota.owner_rate_cap()` が毎回 目盛りから出す。写さない）。
 OWNER_CAP_WORDS = "「今までの最高速度の二分の一」"
+
+#: **親の心拍の周期（分）。** 親が起きられるのは、この刻みの上だけです
+#: （Routine `trig_01GM4wKqD8aCfrQzsQbRoA4r`・cron `59 * * * *` ＝ 毎時1回。
+#:  2026-09-08 19:1x に `list_triggers` で撃って確かめた）。
+#: **写しなので、`heartbeat_minutes()` が台帳から数え直せるときはそちらが勝ちます。**
+HEARTBEAT_FALLBACK_MIN = 60.0
+
+#: 心拍を数え直すのに要る、最低の間隔の数（これ未満なら上の写しを使う）。
+HEARTBEAT_MIN_GAPS = 3
+
+#: 時計の揺れ（分）。親の起きは `:59` ちょうどではなく `:59:1x`〜`:59:5x` に来るので、
+#: 「1心拍 空けた」を 60.0 で締めると、0.5分 足りない回が落ちます（実測 59.8分）。
+HEARTBEAT_SLACK_MIN = 2.0
+
+
+def heartbeat_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
+    """**親が起きられる刻み（分）と、どこから来たか。**
+
+    **なぜ要るのか**（2026-09-08 19:1x・optimizer・Opus が実測して足した。§5）:
+
+    `decide()` は `passed >= floor` で GO を出しますが、**親は毎時1回しか起きません。**
+    ＝ `floor` が 60分 をほんの少しでも越えると、**その周は次の心拍まで飛びます。**
+
+        pace() の求める間隔 77分  → 実際の周から周は **119.3分**（60分 の刻みへ切り上がる）
+        pace() の求める間隔 48分  → 実際の周から周は **59.8分**
+
+    実測（`data/rounds.jsonl`・09/07 10:18〜09/08 18:59 の 15区間）:
+    **120±5分 が 12区間・60±5分 が 2区間**（残り1つは 378分 の穴）。
+    `floor` が 48分 だった 2区間 だけが 60分 で、77分 になった直後から 119.3分 に戻っています。
+    ＝ **29分 の求めの差が、実際の間隔を 2倍 にしていました。**
+
+    §5 17:0x は「77分 > 60分 なので、いまは cron（毎時）が上限ではありません」と書きましたが、
+    **逆でした** —— 60分 の心拍では、60分 を越える求めは全部 120分 になります。
+    実測の効き目: 許される 0.775 %/時 に対し、区間の実測は **0.443 %/時**（57%）。
+
+    **数は写しを持ちません。** 心拍が変われば（オーナーが cron を触る・別の親になる）、
+    `data/parent_wakes.jsonl` の `who == "owner"` の行の間隔が先に変わります。
+    間隔が `HEARTBEAT_MIN_GAPS` 本 たまるまでは `HEARTBEAT_FALLBACK_MIN`（cron の写し）。
+
+    **中央値で取るのは、送り込みの起こし（`send_later`）や穴が混ざるから**です
+    （平均だと 378分 の穴が1つ入るだけで倍になる）。
+    """
+    got = rows if rows is not None else wake_rows()
+    at = sorted(t for r in got if r.get("who") == "owner"
+                and (t := _wake_at(r)) is not None)
+    gaps = [(b - a).total_seconds() / 60.0 for a, b in zip(at, at[1:])]
+    gaps = [g for g in gaps if g > 0]
+    if len(gaps) < HEARTBEAT_MIN_GAPS:
+        return HEARTBEAT_FALLBACK_MIN, (
+            f"cron の写し（間隔 {len(gaps)}本 < {HEARTBEAT_MIN_GAPS}本）")
+    got_med = median(gaps)
+    # 歯止め。台帳が壊れた回に、心拍を 0 や 1日 と読ませない。
+    got_med = min(180.0, max(10.0, got_med))
+    return got_med, f"`data/parent_wakes.jsonl` の実測（間隔 {len(gaps)}本 の中央値）"
 
 #: **親が置いた起こし**の台帳（`decide()` が WAIT を印字したときに書く）。
 #: 同じ周のあいだに親が何度 起きても（サブの完了通知は何度も来る）、
@@ -584,14 +668,50 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
                 "why": ("いまの周に " + "・".join(missing) + " が立っていません"
                         "（**穴埋め。間隔は待ちません**）")}
 
-    if passed >= floor:
+    # **心拍の刻みへ「近いほうへ」丸める**（2026-09-08 19:1x・optimizer・Opus。§5）。
+    #
+    # `passed >= floor` だけで見ると、**間隔は必ず心拍の刻みへ切り上がります** ——
+    # 親が起きられるのは毎時1回なので、`floor` 77分 は 119.3分 になり、48分 は 59.8分 になる。
+    # 実測（`data/rounds.jsonl` 15区間）: **120±5分 が 12区間・60±5分 が 2区間**。
+    # 60分 の 2区間 は `floor` が 48分 だった回で、77分 に変わった直後に 119.3分 へ戻っています。
+    # ＝ **求めの 29分 の差が、実際の間隔を 2倍 にしていました**（許される 0.775 %/時 に対し実測 0.443 %/時）。
+    #
+    # 直しは「切り上げ」を「近いほうへ」に変えるだけです:
+    #     いま出す      → 間隔は passed（floor に足りない ぶんだけ短い）
+    #     次の心拍まで待つ → 間隔は passed + 心拍（floor を越えた ぶんだけ長い）
+    #   **どちらが floor に近いか**で決める ＝ `passed >= floor - 心拍/2`。
+    #
+    # **速さの上限は変わりません** —— 親は1心拍に1回しか起きないので、
+    # これで増えるのは「刻みを1つ飛ばさなくなる」ぶんだけ（＝ §5 16:0x が「毎時が上限」と
+    # 呼んだ線そのもの）。`docs/FOR_OWNER.md` の窓は1時間 なので、依頼が2回 出る側にも動きません。
+    # **上振れは pace() が次の周で引き戻します**（目盛りを読み直して `floor` を伸ばす ＝
+    # そのとき `floor - 心拍/2` が 60分 を越え、また 120分 に戻る）。切り上げだけが、
+    # 引き戻しの利かない片側の偏りでした。
+    beat, beat_src = heartbeat_minutes()
+    base["heartbeat_min"] = beat
+    base["heartbeat_source"] = beat_src
+    # **0体 の回は丸めません。** そのときは親が `send_later` で**分の粒度**の起こしを
+    # 置けるので（下）、心拍の刻みに縛られていません ＝ 丸める理由がない。
+    #
+    # 丸めても **1心拍に2周は立てない**: 心拍の外から起こされた回（`send_later`・手で撃った回）に
+    # `floor` が心拍より短いと、`floor - 心拍/2` が小さくなりすぎるので、下限で締めます。
+    target = floor
+    if not idle:
+        target = max(floor - beat / 2.0, beat - HEARTBEAT_SLACK_MIN)
+        target = min(target, floor)
+    if passed >= target:
+        early = floor - passed
         return {**base, "go": True, "roles": list(ROLES), "passed_min": passed,
-                "idle": idle,
+                "idle": idle, "target_min": target,
                 "why": (f"前の周の開始から {passed:.0f}分（間隔 {floor:.0f}分）"
-                        + ("・走っているサブは 0体" if idle else ""))}
-    wait = floor - passed
+                        + ("・走っているサブは 0体" if idle else "")
+                        + (f"・**次の心拍（{beat:.0f}分 後）まで待つと "
+                           f"{passed + beat:.0f}分 になり、間隔から {passed + beat - floor:.0f}分 "
+                           f"外れます。いまなら {early:.0f}分**（心拍は {beat_src}）"
+                           if early > 0 else ""))}
+    wait = target - passed
     out = {**base, "go": False, "roles": list(ROLES), "passed_min": passed,
-           "wait_min": wait, "idle": idle,
+           "wait_min": wait, "idle": idle, "target_min": target,
            "why": f"前の周の開始から {passed:.0f}分。あと {wait:.0f}分"}
     if idle:
         # **起こしの時刻**（間隔が明ける瞬間 ＋ 1分。起きたとき `passed >= floor` に
