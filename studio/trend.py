@@ -19,8 +19,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
-from .common import JST, ledger_rows, now_jst
+from .common import JST, ROOT, ledger_rows, now_jst
 
 
 def _at(row: dict) -> dt.datetime:
@@ -138,3 +139,121 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
 
 def report(within_h: float = 24 * 3) -> list[str]:
     return lines(ledger_rows(), within_h=within_h)
+
+
+#: **「その日に何本 出したか」を軸にして 48時間 の再生を並べ直す**
+#: （2026-09-08 17:0x JST・optimizer・Opus が §7 の覆る条件に呼ばれて足した）。
+#:
+#: §7 15:0x/16:0x の覆る条件は「`lQHX9LJ80Sg` が 48h で 214回（09/06 の旧作りの中央値）を越えたら、
+#: **日ごとの本数を軸に入れて数え直すこと**」と書いていた。17:0x に 7.1h 236回 で越えたので数え直した結果、
+#: **この軸は、この台帳では日付と同じ物でした**:
+#:
+#:     4本/日 → 08/16 だけ    5本/日 → 09/05 だけ    13本/日 → 08/23 だけ    25本/日 → 08/22 だけ
+#:     ＝ ほとんどの「本数」の値は **1日 にしか出ていない**ので、
+#:       「本数ごとの中央値」は「その日の中央値」を書き写したものになる。
+#:
+#: 2日以上に出ている値で比べると、**同じ本数でも日が違えば桁が変わります**:
+#:
+#:     8本/日   08/19 中央値 1094  ／  09/06 中央値 196    （5.6倍）
+#:     10本/日  08/24 中央値 1146  ／  08/31 中央値 121    （9.5倍）
+#:     1本/日   08/14 の 1451 から 09/01 の 3 まで（同じ「1本/日」で 480倍）
+#:
+#: **＝ 本数を軸にしても、日付のぶんが丸ごと混ざったままです。** 04:4x の「刻 と 齢 が
+#: 完全に重なっていて分けられない」と同じ形で、分けるには**同じ日に本数だけ変えた実測**が要る
+#: （＝ 本数を変えた日を作らないと出ない。いまは 1本/日 に収束しているので、この軸は当分 埋まらない）。
+#:
+#: だからこの関数は**中央値を1つ出して終わりにせず**、値ごとに「何日ぶんか」を必ず一緒に印字する。
+#: **数は毎回 台帳と `data/views.jsonl` から数え直す（写しを持たない）。**
+#: **覆る条件**: 同じ本数の日が 3日 以上そろった値が出たら、そこで初めて日付と本数を分けられる
+#: （そのときはこの註を数え直して書き換える）。1本/日 の日が増えるのが最短の道。
+VIEWS_JSONL = ROOT / "data" / "views.jsonl"
+
+
+def _old_series(path=None) -> dict[str, list[tuple[float, int, dt.datetime]]]:
+    """旧道具が残した測り `data/views.jsonl` を読む（**過去のデータ** ＝ §8 の「使わない道具」ではない）。
+    id → [(齢, 再生, 測った刻)]。無ければ空。"""
+    path = VIEWS_JSONL if path is None else path
+    out: dict[str, list[tuple[float, int, dt.datetime]]] = {}
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        if r.get("hours") is None or r.get("views") is None:
+            continue
+        at = dt.datetime.fromisoformat(str(r["at"]).replace("Z", "+00:00")).astimezone(JST)
+        out.setdefault(r["id"], []).append((float(r["hours"]), int(r["views"]), at))
+    return out
+
+
+def cohorts(rows: list[dict], old_path=None, lo: float = 40.0, hi: float = 60.0):
+    """本ごとに（公開日, 公開の刻, 48時間 に最も近い点）を出す。台帳と旧データの両方から。
+
+    返すのは (48h の点が取れた本, 公開日ごとの「その日に出た本の数」)。
+    **本数は「48h の点が取れた本」ではなく、刻が分かる本 全部 で数える** ——
+    そうしないと軸そのものが狂う（実測 08/24 は 10本/日 だが 48h の点は 2本 しか無い）。
+    48h の点が `lo`〜`hi` の外にしか無い本は、比べられないので中央値からは落とす。
+    """
+    pts: dict[str, list[tuple[float, int, dt.datetime]]] = {}
+    for vid, ps in _old_series(old_path).items():
+        pts.setdefault(vid, []).extend(ps)
+    for vid, ps in series(rows).items():
+        pts.setdefault(vid, []).extend(
+            (float(p["age_h"]), int(p["views"]), _at(p)) for p in ps if p.get("views") is not None)
+    mine = ours(rows)
+    per_day_total: dict[dt.date, int] = {}
+    out = []
+    for vid, ps in pts.items():
+        ps.sort()
+        pub = min(at - dt.timedelta(hours=h) for h, _, at in ps)
+        per_day_total[pub.date()] = per_day_total.get(pub.date(), 0) + 1
+        near = [(abs(h - 48.0), h, v) for h, v, _ in ps if lo <= h <= hi]
+        if not near:
+            continue
+        near.sort()
+        out.append((pub.date(), pub, vid, near[0][1], near[0][2], vid in mine))
+    out.sort()
+    return out, per_day_total
+
+
+def _median(xs: list[int]) -> float:
+    xs = sorted(xs)
+    n = len(xs)
+    return float(xs[n // 2]) if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
+def by_day_count(rows: list[dict], old_path=None) -> list[str]:
+    """「その日に何本 出したか」ごとに 48時間 の再生を並べる。**値ごとに「何日ぶんか」を必ず出す。**"""
+    co, total = cohorts(rows, old_path)
+    if not co:
+        return ["（48時間 の点が取れた本が、台帳にも data/views.jsonl にもありません）"]
+    per_day: dict[dt.date, list[tuple[int, str, bool]]] = {}
+    for day, pub, vid, _h, v, isnew in co:
+        per_day.setdefault(day, []).append((v, vid, isnew))
+    out = ["== 公開日ごとの 48時間 再生 =="]
+    for day in sorted(per_day):
+        vs = [v for v, _, _ in per_day[day]]
+        n_new = sum(1 for _, _, isnew in per_day[day] if isnew)
+        got = f"（48h の点 {len(vs)}本）" if len(vs) != total[day] else ""
+        out.append(f"  {day}  {total[day]:2d}本/日{got}  中央値 {_median(vs):7.1f}  範囲 {min(vs)}〜{max(vs)}"
+                   f"{f'  ← 新しい作り {n_new}本' if n_new else ''}")
+    by_n: dict[int, list[dt.date]] = {}
+    for day in per_day:
+        by_n.setdefault(total[day], []).append(day)
+    out.append("")
+    out.append("== 「その日の本数」ごと ——「何日ぶんか」を必ず見ること ==")
+    for n in sorted(by_n):
+        days = sorted(by_n[n])
+        meds = [_median([v for v, _, _ in per_day[d]]) for d in days]
+        spread = (f"  同じ本数の日どうしで {max(meds) / max(min(meds), 1):.1f}倍 ちがう"
+                  if len(days) > 1 else "")
+        out.append(f"  {n:2d}本/日  {len(days)}日ぶん（{', '.join(d.strftime('%m/%d') for d in days)}）"
+                   f"  中央値 {' / '.join(f'{m:.0f}' for m in meds)}{spread}")
+    multi = [n for n, d in by_n.items() if len(d) > 1]
+    out.append("")
+    out.append(f"**「本数」の値 {len(by_n)}個 のうち、2日以上に出ているのは {len(multi)}個** —— "
+               "残りは 1日 しか無いので、その中央値は「その日の中央値」の書き写しです。"
+               "**本数を軸にしても、日付のぶんは分けられません**（studio/trend.py の註。"
+               "分けるには、同じ日に本数だけ変えた実測が要る）。")
+    return out

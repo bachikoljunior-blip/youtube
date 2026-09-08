@@ -5,6 +5,7 @@
 ここで止めるのは「並びのうち最後の点だけを見せる」形に戻ること。
 """
 import datetime as dt
+import json
 
 from studio import trend
 from studio.common import JST
@@ -112,3 +113,85 @@ def test_数は写しではなく台帳から数える():
                     _m("C1", "2026-09-08T04:40:00+09:00", 18.0, 105)]
     assert trend.dead_window(grew_in_band)[:2] == (1, 1)
     assert "1/1" in "\n".join(trend.lines(grew_in_band, now=DEAD_NOW))
+
+
+# ---- 「その日に何本 出したか」の軸（2026-09-08 17:0x・optimizer・Opus） --------
+#
+# §7 15:0x/16:0x の覆る条件は「3本目が 48h で 214回 を越えたら、**日ごとの本数を軸に入れて
+# 数え直すこと**」と書いていた。17:0x に 7.1h 236回 で越えたので数え直したところ、
+# **この軸は、この台帳では日付と同じ物**だった（本数の値 14個 のうち 2日以上に出ているのは 5個）。
+# 同じ本数でも日が違えば中央値は 5.6倍（8本/日: 08/19 1094 対 09/06 196）・9.5倍（10本/日）ちがう。
+# だから「本数ごとの中央値」を1つ出して終わりにせず、**値ごとに「何日ぶんか」を必ず一緒に出す**。
+
+BDC_LEDGER = [
+    {"event": "scheduled", "id": "2026-09-06-x", "at": "2026-09-06T02:00:00+09:00", "video_id": "NEWA"},
+    _m("NEWA", "2026-09-08T10:00:00+09:00", 48.0, 140),
+]
+
+
+def _old_file(tmp_path, rows):
+    """`data/views.jsonl` の形（at・id・hours・views）で書いた仮の旧データ。"""
+    p = tmp_path / "views.jsonl"
+    p.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    return p
+
+
+def _v(vid, at, hours, views):
+    return {"at": at, "id": vid, "hours": hours, "views": views, "likes": 0}
+
+
+def test_本数は48hの点が無い本も数える(tmp_path):
+    """**軸そのものが狂う所** —— 08/24 は 10本/日 だが 48h の点は 2本 しか無い。
+    「48h の点が取れた本」で数えると 2本/日 の日として並び、比べる相手をまちがえる。"""
+    old = _old_file(tmp_path, [
+        _v("X1", "2026-08-26T09:00:00+09:00", 48.0, 500),   # 48h の点が有る
+        _v("X2", "2026-08-24T10:00:00+09:00", 1.0, 5),      # 同じ日・48h の点は無い
+    ])
+    got = "\n".join(trend.by_day_count([], old_path=old))
+    assert "2026-08-24   2本/日（48h の点 1本）" in got, got
+    assert " 2本/日  1日ぶん（08/24）" in got, got
+
+
+def test_何日ぶんかを必ず出す(tmp_path):
+    """中央値だけを出すと、1日 しか無い値が「本数の効き目」に見える。"""
+    old = _old_file(tmp_path, [
+        _v("A", "2026-08-21T09:00:00+09:00", 48.0, 1000),
+        _v("B", "2026-09-02T09:00:00+09:00", 48.0, 10),
+        _v("C", "2026-09-02T09:00:00+09:00", 48.0, 20),
+    ])
+    got = "\n".join(trend.by_day_count([], old_path=old))
+    assert " 1本/日  1日ぶん（08/19）" in got, got
+    assert " 2本/日  1日ぶん（08/31）" in got, got
+
+
+def test_同じ本数でも日が違えば何倍ちがうかを出す(tmp_path):
+    """**これが数え直しの答え** —— 同じ本数の日どうしで桁が変わるなら、軸は本数ではなく日付。"""
+    old = _old_file(tmp_path, [
+        _v("A", "2026-08-21T09:00:00+09:00", 48.0, 1000),
+        _v("B", "2026-09-02T09:00:00+09:00", 48.0, 100),
+    ])
+    got = "\n".join(trend.by_day_count([], old_path=old))
+    assert " 1本/日  2日ぶん（08/19, 08/31）" in got, got
+    assert "10.0倍 ちがう" in got, got
+
+
+def test_本数と日付を分けられないと必ず書く(tmp_path):
+    """この一文を消してよいのは、同じ日に本数だけ変えた実測が出たとき（trend.py の覆る条件）。
+    数だけ出して断り書きを落とすのは、§7 が 4回 踏んだ形そのもの。"""
+    old = _old_file(tmp_path, [_v("A", "2026-08-21T09:00:00+09:00", 48.0, 1000)])
+    got = "\n".join(trend.by_day_count([], old_path=old))
+    assert "本数を軸にしても、日付のぶんは分けられません" in got, got
+
+
+def test_48hから遠い点は中央値に入れない(tmp_path):
+    """比べているのは 48時間 の点（§7 18:4x「比べるなら 48時間 の点で」）。
+    齢 1h の本を同じ列に混ぜると、平らの当たり外れがそのまま中央値に入る。"""
+    old = _old_file(tmp_path, [_v("A", "2026-08-21T09:00:00+09:00", 1.0, 3)])
+    got = "\n".join(trend.by_day_count([], old_path=old))
+    assert "48時間 の点が取れた本が" in got, got
+
+
+def test_新しい作りの本に印がつく(tmp_path):
+    """台帳の scheduled が持つ video_id ＝ こちらの作り。旧作りと混ぜて中央値を読ませない。"""
+    got = "\n".join(trend.by_day_count(BDC_LEDGER, old_path=tmp_path / "none.jsonl"))
+    assert "← 新しい作り 1本" in got, got

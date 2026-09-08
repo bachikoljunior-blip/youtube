@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -74,6 +75,66 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 ROUNDS = ROOT / "data" / "rounds.jsonl"
+
+#: **親が起きて決めたことを、GO でも WAIT でも1行 残す**
+#: （2026-09-08 17:0x JST・optimizer・Opus が実測して足した）。
+#:
+#: それまで `data/rounds.jsonl` に載るのは **GO で立てた周だけ**だった。
+#: **＝ 周が立たなかった時間は、あとから読むと 3つ が同じ顔をする**:
+#:
+#:     (1) 親が起きて「間隔の途中」で待った        ＝ 設計どおり
+#:     (2) 親が起きたが「サブが走っている」で待った ＝ サブが詰まっている
+#:     (3) 親がそもそも起きなかった                ＝ 心拍の側の壊れ
+#:
+#: **実測 2026-09-08: 08:41 → 14:59 JST に 378分 の穴が開きました**（その前後は 119〜124分 の等間隔）。
+#: この穴について分かったのは:
+#:   ・`list_triggers` の `last_fired_at` は 16:59 JST で、cron（`59 * * * *`）は毎時 撃てている
+#:   ・**親は穴の中で生きていた** —— 12:41 JST に「使用状況を積む」commit を押している（`e6cae5b8`）
+#: **＝ (3) ではない。しかし (1) なのか (2) なのかは、この台帳からは決められませんでした**
+#: （間隔は当時 120分 なので、(1) だけでは 378分 を説明できない）。
+#: §5 16:0x の回は「周は 60分 間隔・親は最大の速さで回っている」と書いていますが、
+#: それは**穴の後の 2区間**だけを見た読みで、同じ窓の中に 378分 の穴が在ります。
+#:
+#: **原因を当てにいかず、次に同じ穴が開いたら読めるようにしました。** 親は毎周
+#: `next_round_owner.py --live N` を撃つので、**その呼びの中で必ず1行 残ります**
+#: ——親が覚えている必要はありません（覚えていないと残らない形は、08-24 に踏んだ形そのもの）。
+#: **覆る条件**: この台帳が 1週間 ぶん たまって、穴の中が全部 (1) だったら、
+#: 穴は間隔そのものなので `pace()` の側を見る。全部 (2) だったら、見るのはサブの終わり方
+#: （長く走るサブ・完了通知の取りこぼし）。**1行も無い穴が出たら、そのとき初めて心拍を疑う。**
+WAKES = ROOT / "data" / "parent_wakes.jsonl"
+_WAKES_REAL = WAKES   # 本物の控え。検査が差し替えたかどうかを、これで見分ける
+
+
+def log_wake(d: dict, now: datetime | None = None) -> dict:
+    """親が起きて `decide()` が答えを出すたびに、その答えを1行 足す。**GO も WAIT も。**
+
+    **検査からは本物の控えへ書かない**（2026-09-08 17:2x に、足した回自身が踏んだ）——
+    `python -m pytest tests/` を撃っただけで、`main()` を呼ぶ既存の検査から
+    **本物の `data/parent_wakes.jsonl` に 2行** 入った。§8 の「検査を撃つことに副作用が
+    付いていた」（`niche_ceiling.kick()`・06:5x）と**同じ形**で、そちらは API の値段まで
+    付いていた。ここは値段こそ 0 だが、**穴を読むための台帳に、親が起きていない行が混ざる**
+    ＝ 台帳の意味そのものが壊れる。差し替えた検査（`WAKES` を tmp に向けた回）は書いてよい。
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST") and WAKES == _WAKES_REAL:
+        return dict(d)
+    now = now or datetime.now(timezone.utc)
+    row = {
+        "at": now.isoformat(),
+        "go": bool(d.get("go")),
+        "live": d.get("live"),
+        "live_source": d.get("live_source"),
+        "wait_min": round(float(d.get("wait_min") or 0.0), 1),
+        "roles": list(d.get("roles") or []),
+        "why": str(d.get("why") or "")[:300],
+    }
+    try:
+        WAKES.parent.mkdir(parents=True, exist_ok=True)
+        with WAKES.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        # 記録に失敗しても周は止めない（止める仕掛けを足さないこと・`CLAUDE.md`）。
+        pass
+    return row
 
 #: **いま走っているサブの数**を、親が置いていく台帳（`--live-set` で書く）。
 #: `--live` を渡さなかった回は、ここを読みます。
@@ -858,6 +919,7 @@ def main() -> int:
               "1体 以上なら間隔。2026-08-31・09-02 に数を渡さずに2回 叱られています）")
         return 2
     print(f"  走っているサブ: **{d['live']}体**（{d['live_source']}）")
+    log_wake(d)   # **GO も WAIT も1行 残す**（上の註 —— 立たなかった時間を読めるように）
     roles = d["roles"]
     if d["go"]:
         print("GO " + " ".join(roles))

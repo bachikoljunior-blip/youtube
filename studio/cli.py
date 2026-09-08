@@ -11,6 +11,7 @@
     python -m studio.cli schedule <id> --at 10:00 [--replace <videoId>]   # きょうの枠へ予約（当日だけ）
     python -m studio.cli measure                # 公開ずみの本の再生・高評価を台帳へ
     python -m studio.cli trend [--days 3]       # 台帳から「齢 → 再生」の並び（API 0単位・§7 の判定はこれで）
+    python -m studio.cli trend --by-day-count   # 「その日に何本 出したか」ごとの 48時間 再生（API 0単位・§7 の覆る条件）
     python -m studio.cli comments               # 視聴者が書いたコメント（自分の自動コメントは除く。API 1単位）
     python -m studio.cli reply <comment_id> --text "…"   # 視聴者のコメント1件に手で書いた返信（50単位・台帳 replied）
 """
@@ -317,6 +318,11 @@ def cmd_reply(a):
 
 def cmd_trend(a):
     # 1点で本を比べないための道具（studio/trend.py の註）。台帳しか読まないので API は 0単位。
+    if a.by_day_count:
+        # §7 の「日ごとの本数を軸に入れて数え直す」（15:0x/16:0x の覆る条件）。旧データも読む。
+        for line in trend.by_day_count(ledger_rows()):
+            print(line)
+        return 0
     for line in trend.report(within_h=24 * a.days):
         print(line)
     return 0
@@ -334,6 +340,7 @@ def main(argv=None):
     sc.add_argument("--dry-run", action="store_true")
     sub.add_parser("measure")
     tr = sub.add_parser("trend"); tr.add_argument("--days", type=float, default=3)
+    tr.add_argument("--by-day-count", action="store_true")
     sub.add_parser("comments")
     rp = sub.add_parser("reply"); rp.add_argument("comment_id"); rp.add_argument("--text", required=True)
     rp.add_argument("--dry-run", action="store_true")
