@@ -442,24 +442,41 @@ def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = Tru
         row = {"i": i, "say": seg.say, "heard": heard, "how": how,
                "exp": loose(exp), "got": loose(got), "diffs": diffs}
         gap = tail_gap(loose(exp), diffs) if escalate else None
-        row["_dur"] = probe_duration(wav)
         row["_gap"] = gap
+        row["_wav"] = wav
         if gap:   # 末尾が丸ごと無い ＝ 段を上げても分けられない型。末尾だけを聞き直して 切り落とし と 誤読 を分ける
             h2 = h2 or Hearer("medium" if size != "medium" else size)
             row["tail"] = tail_probe(h2, wav, gap, s.yomi)
         rows.append(row)
-    # **秒数の側**（`tail_rate` の註）。帯は一致したコマだけから作る ——
-    # 差の在るコマを分母に入れると、測ろうとしている物で物差しを作ることになる。
-    ok_rates = [len(r["exp"]) / r["_dur"] for r in rows if not r["diffs"] and r["_dur"]]
-    if ok_rates:
-        band = (min(ok_rates), max(ok_rates))
-        for r in rows:
-            if r.get("_gap"):
-                r["rate"] = tail_rate(len(r["exp"]), len(r["_gap"]), r["_dur"], band)
+    _add_rates(rows)
     for r in rows:
-        r.pop("_dur", None)
         r.pop("_gap", None)
+        r.pop("_wav", None)
     return rows
+
+
+def _add_rates(rows: list[dict]) -> None:
+    """末尾が丸ごと無いコマに、秒数の側の見立てを足す（`tail_rate` の註）。
+
+    **切り落としが1つも無い回は、音の長さを1度も測りません**（`probe_duration` は ffprobe を呼ぶので、
+    鳴っていない回にまで撃つと、そのぶん遅くなるし、音が無い所で落ちる）。
+    帯は**一致したコマだけ**から作る —— 差の在るコマを分母に入れると、測ろうとしている物で物差しを作ることになる。
+    """
+    if not any(r.get("_gap") for r in rows):
+        return
+    durs: dict[int, float] = {}
+    for r in rows:
+        try:
+            durs[r["i"]] = probe_duration(r["_wav"])
+        except Exception:                                          # noqa: BLE001
+            return   # 長さが引けない回は、秒数の側を黙って出さない（`tail_probe` の答えだけが残る）
+    ok_rates = [len(r["exp"]) / durs[r["i"]] for r in rows if not r["diffs"] and durs.get(r["i"])]
+    if not ok_rates:
+        return
+    band = (min(ok_rates), max(ok_rates))
+    for r in rows:
+        if r.get("_gap") and durs.get(r["i"]):
+            r["rate"] = tail_rate(len(r["exp"]), len(r["_gap"]), durs[r["i"]], band)
 
 
 def escalations(rows: list[dict]) -> dict[str, str]:
