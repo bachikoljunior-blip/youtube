@@ -12,6 +12,7 @@
     python -m studio.cli measure                # 公開ずみの本の再生・高評価を台帳へ
     python -m studio.cli trend [--days 3]       # 台帳から「齢 → 再生」の並び（API 0単位・§7 の判定はこれで）
     python -m studio.cli comments               # 視聴者が書いたコメント（自分の自動コメントは除く。API 1単位）
+    python -m studio.cli reply <comment_id> --text "…"   # 視聴者のコメント1件に手で書いた返信（50単位・台帳 replied）
 """
 from __future__ import annotations
 
@@ -271,6 +272,38 @@ def cmd_comments(a):
     return 0
 
 
+def cmd_reply(a):
+    """視聴者のコメント1件に、手で書いた返信を1つ付ける（`yt.reply()`・50単位）。
+
+    門: (1) `comment_id` が台帳の `viewer_comment` に在ること（自分のコメントや存在しない ID には撃たない）
+        (2) 同じ `comment_id` に `replied` が無いこと（2度 撃たない）
+        (3) 文が空でないこと。`--dry-run` は文を印字するだけ。
+    通れば台帳に `replied`（comment_id・text）を1行。背景から呼ぶ口は無い（人が文を書いて撃つだけ）。
+    """
+    text = (a.text or "").strip()
+    if not text:
+        print("--text が空")
+        return 1
+    rows = ledger_rows()
+    src = next((r for r in rows if r.get("event") == "viewer_comment" and r.get("comment_id") == a.comment_id), None)
+    if src is None:
+        print("台帳の viewer_comment に無い ID。先に `comments` を撃つ")
+        return 1
+    if any(r.get("event") == "replied" and r.get("comment_id") == a.comment_id for r in rows):
+        print("もう返信ずみ（台帳 replied）。2度は撃たない")
+        return 1
+    video_id = src.get("id", "")   # 台帳の行は本の ID を `id` に持つ（`common.ledger()` の骨）
+    print(f"→ {video_id} {src.get('author')}「{(src.get('text') or '')[:60]}」")
+    print("返信:", text)
+    if a.dry_run:
+        print("[dry-run] 撃っていない")
+        return 0
+    rid = yt.reply(a.comment_id, text)
+    ledger("replied", video_id, comment_id=a.comment_id, reply_id=rid, text=text[:1000])
+    print("返信した:", rid)
+    return 0
+
+
 def cmd_trend(a):
     # 1点で本を比べないための道具（studio/trend.py の註）。台帳しか読まないので API は 0単位。
     for line in trend.report(within_h=24 * a.days):
@@ -291,6 +324,8 @@ def main(argv=None):
     sub.add_parser("measure")
     tr = sub.add_parser("trend"); tr.add_argument("--days", type=float, default=3)
     sub.add_parser("comments")
+    rp = sub.add_parser("reply"); rp.add_argument("comment_id"); rp.add_argument("--text", required=True)
+    rp.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     fn = globals()["cmd_" + a.cmd.replace("-", "_")]
     return fn(a) or 0

@@ -238,3 +238,19 @@ def viewer_comments() -> list[dict]:
         if not tok:
             break
     return sorted(out, key=lambda c: c["at"], reverse=True)
+
+
+def reply(comment_id: str, text: str) -> str:
+    """視聴者のコメント1件に、**手で書いた**返信を1つ付ける（`comments.insert`・**50単位**）。
+
+    2026-09-08 15:1x JST（hourly・Fable）に足した。新しい作りの本 `lQHX9LJ80Sg` に付いた最初の
+    視聴者の問い「65歳までに死んだら丸々損したことにならないの？そこが知りたい」に答えるため。
+    §7 20:4x の「唯一の批評が 9日間 未読」は読む側の穴だったが、読んだあと**答える口が無い**のも同じ穴。
+    旧 `scripts/post_pending_comments.py` の自動投稿（全本に同じ1文を機械で置く ＝ §8 で止めた口）とは違う:
+    **文はサブ本人が書き、`cli reply` から1件ずつ・台帳に `replied` を残して**撃つ。背景から呼ぶ口は作らない。
+    `comment_id` は `viewer_comments()` の `id`（スレッド ID ＝ 最上位コメントの ID。`parentId` に渡せる）。
+    スコープは旧 `src/auth.py` と同じ refresh token（`youtube.force-ssl` 込み）。
+    """
+    r = svc().comments().insert(part="snippet", body={"snippet": {
+        "parentId": comment_id, "textOriginal": text[:9000]}}).execute()
+    return r.get("id", "")
