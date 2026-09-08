@@ -272,7 +272,15 @@ def cmd_measure(a):
         age = (now_jst() - yt.when(v)).total_seconds() / 3600
         ledger("measured", v["id"], views=v["views"], likes=v["likes"],
                comments=v.get("comments", 0), age_h=round(age, 1), title=v["title"][:40])
-    print("記した:", len(pub), f"本（公開から {MEASURE_WITHIN_H / 24:.0f}日 以内）")
+    # **まだ公開前の本も1行 残す**（API は増えない ＝ `all_videos()` は同じ回で1度きり）。
+    # 09/08 23:0x: 旧作りの `Yy7GmcGoQ6I` が「きょう 23:00」の予約のまま待っていたのに、
+    # 台帳には 1行 も無く、`trend` の日の見出しは 22時間「09/08（1本）」だった
+    # → §7 が 5回 続けて「1本 だけの日」と書いた（`studio/trend.pending` の註）。
+    sch = yt.scheduled_all()
+    for v in sch:
+        ledger("pending", v["id"], publish_at=yt.when(v).isoformat(), title=v["title"][:40])
+    print("記した:", len(pub), f"本（公開から {MEASURE_WITHIN_H / 24:.0f}日 以内）"
+          + (f"・予約 {len(sch)}本" if sch else "・予約 0本"))
     return 0
 
 
