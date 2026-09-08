@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-10-izoku-kosei-4bunno3-bg",
+ "asked_at": "2026-09-09T01:59:16+09:00",
+ "for": "2026-09-10 の本（2026-09-10-izoku-kosei-4bunno3）の背景",
+ "prompt": "日本の60代の女性が、明るい和室のちゃぶ台で年金の通知はがきを手に持ち、静かに見つめている様子。やわらかい自然光。写実的な写真風。文字やロゴは入れない。縦長。",
+ "avoid": "文字・ロゴ・実在の人物・透かし",
+ "size": "1080x1920",
+ "format": "jpg",
+ "out": "assets/images/2026-09-10-izoku-kosei-4bunno3-bg.jpg",
+ "status": "pending"
+}
