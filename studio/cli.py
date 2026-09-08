@@ -39,14 +39,37 @@ def image_for(vid: str) -> Path | None:
     return None
 
 
+def studio_video_ids(rows: list[dict] | None = None) -> set[str]:
+    """studio が上げた本の ID（台帳 `scheduled` の video_id）。ここに無い本は旧作り。"""
+    rows = ledger_rows() if rows is None else rows
+    return {r.get("video_id") for r in rows if r.get("event") == "scheduled" and r.get("video_id")}
+
+
+def lineup_mark(v: dict, studio_ids: set[str]) -> str:
+    """「きょうの枠」「予約」の1行に添える印。**旧作りの本が予約のまま並んでいたら、名指しで「戻せ」と言う。**
+
+    実測 2026-09-08: 旧 `reschedule.py` が 09/02 に打った publishAt が 23:00 JST に発火し、
+    `Yy7GmcGoQ6I`（自動車税・旧作り）が public になった。`status` は一日中
+    「23:00 private  Yy7GmcGoQ6I」を きょうの枠に印字していたが、印が無いので
+    3周の hourly が「きょうの枠は公開ずみ」とだけ読んで通り過ぎた（§12 23:0x）。
+    09/05 17:1x・09/06 02:1x に private へ戻した 4本 と同じ型で、これは漏れた 1本。
+    """
+    if v["id"] in studio_ids:
+        return ""
+    if v["privacy"] != "public":
+        return "  !! 旧作りの予約 → private へ戻すこと（1日1本・METHOD §5/§9・台帳 unscheduled）"
+    return "  [旧作り]"
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
+    sids = studio_video_ids()
     print(f"チャンネル: 登録 {ch['subscriberCount']}・総再生 {ch['viewCount']}・本数 {ch['videoCount']}")
     print(f"いま {now_jst():%m/%d %H:%M} JST")
     print("きょうの枠:")
     for v in yt.today_lineup(vids):
-        print(f"  {yt.when(v):%H:%M} {v['privacy']:8s} {v['id']} {v['views']:5d}回 {v['title'][:40]}")
+        print(f"  {yt.when(v):%H:%M} {v['privacy']:8s} {v['id']} {v['views']:5d}回 {v['title'][:40]}{lineup_mark(v, sids)}")
         if v["privacy"] != "public":
             # 公開前の本だけ、YouTube 側の処理が終わっているかを添える（1単位。`yt.readiness` の註）。
             rd = yt.readiness(v["id"])
@@ -55,7 +78,7 @@ def cmd_status(a):
     print("予約（あす以降）:")
     for v in yt.scheduled_all():
         if yt.when(v).date() > now_jst().date():
-            print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['title'][:40]}")
+            print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['title'][:40]}{lineup_mark(v, sids)}")
     print("直近 公開 10本:")
     for v in yt.published()[:10]:
         age = (now_jst() - yt.when(v)).total_seconds() / 3600
