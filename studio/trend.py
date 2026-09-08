@@ -167,6 +167,8 @@ def _pairs(rows: list[dict]) -> list[dict]:
             out.append({"vid": vid, "age": age, "bucket": bucket,
                         "gap_min": (tb - ta).total_seconds() / 60.0,
                         "band": DEAD_START <= tb.hour < DEAD_END,
+                        "delta": int(vb) - int(va),
+                        "a": int(va), "b": int(vb), "at": tb,
                         "grew": int(vb) - int(va) > 0})
     return out
 
@@ -183,6 +185,40 @@ def dead_window(rows: list[dict]) -> tuple[int, int, int, int]:
             ot += 1
             om += p["grew"]
     return nm, nt, om, ot
+
+
+def drops(rows: list[dict]) -> tuple[int, int, int, str]:
+    """再生が**減った**2点組を数える（組数, 減った組, いちばん大きい減り, その組の説明）。
+
+    **`dead_window` とまったく同じ `_pairs` から数えます。ここが要点です** ——
+    §7 は 17:0x（2026-09-08）から毎周この数を手で数え直しており、
+    **同じ段落の中で分母が2つ**になっていました:
+
+        帯の率      `dead_window` ＝ **`MIN_PAIR_MIN` で短い組を落としたあと**の組
+        減りの数    手で書いた script ＝ **落とす前**の組（00:2x の「818組」）
+
+    実測 2026-09-09 01:5x: 落とす前 **854組・減り 7組**／落としたあと **769組・減り 6組**。
+    差の1組は `nQbVxuWpWw8` の **1.6分** の組（68 → 66）で、
+    **00:2x の回が「これは数え直しの揺れで、本が減ったのではない」と名指しした当のもの**です。
+    ＝ 落とす理由を書いた回自身が、**減りのほうは落とさずに数えていました。**
+    手で数えるかぎり、次の回もどちらの分母を使ったか分かりません。→ 道具の側に置く。
+
+    **何に使うか**: §7 17:0x は「床（旧作りの中央値）を越えたか」を、
+    **「ここから床まで落ちるには、この台帳に1度も無い大きさの減りが要る」**という形で読んでいます。
+    その「1度も無い大きさ」がこの関数の3つ目の返り値で、**覆る条件はそこに掛かっています**
+    （減りが -5回 を越えた組が出たら、余裕の倍率を数え直すこと）。
+
+    **覆る条件**: `MIN_PAIR_MIN` を変えたら、ここの数も一緒に動きます（同じ `_pairs` なので自動）。
+    減りが「数え直しの揺れ」ではなく本当の取り下げ（本が消える・非公開に戻る）で出るようになったら、
+    その組は別に数えること —— いまは `unscheduled` の本が measured から落ちるだけなので、組にならない。
+    """
+    ps = _pairs(rows)
+    dec = [p for p in ps if p["delta"] < 0]
+    if not dec:
+        return len(ps), 0, 0, ""
+    worst = min(dec, key=lambda p: p["delta"])
+    where = (f"{worst['vid']} {worst['at']:%m/%d %H:%M} {worst['a']}→{worst['b']}")
+    return len(ps), len(dec), worst["delta"], where
 
 
 def band_vs_age(rows: list[dict], iters: int = 2000, seed: int = 20260909) -> dict:
@@ -309,6 +345,11 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         f"帯 {DEAD_START:02d}:00〜{DEAD_END:02d}:00 JST の2点組 **{nm}/{nt}** が伸びた"
         f"（それ以外は {om}/{ot}）。**{MIN_PAIR_MIN:.0f}分 未満の2点組は数えていません**"
         "（長さの違う組を同じ分母に入れないため —— studio/trend.py の `MIN_PAIR_MIN` の註）。")
+    np_, nd, worst, where = drops(rows)
+    out.append(
+        f"同じ {np_}組 のうち、再生が**減った**組 **{nd}**"
+        + (f"・いちばん大きい減り **{worst}回**（{where}）" if nd else "")
+        + "。**帯の率と同じ分母です**（手で数え直すと分母が2つになる —— studio/trend.py の `drops` の註）。")
     # **この一文は最後に置くこと**（`tests/test_studio_trend.py` が末尾で止めている）。
     out.append("平らは「止まった」ではない —— 実測は studio/trend.py の註。齢の浅い1点で本を比べないこと。")
     if DEAD_START <= now.hour < DEAD_END:

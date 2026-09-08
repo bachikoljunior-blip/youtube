@@ -195,3 +195,57 @@ def test_新しい作りの本に印がつく(tmp_path):
     """台帳の scheduled が持つ video_id ＝ こちらの作り。旧作りと混ぜて中央値を読ませない。"""
     got = "\n".join(trend.by_day_count(BDC_LEDGER, old_path=tmp_path / "none.jsonl"))
     assert "← 新しい作り 1本" in got, got
+
+
+# ---- 減った2点組を、帯の率と同じ分母で数える（2026-09-09 01:5x・optimizer・Opus）----
+#
+# §7 は 2026-09-08 17:0x から毎周「measured の連続する2点 N組 のうち 減った M組・最大 -X回」を
+# **手で書いた script で**数え直していた。その数は `dead_window`（＝ 帯の率）と**同じ段落に並ぶ**のに、
+# 分母が別だった —— 帯の率は `MIN_PAIR_MIN` で短い組を落とし、手の script は落としていない。
+# 実測（同じ台帳・同じ日）: 落とす前 854組・減り 7組 ／ 落としたあと 769組・減り **5**組。
+# 手で組にする順を変えるだけで 5・6・7 の 3通りが出た（`series()` は同じ齢を後の行で畳むが、
+# 生の行を時刻順に並べるとその2行が別々の組になる）。→ `drops()` を `_pairs` の上に置いた。
+
+
+def test_減りは帯の率と同じ分母から数える():
+    ps = trend._pairs(ROWS)
+    n, dec, worst, _ = trend.drops(ROWS)
+    assert n == len(ps), (n, len(ps))  # 分母は `dead_window` と同じ `_pairs`
+
+
+def test_短い2点組の減りは数えない():
+    rows = ROWS + [
+        _m("NEW2", "2026-09-07T18:00:00+09:00", 5.0, 68),
+        _m("NEW2", "2026-09-07T18:02:00+09:00", 5.1, 66),   # 2分 で -2 ＝ 数え直しの揺れ
+    ]
+    n, dec, worst, _ = trend.drops(rows)
+    assert dec == 0, (dec, worst)   # 落とす側に入っている
+    assert worst == 0
+
+
+def test_減りを見つけたら大きさと場所を言う():
+    rows = ROWS + [
+        _m("NEW3", "2026-09-07T14:00:00+09:00", 4.0, 127),
+        _m("NEW3", "2026-09-07T16:30:00+09:00", 6.5, 122),  # 2.5時間 で -5
+    ]
+    n, dec, worst, where = trend.drops(rows)
+    assert dec == 1 and worst == -5, (dec, worst)
+    assert "NEW3" in where and "127→122" in where, where
+
+
+def test_減りの数を毎回_印字する():
+    out = "\n".join(trend.lines(ROWS, now=NOW))
+    assert "減った**組" in out, out
+    assert "帯の率と同じ分母" in out, out   # ← この断り書きが消えたら、分母が2つに戻れる
+
+
+def test_1回の減りも数える():
+    # **陽性対照で足した**（2026-09-09 02:1x）: 最初の3件は「-1 までは揺れとして捨てる」という
+    # 壊し方を1つも捕まえられなかった（-5 と -2 しか置いていなかった）。§7 の覆る条件は
+    # 「いちばん大きい減りが -5回 を越えたか」で、**小さい減りを捨てる形にすると分母がまた別物になる。**
+    rows = ROWS + [
+        _m("NEW4", "2026-09-07T14:00:00+09:00", 4.0, 60),
+        _m("NEW4", "2026-09-07T16:30:00+09:00", 6.5, 59),   # 2.5時間 で -1
+    ]
+    n, dec, worst, _ = trend.drops(rows)
+    assert dec == 1 and worst == -1, (dec, worst)
