@@ -103,6 +103,8 @@ def test_誰が撃ったかを残す(tmp_path, monkeypatch):
     """
     import sys
     p = _use(tmp_path, monkeypatch)
+    # **作業木の外から撃った体で見る**（19:2x に `_who()` へ足した締め。この検査は入口の側を見ている）
+    monkeypatch.setattr(next_round, "ROOT", tmp_path / "youtube")
     monkeypatch.delitem(sys.modules, "scripts.next_round_owner", raising=False)
     monkeypatch.setattr(sys, "argv", ["scripts/next_round.py", "--live", "0"])
     next_round.log_wake({"go": False, "live": 0, "wait_min": 5, "roles": [], "why": "x"})
@@ -119,8 +121,30 @@ def test_親は直に走らせるのでargvも見る(tmp_path, monkeypatch):
     `scripts.next_round_owner` という名前では載らない。実測: 本物の呼びが `direct` と出た。"""
     import sys
     p = _use(tmp_path, monkeypatch)
+    monkeypatch.setattr(next_round, "ROOT", tmp_path / "youtube")
     monkeypatch.delitem(sys.modules, "scripts.next_round_owner", raising=False)
     monkeypatch.setattr(sys, "argv", ["scripts/next_round_owner.py", "--live", "2"])
     next_round.log_wake({"go": False, "live": 2, "wait_min": 9, "roles": [], "why": "z"})
     (row,) = _read(p)
     assert row["who"] == "owner", row
+
+
+def test_サブの作業木から撃った回は_ownerではない(tmp_path, monkeypatch):
+    """**押す直前の動作確認で、実際に false な行を1つ入れて足した**（2026-09-08 19:2x）。
+
+    17:3x の `_who()` は「`next_round_owner.py` を通ったか」だけを見ていた。
+    しかし **サブも確かめるときは同じ本物の呼びを撃つ**ので、その行は `who: "owner"` で入り、
+    **親が起きた行と1文字も違わない** ＝ `who` は「親の入口を通ったか」しか見ていなかった。
+    親は必ず `/home/user/youtube` から、サブは必ず `.claude/worktrees/agent-*` から走る。
+    """
+    monkeypatch.setattr(next_round, "ROOT",
+                        tmp_path / ".claude" / "worktrees" / "agent-deadbeef")
+    monkeypatch.setitem(__import__("sys").modules, "scripts.next_round_owner", object())
+    assert next_round._who() == "sub"
+
+
+def test_作業木の外なら_親の入口を通った回は_owner(tmp_path, monkeypatch):
+    """上の締めが広すぎないこと（親の行まで落とすと、台帳が空になる）。"""
+    monkeypatch.setattr(next_round, "ROOT", tmp_path / "youtube")
+    monkeypatch.setitem(__import__("sys").modules, "scripts.next_round_owner", object())
+    assert next_round._who() == "owner"

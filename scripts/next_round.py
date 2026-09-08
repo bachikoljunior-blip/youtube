@@ -118,6 +118,20 @@ def _who() -> str:
     あれは `__main__` に入り、`scripts.next_round_owner` という名前では載りません。
     実測: `next_round_owner.py --live 2` を撃っても `direct` と出た。だから argv も見ます。
     """
+    # **サブの作業木から撃った回は、絶対に `owner` ではありません**
+    # （2026-09-08 19:2x・optimizer・Opus が、押す直前の動作確認で**実際に false な行を1つ入れて**足した）。
+    #
+    # 17:3x の形は「`next_round_owner.py` を通ったか」だけを見ていました。ところが
+    # **サブも確かめるときは同じ本物の呼びを撃つ**（17:3x 自身が「本物の呼びで1回 撃って確かめること」と
+    # 書いている）ので、その行は `who: "owner"` で入り、**親が起きた行と1文字も違いません。**
+    # ＝ `who` は「親の入口を通ったか」を見ており、「親か」を見ていませんでした。
+    #
+    # **親は必ず `/home/user/youtube` から走ります**（心拍の本文の1行目が `cd /home/user/youtube`）。
+    # **サブは必ず `.claude/worktrees/agent-*` の作業木**（`isolation: "worktree"`）。
+    # ＝ 作業木の中から撃たれた回は、入口が何であれ親ではありません。
+    # **穴を読むときは、いまも `who == "owner"` の行だけ数えれば足ります。**
+    if ".claude/worktrees/" in ROOT.as_posix():
+        return "sub"
     if "scripts.next_round_owner" in sys.modules:
         return "owner"
     if sys.argv and Path(sys.argv[0]).name == "next_round_owner.py":
