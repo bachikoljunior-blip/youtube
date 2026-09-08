@@ -3,3 +3,4 @@
 {"at": "2026-09-08T09:59:38.590237+00:00", "who": "owner", "go": true, "live": 1, "live_source": "引数 --live", "wait_min": 0.0, "roles": ["hourly", "optimizer"], "why": "前の周の開始から 119分（間隔 76分）"}
 {"at": "2026-09-08T10:18:13.346834+00:00", "who": "sub", "go": false, "live": 2, "live_source": "引数 --live", "wait_min": 39.6, "roles": ["hourly", "optimizer"], "why": "前の周の開始から 18分。あと 40分", "note": "19:1x の optimizer が押す直前の動作確認で撃った行。当時の _who() は作業木を見ておらず owner と書いた（その回に直した）。親の起きではないので、穴を数えるときに数えないこと"}
 {"at": "2026-09-08T10:19:19.950782+00:00", "who": "sub", "go": false, "live": 2, "live_source": "引数 --live", "wait_min": 43.6, "roles": ["hourly", "optimizer"], "why": "前の周の開始から 20分。あと 44分"}
+{"at": "2026-09-08T10:22:10.929631+00:00", "who": "owner", "go": false, "live": 1, "live_source": "引数 --live", "wait_min": 35.6, "roles": ["hourly", "optimizer"], "why": "前の周の開始から 22分。あと 36分"}
