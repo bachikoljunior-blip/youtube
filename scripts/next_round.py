@@ -181,8 +181,11 @@ def log_wake(d: dict, now: datetime | None = None) -> dict:
     #
     # `decide()` は既に全部 数で返しているので、**足すのは書き写しだけ**（API 0単位・新しい判断なし）。
     # `None` は落とします（古い行と混ぜても「無い」と読める。列を増やさない）。
+    # `gap_median_min`／`gap_over_floor` は §7 21:4x の覆る条件 (1) が名指しで呼んでいる数
+    # （2026-09-09 00:2x に足した。手で数えると 1周 2行 のせいで半分に出る ——`round_gaps` の註）。
     for key in ("floor_min", "passed_min", "target_min", "idle",
-                "heartbeat_min", "heartbeat_source", "patch"):
+                "heartbeat_min", "heartbeat_source", "patch",
+                "gap_median_min", "gap_over_floor"):
         got = d.get(key)
         if got is None:
             continue
@@ -429,6 +432,45 @@ def rows() -> list[dict]:
 def last_round() -> dict | None:
     got = rows()
     return got[-1] if got else None
+
+
+def round_gaps(limit: int | None = None) -> list[float]:
+    """**周から周の間隔（分）**。`data/rounds.jsonl` を `round` で畳んでから数えます。
+
+    **なぜ畳むのか**（2026-09-09 00:2x JST・optimizer・Opus が踏んで足した）:
+    `rounds.jsonl` は **1周につき役の数だけ行を書きます**（いまは `hourly` と `optimizer` で 2行、
+    同じ時刻・同じ `round`）。素朴に「行から行」を数えると **0分 が1つおきに挟まり**、
+    中央値が **半分**になります。実測（この回・直近10区間）:
+
+        素朴に行から行   **39.6分**      ← 0.0 が交互に入る
+        `round` で畳む   **80.4分**      ← 本当の周から周
+
+    **これは §7 21:4x の覆る条件 (1) が名指しで呼んでいる数です** ——
+    「周から周の中央値が `floor` の 1.25倍 を越えていたら、上限は丸めではない」。
+    素朴に数えると 39.6分 ＝ `floor`（76分）の **0.52倍** になるので、
+    **その条件は永久に引かれません**（＝ 鳴らない見張り。§5「必ず一致する2つ目の意見に、
+    確かめる力は無い」の親戚で、こちらは「**必ず通る門**」）。
+    だから、この数は手で数えずに、ここから引くこと。
+
+    `round` を持たない古い行（36/441）は、時刻そのものを識別子に使います
+    （同じ時刻の行だけが畳まれる ＝ 畳みすぎない側に倒す）。
+    """
+    starts: dict[str, datetime] = {}
+    for row in rows():
+        at = _at(row)
+        if at is None:
+            continue
+        key = str(row.get("round") or row.get("at"))
+        starts[key] = min(starts.get(key, at), at)
+    got = sorted(starts.values())
+    gaps = [(b - a).total_seconds() / 60.0 for a, b in zip(got, got[1:])]
+    return gaps[-limit:] if limit else gaps
+
+
+def gap_median(limit: int = 10) -> float | None:
+    """直近 `limit` 区間の**周から周**の中央値（分）。無ければ `None`。"""
+    got = round_gaps(limit=limit)
+    return median(got) if got else None
 
 
 def _at(row: dict) -> datetime | None:
@@ -683,6 +725,14 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
         live, live_src = live_read(now)
     base = {"floor_min": floor, "source": src,
             "live": live, "live_source": live_src}
+    # **周から周の中央値を、毎行 残します**（2026-09-09 00:2x・§7 21:4x の覆る条件 (1)）。
+    # あの条件は「中央値が `floor` の 1.25倍 を越えていたら」で判定するのに、数の出どころが
+    # `data/rounds.jsonl` の**手数え**でした —— そこは 1周 2行 なので、素朴に数えると半分に出ます。
+    # 台帳に入れておけば、次の回は撃つだけで読めます（`round_gaps` の註）。
+    gm = gap_median()
+    if gm is not None:
+        base["gap_median_min"] = round(gm, 1)
+        base["gap_over_floor"] = round(gm / floor, 2) if floor else None
     group = current_round(span_min=round_span(floor))
 
     # **0体 は「間隔を見ない」ではなく「起こしを置いて待つ」**（2026-09-03・上の節）。

@@ -100,31 +100,175 @@ def _growth(pts: list[dict]) -> str:
 #: **刻のせいなのか齢のせいなのかは、この台帳からは分けられません。**
 #: 分けるには公開の刻を変えた本が要る（§7 の「時刻 10:00」の行）。
 #:
+#: > **【2026-09-09 00:2x・optimizer・Opus】この「分けられません」は、半分だけ本当でした。**
+#: > **新しい作りは 10:00 JST 固定ですが、旧作りは 06:59〜18:59 のいろいろな刻に公開されています。**
+#: > 実測: 帯に落ちる2点組は **42本 ぶん・齢は 9h〜191h に散っている**（`band_vs_age`）。
+#: > ＝ **齢を揃えたうえで帯と外を比べられます。** 齢の束ごとに「帯の外の伸び率 × 帯の組数」を足すと、
+#: > **齢だけで説明できるなら帯の中に 7.33組 の伸びが在るはず**で、実際は **0組**。
+#: > 伸びの札を本の中で並べ替える検定（相関を殺さない形）で **p = 0.012**、
+#: > 本ごと×齢の束ごとの、いちばん厳しい並べ替えでも **p = 0.031**。
+#: > ＝ **帯の 0 は、齢だけでは説明できません。刻の側に何かが残ります。**
+#: > **ただし「視聴者が寝ている」と「YouTube の数え直しが夜は回らない」は、まだ分けられません**
+#: > （どちらも同じ形に出る）。**手は変わりません** —— この帯の回は伸びを読まないこと。
+#:
 #: **それでも手は決まります**: 原因がどちらでも、**この帯の回は伸びを読めない**。
 #: だから数を並べるだけにして、「止まった」と書かないこと。
 #: **覆る条件**: この帯で伸びた組が 1つでも出たら、この註の 178/178 は破れる（数は毎回 台帳から数え直すので、
 #: 印字のほうは自動で追随する）。公開の刻を変えた本が出たら、交絡が解けるので分けて数え直すこと。
 DEAD_START, DEAD_END = 2, 10
 
+#: **長さの違う2点組を、同じ分母に入れないための閾**
+#: （2026-09-09 00:2x JST・optimizer・Opus が数えて足した）。
+#:
+#: 同じ回に `measure` を2回 撃つと、数分しか離れていない2点組が台帳に入ります。実測:
+#: 台帳の 818組 のうち **74組 が 10分 未満**（23:03/23:08/23:10 のように、道具を直した回が
+#: 確かめのために撃ち直したぶん）。**74組 は全部 帯の外**に落ちており、`dead_window` の
+#: 「それ以外」の分母だけを 541 → 615 に膨らませていました（伸びの率 4.1% → 3.7%）
+#: ＝ 帯との差を**小さく見せる**向き。帯の側（203組）は中央値 151分・最小 119.6分 で 1組も混ざっていません。
+#:
+#: **足すときに「構造的に平ら（数え直しは分では動かない）」と書きかけて、撃ったら外れました。**
+#: 74組 のうち **2組 は動いています**:
+#:
+#:     EkNqtkK49Bw  09/07 16:30 **122** → 16:35 **129**   5.2分 で **+7**
+#:     nQbVxuWpWw8  09/08 23:08  **68** → 23:10  **66**   1.6分 で **-2**
+#:
+#: ＝ **YouTube の数え直しは分の粒度でも動きます。** 落とす理由は「情報が無いから」ではなく、
+#: **`dead_window` が「組あたりの率」を数えているから**です —— 2分の組と 2時間の組を同じ分母に
+#: 入れると、短い組は「伸びなかった」側にばかり積まれます（短い組の伸びは 1/74 ＝ 1.4%、
+#: 10分 以上の組は 22/541 ＝ 4.1%。**時間が短いぶんだけ低い**、それだけのこと）。
+#: **23:0x の回が「数え直しの揺れ」と呼んだ -2 は、この 1.6分 の組です**（本が減ったのではない）。
+#:
+#: **覆る条件**: (1) `dead_window` を「組あたり」から「組×時間あたり」に変えたら、
+#: 長さを揃える必要が無くなるので、この閾ごと要らなくなる（`band_vs_age` の `per_hour` が既にその形）。
+#: (2) 数え直しの間隔が 10分 より短い回り方に変えたら、閾はその間隔まで下げること。
+MIN_PAIR_MIN = 10.0
 
-def dead_window(rows: list[dict]) -> tuple[int, int, int, int]:
-    """`measured` の連続する2点を、2点目の刻で「02〜10時 JST」と「それ以外」に分け、
-    それぞれ（伸びた組, 全体の組）を数える。**写しを持たず、毎回 台帳から数える。**"""
-    ser = series(rows)
-    nm = nt = om = ot = 0
-    for pts in ser.values():
+#: 齢の帯（`band_vs_age` が「同じ齢どうし」で突き合わせるときの束）。
+AGE_BUCKETS = ((0, 12), (12, 24), (24, 36), (36, 48), (48, 72), (72, 10_000))
+
+
+def _pairs(rows: list[dict]) -> list[dict]:
+    """`measured` の連続する2点を、判定に要る形だけにして並べる。
+
+    **`MIN_PAIR_MIN` より短い組は落とします**（上の註）。
+    """
+    out: list[dict] = []
+    for vid, pts in series(rows).items():
         for a, b in zip(pts, pts[1:]):
             va, vb = a.get("views"), b.get("views")
             if va is None or vb is None:
                 continue
-            moved = int(vb) - int(va) > 0
-            if DEAD_START <= _at(b).hour < DEAD_END:
-                nt += 1
-                nm += moved
-            else:
-                ot += 1
-                om += moved
+            ta, tb = _at(a), _at(b)
+            if (tb - ta).total_seconds() / 60.0 < MIN_PAIR_MIN:
+                continue
+            age = b.get("age_h")
+            bucket = next(((lo, hi) for lo, hi in AGE_BUCKETS
+                           if age is not None and lo <= age < hi), None)
+            out.append({"vid": vid, "age": age, "bucket": bucket,
+                        "gap_min": (tb - ta).total_seconds() / 60.0,
+                        "band": DEAD_START <= tb.hour < DEAD_END,
+                        "grew": int(vb) - int(va) > 0})
+    return out
+
+
+def dead_window(rows: list[dict]) -> tuple[int, int, int, int]:
+    """`measured` の連続する2点を、2点目の刻で「02〜10時 JST」と「それ以外」に分け、
+    それぞれ（伸びた組, 全体の組）を数える。**写しを持たず、毎回 台帳から数える。**"""
+    nm = nt = om = ot = 0
+    for p in _pairs(rows):
+        if p["band"]:
+            nt += 1
+            nm += p["grew"]
+        else:
+            ot += 1
+            om += p["grew"]
     return nm, nt, om, ot
+
+
+def band_vs_age(rows: list[dict], iters: int = 2000, seed: int = 20260909) -> dict:
+    """**帯の 0 は「刻」なのか「齢」なのかを、台帳の中だけで分けにいく**
+    （2026-09-09 00:2x JST・optimizer・Opus が足した）。
+
+    上の註は「公開が 10:00 JST なので、帯は齢 16〜19h／40〜43h と重なっており、
+    **刻と齢を分けられません**」と書いていた。**それは半分だけ本当でした** ——
+    旧作りは 06:59〜18:59 JST のいろいろな刻に公開されているので、
+    **帯に落ちる2点組の齢は 9h〜191h に散っています**（42本・実測）。
+    ＝ 齢を揃えたうえで帯と外を比べる余地が、台帳の中に在ります。
+
+    出すもの:
+
+      `expected`  齢の束ごとに「帯の外の伸び率 × 帯の組数」を足したもの
+                  ＝ **齢だけで説明できるなら、帯の中でこれだけ伸びているはず**の数
+      `observed`  帯の中で実際に伸びた組（いまは 0）
+      `p_video`   伸びの札を**本ごとに**並べ替えて、帯に落ちる数が observed 以下になる率
+      `p_va`      同じ並べ替えを**本ごと×齢の束ごと**にしたもの（いちばん厳しい）
+
+    **並べ替えを使う理由**: 2点組は本ごとに強く相関する（伸びる本は続けて伸びる）ので、
+    ポアソンや χ² は「独立な 818組」と読んで p を小さく出しすぎます。
+    札を本の中でだけ入れ替えれば、**本ごとの伸びの回数はそのまま**で、
+    「その伸びが帯を避けたのは偶然か」だけを訊けます。
+
+    **これは §5 の「教訓の形」（確かめる手を足すときは、それが元の手と違う物を見ているかを先に撃つ）
+    を通してあります**: 生の 0/203 は齢で全部 説明できてしまう見込みが在り、
+    齢を揃えると `expected` が 7.33 → p_va 0.031 と**別の答え**になりました（足した回の実測）。
+
+    **覆る条件**: (1) `p_va` が 0.05 を越えたら、帯の 0 は齢で説明できる範囲に戻る
+    （そのときは §7 の「帯の回は伸びを読めない」を、齢の帯の話に書き直すこと）。
+    (2) 公開の刻を変えた本が出たら交絡そのものが解けるので、並べ替えは要らなくなる。
+    """
+    import random
+
+    pairs = _pairs(rows)
+    observed = sum(1 for p in pairs if p["band"] and p["grew"])
+    per_bucket: list[tuple[tuple[int, int] | None, int, int, int, int]] = []
+    expected = 0.0
+    for lo, hi in AGE_BUCKETS:
+        bi = [p for p in pairs if p["bucket"] == (lo, hi) and p["band"]]
+        ou = [p for p in pairs if p["bucket"] == (lo, hi) and not p["band"]]
+        rate = (sum(p["grew"] for p in ou) / len(ou)) if ou else 0.0
+        expected += rate * len(bi)
+        per_bucket.append(((lo, hi), sum(p["grew"] for p in bi), len(bi),
+                           sum(p["grew"] for p in ou), len(ou)))
+
+    rng = random.Random(seed)
+
+    def _perm(by_bucket: bool) -> float:
+        groups: dict[tuple, list[dict]] = {}
+        for p in pairs:
+            groups.setdefault((p["vid"], p["bucket"]) if by_bucket else (p["vid"],), []).append(p)
+        live = [(g, sum(x["grew"] for x in g)) for g in groups.values()]
+        live = [(g, k) for g, k in live if k]
+        if not live:
+            return 1.0
+        hits = 0
+        for _ in range(iters):
+            tot = 0
+            for g, k in live:
+                tot += sum(rng.sample([x["band"] for x in g], k))
+            if tot <= observed:
+                hits += 1
+        return hits / iters
+
+    # **長さで揃える**（齢で揃えるより素直な対照）。
+    # 帯の組は**外の組より長い**（中央 151分 対 123分・平均 189分 対 144分）ので、
+    # 帯は伸びる機会を**多く**持っていて 0 です ＝ 長さの偏りは、この結論と**逆向き**に効いています。
+    band_h = sum(p["gap_min"] for p in pairs if p["band"]) / 60.0
+    out_h = sum(p["gap_min"] for p in pairs if not p["band"]) / 60.0
+    out_grew = sum(1 for p in pairs if not p["band"] and p["grew"])
+    per_hour = (out_grew / out_h) if out_h else 0.0
+    matched = [p for p in pairs if 100 <= p["gap_min"] <= 200]
+    mb = [p for p in matched if p["band"]]
+    mo = [p for p in matched if not p["band"]]
+
+    return {"observed": observed, "expected": expected,
+            "p_video": _perm(False), "p_va": _perm(True),
+            "buckets": per_bucket, "pairs": len(pairs),
+            # 帯が外と同じ「組×時間あたり」で伸びていたら、帯の中に在るはずの伸びの数
+            "expected_per_hour": per_hour * band_h,
+            "band_hours": band_h, "out_hours": out_h,
+            # 100〜200分 の組だけで揃えたもの（伸びた/全体）
+            "matched": (sum(p["grew"] for p in mb), len(mb),
+                        sum(p["grew"] for p in mo), len(mo))}
 
 
 def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = None) -> list[str]:
@@ -158,6 +302,14 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
             out.append(f"  {pub:%H:%M} 予 {vid:12s} まだ公開前（この日の本数に入る） {title[:30]}")
     if not out:
         out.append("（台帳に、この日数のうちに公開された本の measured がありません）")
+    # **帯の数は、帯の中に居る回だけでなく毎回 印字する** —— §7 は毎周この数を書き写しており、
+    # 手で数え直すたびに数え方が揺れていた（2026-09-09 00:2x）。
+    nm, nt, om, ot = dead_window(rows)
+    out.append(
+        f"帯 {DEAD_START:02d}:00〜{DEAD_END:02d}:00 JST の2点組 **{nm}/{nt}** が伸びた"
+        f"（それ以外は {om}/{ot}）。**{MIN_PAIR_MIN:.0f}分 未満の2点組は数えていません**"
+        "（長さの違う組を同じ分母に入れないため —— studio/trend.py の `MIN_PAIR_MIN` の註）。")
+    # **この一文は最後に置くこと**（`tests/test_studio_trend.py` が末尾で止めている）。
     out.append("平らは「止まった」ではない —— 実測は studio/trend.py の註。齢の浅い1点で本を比べないこと。")
     if DEAD_START <= now.hour < DEAD_END:
         nm, nt, om, ot = dead_window(rows)
