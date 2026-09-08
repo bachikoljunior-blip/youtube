@@ -61,6 +61,42 @@ def lineup_mark(v: dict, studio_ids: set[str]) -> str:
     return "  [旧作り]"
 
 
+def meta_drift(video_id: str, rd: dict, rows: list[dict] | None = None) -> list[str] | None:
+    """上がっている本の 題・説明欄・tags が、台帳 `scheduled` の台本と食い違っている所（2026-09-09 01:5x・hourly・Fable）。
+
+    `status` は「処理 済」しか見ておらず、**上がった説明欄が台本と違っても黙っていた**。説明欄だけを直す回
+    （09/07 05:5x・09/08 19:1x）は予約の**前**に来たから通ったが、予約の**後**に来たら `yt.update_meta` を撃たない限り
+    古い説明欄のまま 10:00 に出る。同じ `videos.list` の `snippet`（0単位 増）で見えるので、判断ごと印字する。
+    返り: 食い違った欄の名前（空なら一致）。台帳に無い ID（旧作り）や台本ファイルが無ければ None（比べる物が無い）。
+    tags は YouTube が並べ替えて返す（実測 09/09 01:4x）ので集合で比べる。
+    """
+    rows = ledger_rows() if rows is None else rows
+    sid = next((r.get("id") for r in reversed(rows) if r.get("event") == "scheduled" and r.get("video_id") == video_id), None)
+    if not sid or rd.get("title") is None:
+        return None
+    try:
+        s = script.load(sid)
+    except FileNotFoundError:
+        return None
+    out = []
+    if rd.get("title") != s.title:
+        out.append("題")
+    if rd.get("description") != s.description:
+        out.append("説明欄")
+    if set(rd.get("tags") or []) != {t[:30] for t in s.tags[:15]}:
+        out.append("tags")
+    return out
+
+
+def meta_mark(drift: list[str] | None) -> str:
+    if drift is None:
+        return ""
+    if not drift:
+        return "台本と一致（題・説明欄・tags）"
+    return (f"!! 台本と食い違い: {'・'.join(drift)} → `yt.update_meta(<videoId>, s.title, s.description, s.tags)`"
+            "（50単位・ID も予約もそのまま）。本文（声・画面）も変えたなら `schedule --replace`")
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
@@ -75,6 +111,9 @@ def cmd_status(a):
             rd = yt.readiness(v["id"])
             mark = "処理 済" if rd["ok"] else f"!! 処理 {rd['upload']}/{rd['processing']} 失敗 {rd['failure'] or rd['rejection']}"
             print(f"           {mark}（upload {rd['upload']}・processing {rd['processing']}）")
+            mm = meta_mark(meta_drift(v["id"], rd))
+            if mm:
+                print(f"           {mm}")
     print("予約（あす以降）:")
     for v in yt.scheduled_all():
         if yt.when(v).date() > now_jst().date():
