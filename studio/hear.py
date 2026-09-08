@@ -350,6 +350,54 @@ def tail_probe(h: "Hearer", wav: Path, missing: str, yomi: dict[str, str], sec: 
     return {"heard": got, "diffs": diffs, "ok": not diffs}
 
 
+def tail_rate(exp_len: int, gap_len: int, dur: float, band: tuple[float, float]) -> dict:
+    """**秒数の側から**、末尾が音に在るかを見る（2026-09-09 06:5x・optimizer・Opus）。
+
+    `tail_probe` は「末尾 5秒 を同じ模型に渡す」手で、**聞き取りをもう1回する**ものです。
+    ところが whisper は**渡された音の終わりを切る**ことがあり、そのときは
+    **末尾だけを渡しても同じ所で切れます** ＝ 5秒 の窓でも末尾が出ず、
+    `tail_probe` は「差が残る → TTS 側を疑う」と答えます。**これは誤りです。**
+
+    実測 2026-09-09 06:5x（09/10 の本・コマ7「…50万円が、遺族の分として足されます。」）:
+
+        全部 small→medium+prompt   …ごじゅまんへんがいぞくのぶんとして   ← 「たされます」が無い
+        **末尾 5秒** medium        ごじゅまんえんまでたりないごじゅまんえんが
+                                   ← **窓の中の末尾（いぞくのぶんとしてたされます）も落ちた**
+        → `tail_probe` は `ok=False`（TTS 側を疑え）と答えた
+
+    **こちらは音の長さを見るので、聞き取りとは別の物を見ます**（§5 の「教訓の形」——
+    確かめる手を足すときは、それが元の手と違う物を見ているかを先に撃つ）。
+    同じコマの秒数は、末尾を**読んでいる**前提でしか説明が付きません:
+
+        コマ7  48字 / 9.2秒 = **5.22 字/秒**（この本の帯 4.77〜5.53 の中）
+               「たされます」(5字) が音に無いなら 43字 / 9.2秒 = **4.67 字/秒** ＝ **帯の外**
+        コマ3  64字 / 12.2秒 = 5.25 字/秒 ／ 末尾 17字 が無いなら **3.85 字/秒** ＝ 帯の外
+
+    ＝ **どちらも音は在り、切ったのは whisper です**（`tail_probe` の答えと逆）。
+
+    帯は**その本の 一致したコマ だけ**から作ります（差の在るコマを分母に入れると、
+    測ろうとしている物で物差しを作ることになる）。
+
+    **この手が分けられるのは「音そのものが無い」か「音は在る」かの1つだけです。**
+    **誤読 と 切り落とし は分けません** —— TTS が末尾を別の語で読んだ場合も音の長さは残るので、
+    ここは `present` に出ます。そちらを分けるのは `tail_probe` の仕事で、
+    **2つは並べて読みます**（`tail_probe` が末尾の語を聞き取れた ＝ 切り落とし／
+    別の語を聞き取った ＝ 誤読／何も聞き取れないのに `present` ＝ **窓の側も切られた**）。
+
+    返すもの: `{"rate": いまの速さ, "without": 末尾が無い場合の速さ, "band": 帯,
+                "present": 末尾が無いと帯の外へ出るか}`。
+    **`present` でも一致の数には入れません**（決めるのは Fable・§4 (2)）。
+    **覆る条件**: `present` と `tail_probe.ok` が食い違ったコマを、耳で聞いて
+    `tail_probe` のほうが当たっていた回が1度でも出たら、この手を外すこと。
+    逆に 3本 続けて `present` の側が当たったら、`tail_probe` の「TTS 側を疑う」の
+    印字をやめ、こちらに寄せること（そのときは `tail_probe` は 0差 の確認だけに使う）。"""
+    lo, hi = band
+    rate = exp_len / dur if dur else 0.0
+    without = (exp_len - gap_len) / dur if dur else 0.0
+    return {"rate": round(rate, 2), "without": round(without, 2),
+            "band": (round(lo, 2), round(hi, 2)), "present": without < lo}
+
+
 _PROMPT = "ひらがなだけでかきます。すうじもひらがなでかきます。"
 
 
@@ -394,10 +442,23 @@ def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = Tru
         row = {"i": i, "say": seg.say, "heard": heard, "how": how,
                "exp": loose(exp), "got": loose(got), "diffs": diffs}
         gap = tail_gap(loose(exp), diffs) if escalate else None
+        row["_dur"] = probe_duration(wav)
+        row["_gap"] = gap
         if gap:   # 末尾が丸ごと無い ＝ 段を上げても分けられない型。末尾だけを聞き直して 切り落とし と 誤読 を分ける
             h2 = h2 or Hearer("medium" if size != "medium" else size)
             row["tail"] = tail_probe(h2, wav, gap, s.yomi)
         rows.append(row)
+    # **秒数の側**（`tail_rate` の註）。帯は一致したコマだけから作る ——
+    # 差の在るコマを分母に入れると、測ろうとしている物で物差しを作ることになる。
+    ok_rates = [len(r["exp"]) / r["_dur"] for r in rows if not r["diffs"] and r["_dur"]]
+    if ok_rates:
+        band = (min(ok_rates), max(ok_rates))
+        for r in rows:
+            if r.get("_gap"):
+                r["rate"] = tail_rate(len(r["exp"]), len(r["_gap"]), r["_dur"], band)
+    for r in rows:
+        r.pop("_dur", None)
+        r.pop("_gap", None)
     return rows
 
 

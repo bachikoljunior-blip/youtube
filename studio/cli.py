@@ -200,7 +200,15 @@ def cmd_hear(a):
                 print(f"      末尾5秒: {t['heard']}")
                 print("      → 音には在る（whisper が長いコマの末尾を切り落とした側）。通してよいかを決めるのは Fable"
                       if t["ok"] else
-                      f"      → 末尾を聞き直しても差が残る（TTS 側を疑う）: {t['diffs']}")
+                      f"      → 末尾を聞き直しても差が残る: {t['diffs']}")
+            rt = r.get("rate")
+            if rt:   # 秒数の側（studio/hear.tail_rate）。聞き取りとは別の物を見る second opinion
+                print(f"      秒数: {rt['rate']} 字/秒（この本の帯 {rt['band'][0]}〜{rt['band'][1]}）・"
+                      f"末尾が音に無いなら {rt['without']} 字/秒")
+                print("      → 秒数の側は「音には在る」（末尾を落とすと帯の外）。"
+                      "**`tail_probe` と食い違うときは、両方を並べて Fable が決める**"
+                      if rt["present"] else
+                      "      → 秒数の側でも末尾が無い側に付く（TTS を疑う根拠が2つ）")
     print(f"一致 {len(rows) - len(bad)}/{len(rows)}")
     if bad:
         print("差の読み方: TTS の誤読なら yomi か言い換え（yomi は効かない語がある → 直したら hear をやり直す）。"
