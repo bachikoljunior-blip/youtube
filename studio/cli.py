@@ -195,6 +195,12 @@ def cmd_hear(a):
             print(f"      音  : {r['got']}")
             for e, g in r["diffs"]:
                 print(f"      予定「{e}」 聞こえた「{g}」")
+            t = r.get("tail")
+            if t:   # 末尾が丸ごと無い型。末尾 5秒 だけを聞き直した答え（studio/hear.tail_probe の註）
+                print(f"      末尾5秒: {t['heard']}")
+                print("      → 音には在る（whisper が長いコマの末尾を切り落とした側）。通してよいかを決めるのは Fable"
+                      if t["ok"] else
+                      f"      → 末尾を聞き直しても差が残る（TTS 側を疑う）: {t['diffs']}")
     print(f"一致 {len(rows) - len(bad)}/{len(rows)}")
     if bad:
         print("差の読み方: TTS の誤読なら yomi か言い換え（yomi は効かない語がある → 直したら hear をやり直す）。"
@@ -202,6 +208,7 @@ def cmd_hear(a):
     ledger("heard", a.id, mismatched=len(bad), model="medium" if a.medium else "small", mode="kana",
            diffs=[{"i": r["i"], "d": r["diffs"]} for r in bad],
            escalated=[r["i"] for r in rows if "→" in r["how"]],   # small で差が出て medium が予定どおりに聞いたコマ
+           tail={str(r["i"]): r["tail"]["ok"] for r in rows if r.get("tail")},   # 末尾が丸ごと無いコマ → 末尾5秒に在ったか（hear.tail_probe の覆る条件を数えるため）
            how=hear.escalations(rows))   # どの段で通ったか（medium／medium+prompt）。§7 の「prompt の段が採られたか」を台帳で数えるため
     return 1 if bad else 0
 

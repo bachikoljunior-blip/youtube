@@ -27,6 +27,7 @@ import jaconv
 import pykakasi
 from janome.tokenizer import Tokenizer
 
+from .common import probe_duration, run
 from .script import Script
 
 _kks = pykakasi.kakasi()
@@ -289,10 +290,64 @@ class Hearer:
         return "".join(s.text for s in segs)
 
 
+TAIL_PROBE_SEC = 5.0   # 末尾だけを聞き直すときに切り出す長さ（実測 09/09 05:5x: コマ8 は 11.1秒 で、末尾 5秒 に欠けた並びが全部 入る）
+
+
+def tail_gap(exp: str, diffs: list[tuple[str, str]]) -> str | None:
+    """差が「予定の末尾が丸ごと音に無い」形なら、その並びを返す（そうでなければ None）。
+
+    **whisper は長いコマの末尾を落とします**（実測 2026-09-09 05:5x・optimizer・Opus。09/10 の本 コマ8・59字 11.1秒）:
+    small も medium も、末尾の「多ければ計算が変わります」を1字も書きませんでした。
+    §4 (2) は「TTS の誤読なら medium でも同じ差が残るので隠れない」と書いていますが、
+    **この型は medium でも同じ差が残るのに、TTS の誤読ではありません** ——
+    `escalate` は medium を撃って「差が減らない」と見て small のまま置き、
+    台帳には「予定『おおければけさんがかわります』 聞こえた『』」だけが残ります。
+    ＝ **段を上げる手では、切り落とし と 誤読 を分けられません。**（`tail_probe` が分けます）"""
+    if not diffs:
+        return None
+    e, g = diffs[-1]
+    return e if g == "" and len(e) >= 4 and exp.endswith(e) else None
+
 def degenerate(heard: str, exp: str) -> bool:
     """漢字を禁じると whisper が崩れることがある（実測 09/06: 「、、、、」の連打・空）。短すぎる／同じ片の連打で見る。"""
     k = to_kana(heard)
     return len(k) < 0.7 * len(exp) or bool(re.search(r"(.{1,3})\1{4,}", heard))
+
+
+
+def tail_probe(h: "Hearer", wav: Path, missing: str, yomi: dict[str, str], sec: float = TAIL_PROBE_SEC) -> dict:
+    """コマの**末尾 sec 秒だけ**を聞き直して、`missing`（予定に在って音に無かった末尾の並び）が
+    そこに在るかを見る。在れば「whisper が切り落とした」・無ければ「TTS が別に読んだ／読んでいない」。
+
+    **足す前に、元の手と違う物を見ることを撃って確かめました**（§5 の「教訓の形」）——
+    `escalate`（段を上げる）は同じ 11秒 の音を medium で聞き直すだけで、**同じ所で切れます**。
+    こちらは**同じ模型に短い音を渡す**ので、答えが割れます（実測 2026-09-09 05:5x・API 0単位）:
+
+        コマ8 全部 small   …ときのかたちで                        ← 末尾が無い
+        コマ8 全部 medium  …おっとのはんぶんより                  ← medium は**もっと**早く切れた
+        コマ8 **末尾 5秒** medium  …おおければけいさんがかわります  ← **在る**（0差）
+
+    **陽性対照**（同じ回に撃った・捨てないこと）: 同じコマの末尾だけを
+    「年66万円ふえます」（裸の年 ＝ Neural2-D が「とし」と読む・§3 の 9）に差し替えて焼くと、
+    全部の聞き取りは**同じ形**で切れ（予定「ねんろくじゅろくまんえんふえます」 聞こえた「」）、
+    **末尾 5秒 は「としろくじゅろくまんえんふえます」と聞いて 差が残ります**。
+    ＝ **この手は「切り落とし」だけを通し、「誤読」は通しません。**
+
+    返すもの: `{"heard": 末尾の仮名, "diffs": 残った差, "ok": 差が無いか}`。
+    `ok` でも**一致の数には入れません**（決めるのは Fable・§4 (2)）。
+    **覆る条件**: `ok` が出たコマを Fable が 3本 続けてそのまま通したら、そのときは一致に数えてよい
+    （＝ 人が読む所を1つ減らせる）。逆に `ok` なのに耳で聞くと欠けている本が1本でも出たら、この手ごと外すこと。"""
+    clip = wav.with_name(wav.stem + "-tail.wav")
+    dur = probe_duration(wav)
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-ss", str(max(0.0, dur - sec)), str(clip)])
+    heard = h.transcribe(clip)
+    got = loose(heard_kana(heard, yomi))
+    # 切り出した頭に前の語が入り込むが、それは **exp 側が空の差**になるので落とすだけでよい。
+    # **末尾の窓（`got[-(len(missing)+4):]`）で切ってから比べる形も書いて、撃って外した**（2026-09-09 05:5x）——
+    # 実測の2つ（切り落とし・陽性対照の誤読）でも検査 6件 でも、窓の有無で答えが1つも変わらなかった。
+    # ＝ **同じ物を見る2つ目の手**なので置かない（§5 の「確かめる手を足すときは、元の手と違う物を見ているかを先に撃つ」）。
+    diffs = [(e, g) for e, g in diff_spans(missing, got) if e]
+    return {"heard": got, "diffs": diffs, "ok": not diffs}
 
 
 _PROMPT = "ひらがなだけでかきます。すうじもひらがなでかきます。"
@@ -304,7 +359,11 @@ def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = Tru
     small で差が出たコマだけ medium で聞き直し、差が少ないほうを採る（`escalate`）。
     実測 09/06 17:xx（hourly）: small の `!!` 3/11 は全部 whisper 側で、medium は 3つとも予定どおりに聞いた
     （末尾の1語の欠落・1か月→1かけず・11年→11イネ）。TTS の誤読なら medium でも同じ差が残るので、隠れない。
-    medium を全コマの既定にしない理由: 2.5倍 遅く、`!!` は減らなかった（6/11。§4 (2)）。"""
+    medium を全コマの既定にしない理由: 2.5倍 遅く、`!!` は減らなかった（6/11。§4 (2)）。
+
+    **段を上げても分けられない型が1つ在ります**（2026-09-09 05:5x・optimizer・Opus）: 長いコマの**末尾の切り落とし**。
+    medium は同じ所か、もっと手前で切ります。差が「予定の末尾が丸ごと無い」形のときだけ `tail_probe` を撃ち、
+    行に `tail`（末尾 5秒 だけの聞き取り）を足します。**一致の数は変えません**（決めるのは Fable・§4 (2)）。"""
     h = Hearer(size)
     h2: Hearer | None = None
     rows = []
@@ -332,8 +391,13 @@ def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = Tru
                     heard, got, diffs, how = heard2, got2, diffs2, label
                 if not diffs:
                     break
-        rows.append({"i": i, "say": seg.say, "heard": heard, "how": how,
-                     "exp": loose(exp), "got": loose(got), "diffs": diffs})
+        row = {"i": i, "say": seg.say, "heard": heard, "how": how,
+               "exp": loose(exp), "got": loose(got), "diffs": diffs}
+        gap = tail_gap(loose(exp), diffs) if escalate else None
+        if gap:   # 末尾が丸ごと無い ＝ 段を上げても分けられない型。末尾だけを聞き直して 切り落とし と 誤読 を分ける
+            h2 = h2 or Hearer("medium" if size != "medium" else size)
+            row["tail"] = tail_probe(h2, wav, gap, s.yomi)
+        rows.append(row)
     return rows
 
 
