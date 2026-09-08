@@ -100,3 +100,5 @@
 {"at": "2026-09-07T08:15:43+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "open", "id": "ef27930d", "source": "owner", "text": "他モデル活用しないの？"}
 {"at": "2026-09-07T08:27:24+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "close", "id": "ef27930d", "note": "サブ（optimizer・Fable 5.1・09/07 08:1x）が判断: Fable だけでは「すべてのモデル」は公式の内訳で 50% ぶんしか動かず、Fable 100%（09/10）の後に opus へ切り替える今の形では 74% で枠が戻る（opus 50体ぶんが使われない）。役で分けた: hourly（台本を持つ側）＝ Fable を 100% の1体手前まで・optimizer（measure・道具・親の手続き・公開前の build/hear）＝ Fable の目盛りに関係なく Opus。親の間隔は実測で追う（119分）。数と覆る条件は scripts/quota.py ROLE_TIER の註・docs/JOURNAL.md 09/07 08:1x"}
 {"at": "2026-09-07T12:37:03+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "open", "id": "9d0a9422", "source": "owner", "text": "ナレーション前の音声の方が良かった"}
+{"at": "2026-09-08T21:39:57+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "open", "id": "811902bc", "source": "owner", "text": "コメントで視聴者にAIですかって聞かれたら何で答えるの？"}
+{"at": "2026-09-08T21:39:57+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "open", "id": "62e77b34", "source": "owner", "text": "何で答えると思う？"}
