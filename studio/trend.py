@@ -43,6 +43,28 @@ def series(rows: list[dict]) -> dict[str, list[dict]]:
     return {vid: [pts[k] for k in sorted(pts)] for vid, pts in out.items()}
 
 
+def pending(rows: list[dict]) -> dict[str, tuple[dt.datetime, str]]:
+    """id → （公開予定の刻, 題）。`measure` が毎回 書く `pending` 行から（最後の行を採る）。
+
+    **なぜ日ごとの本数に「予約」を足すか**（2026-09-08 23:0x JST・optimizer・Opus が踏んだ）:
+    この道具は `measured`（＝**公開ずみ**）だけを数えるので、**その日に出る予定の本は 1本 も数に入らない。**
+    実測 09/08: 旧作りの `Yy7GmcGoQ6I` が 08/19 に上げられ 09/02 に `reschedule.py` で
+    **09/08 23:00 JST** の publishAt を打たれたまま private で待っていた。`status` の「きょうの枠」には
+    private として出ていたが、**この道具の日の見出しは 22時間 ずっと「09/08（1本）」**で、
+    §7 は 15:0x〜21:4x の **5回 続けて**「3本目は **1本 だけの日** に出た」と書き、
+    「同じ条件の 2点目」を 09/09 に期待していた。23:00 にその本が出て、**09/08 は 2本 の日になった。**
+    ＝ §1 の「量は毒」がそのまま効く軸（その日の本数）が、**判定を書いている当の数から抜けていた。**
+    **覆る条件**: 予約が「その日に本当に出る」ことの確からしさが崩れたら（予約のまま出なかった本が出たら）、
+    見出しは「＋予約」ではなく別の印を使う（`pending` 行は残るので数え直せる）。
+    """
+    out: dict[str, tuple[dt.datetime, str]] = {}
+    for r in rows:
+        if r.get("event") != "pending" or not r.get("publish_at"):
+            continue
+        out[r["id"]] = (dt.datetime.fromisoformat(r["publish_at"]).astimezone(JST), r.get("title", ""))
+    return out
+
+
 def published_at(points: list[dict]) -> dt.datetime:
     """公開の刻 ＝ 最初の点の「いつ測ったか」から齢を引く（API を撃たずに日で束ねるため）。"""
     p = points[0]
@@ -115,14 +137,25 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         if (now - pub).total_seconds() / 3600 > within_h:
             continue
         days.setdefault(pub.strftime("%m/%d"), []).append((pub, vid, pts))
+    # まだ公開前の本（予約）も日ごとに束ねる —— 見出しの本数から抜けると §7 が「1本 だけの日」と読む（`pending` の註）。
+    waiting_days: dict[str, list[tuple[dt.datetime, str, str]]] = {}
+    for vid, (pub, title) in pending(rows).items():
+        if vid in ser:  # もう公開されて measured が付いた本は「予約」ではない
+            continue
+        if (now - pub).total_seconds() / 3600 > within_h:
+            continue
+        waiting_days.setdefault(pub.strftime("%m/%d"), []).append((pub, vid, title))
     out: list[str] = []
-    for day in sorted(days, reverse=True):
-        cohort = sorted(days[day])
-        out.append(f"{day}（{len(cohort)}本）")
+    for day in sorted(set(days) | set(waiting_days), reverse=True):
+        cohort = sorted(days.get(day, []))
+        waiting = sorted(waiting_days.get(day, []))
+        out.append(f"{day}（{len(cohort)}本" + (f"＋予約 {len(waiting)}本" if waiting else "") + "）")
         for pub, vid, pts in cohort:
             mark = "新" if vid in mine else "旧"
             trail = " → ".join(f"{p['age_h']:.1f}h {p['views']}" for p in pts[-6:])
             out.append(f"  {pub:%H:%M} {mark} {vid:12s} {trail}{_growth(pts)}")
+        for pub, vid, title in waiting:
+            out.append(f"  {pub:%H:%M} 予 {vid:12s} まだ公開前（この日の本数に入る） {title[:30]}")
     if not out:
         out.append("（台帳に、この日数のうちに公開された本の measured がありません）")
     out.append("平らは「止まった」ではない —— 実測は studio/trend.py の註。齢の浅い1点で本を比べないこと。")
