@@ -1152,3 +1152,4 @@
 {"views": 153, "likes": 0, "comments": 0, "age_h": 161.0, "title": "iDeCo自営の上限20年 出口の税は何%から #Shorts", "at": "2026-09-09T02:59:58+09:00", "id": "2tAGEKVCgYQ", "event": "measured"}
 {"publish_at": "2026-09-09T10:00:00+09:00", "title": "配偶者が年下だと年金が年42万3700円ふえる 加給年金 #Shorts", "at": "2026-09-09T02:59:58+09:00", "id": "gv1u7n_pCAQ", "event": "pending"}
 {"seconds": 90.5, "image": true, "chars": 455, "scenes": [7.6, 8.8, 10.4, 7.5, 6.9, 5.9, 8.8, 11.5, 7.1, 7.0, 9.1], "at": "2026-09-09T03:24:27+09:00", "id": "2026-09-10-izoku-kosei-4bunno3", "event": "built"}
+{"mismatched": 3, "model": "small", "mode": "kana", "diffs": [{"i": 2, "d": [["としよ", "たしお"]]}, {"i": 3, "d": [["", "です"]]}, {"i": 8, "d": [["おおければけさんがかわります", ""]]}], "escalated": [3, 4, 5], "how": {"2": "small+prompt", "3": "small→medium", "4": "small→medium", "5": "small→medium", "10": "small+prompt"}, "at": "2026-09-09T03:28:17+09:00", "id": "2026-09-10-izoku-kosei-4bunno3", "event": "heard"}
