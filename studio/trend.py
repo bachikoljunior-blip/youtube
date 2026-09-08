@@ -43,6 +43,40 @@ def series(rows: list[dict]) -> dict[str, list[dict]]:
     return {vid: [pts[k] for k in sorted(pts)] for vid, pts in out.items()}
 
 
+def returned_private(rows: list[dict]) -> dict[str, dict]:
+    """id → 最後の `unscheduled` 行。**公開されたあと private へ戻した本**だけを採る。
+
+    **なぜ日ごとの本数から抜くか**（2026-09-09 08:5x JST・optimizer・Opus が踏んだ）:
+    旧 `reschedule.py` が 09/02 に打った publishAt が **09/08 23:00 JST** に発火して
+    `Yy7GmcGoQ6I` が public になり、**7分後**（23:0x）に前の回が private へ戻して
+    台帳に `unscheduled` を書いた。だが `lines()` は `measured` の点を持つ本を全部 数えるので、
+    見出しは **10時間 たっても「09/08（2本）」**のままで、行は **「0.1h 0回」で凍った**まま
+    `within_h`（72時間）ぶん 並び続ける —— private の本は `measure` が二度と見ないので、
+    この点は**永久に更新されない**。
+
+    **凍った 0回 の点が読み違えられる形**: §7 は「お試し配信は毎回 来るか」を
+    浅い齢の再生で見ている（§7 の 4〜5h の行）。**7分だけ public だった本の 0回** は
+    その問いの答えではないのに、並びの上では「0回 の本」と同じ形をしている。
+    §7 が 09/07 16:3x に踏んだ穴（**その日に出た本を1本も見ていなかった**）と同じ型で、
+    向きだけが逆 —— あちらは数え落とし、こちらは**数えすぎ**。
+
+    **消さない**（オーナー 08/31・§8）。**行は印字するが、日の本数には入れない。**
+
+    **覆る条件**: 戻した本がもう一度 公開されたら、その `measured` は `unscheduled` より
+    後の刻で付くので、ここは自動で外れる（`_at` で比べているのはそのため）。
+    「7分」を閾にはしていない —— **どれだけ長く public だったかではなく、
+    いま private かどうか**で決めている。public のまま置くと決めた本が出たら、
+    その本には `unscheduled` を書かないこと。
+    """
+    out: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") == "unscheduled" and r.get("id"):
+            out[r["id"]] = r
+    ser = series(rows)
+    return {vid: r for vid, r in out.items()
+            if vid in ser and _at(ser[vid][-1]) <= _at(r)}
+
+
 def pending(rows: list[dict]) -> dict[str, tuple[dt.datetime, str]]:
     """id → （公開予定の刻, 題）。`measure` が毎回 書く `pending` 行から（最後の行を採る）。
 
@@ -401,12 +435,16 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     now = now or now_jst()
     mine = ours(rows)
     ser = series(rows)
+    gone = returned_private(rows)
     days: dict[str, list[tuple[dt.datetime, str, list[dict]]]] = {}
+    # 公開されたあと private へ戻した本は、行は出すが**日の本数に入れない**（`returned_private` の註）。
+    back_days: dict[str, list[tuple[dt.datetime, str, list[dict]]]] = {}
     for vid, pts in ser.items():
         pub = published_at(pts)
         if (now - pub).total_seconds() / 3600 > within_h:
             continue
-        days.setdefault(pub.strftime("%m/%d"), []).append((pub, vid, pts))
+        bucket = back_days if vid in gone else days
+        bucket.setdefault(pub.strftime("%m/%d"), []).append((pub, vid, pts))
     # まだ公開前の本（予約）も日ごとに束ねる —— 見出しの本数から抜けると §7 が「1本 だけの日」と読む（`pending` の註）。
     waiting_days: dict[str, list[tuple[dt.datetime, str, str]]] = {}
     for vid, (pub, title) in pending(rows).items():
@@ -416,9 +454,10 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
             continue
         waiting_days.setdefault(pub.strftime("%m/%d"), []).append((pub, vid, title))
     out: list[str] = []
-    for day in sorted(set(days) | set(waiting_days), reverse=True):
+    for day in sorted(set(days) | set(waiting_days) | set(back_days), reverse=True):
         cohort = sorted(days.get(day, []))
         waiting = sorted(waiting_days.get(day, []))
+        back = sorted(back_days.get(day, []))
         out.append(f"{day}（{len(cohort)}本" + (f"＋予約 {len(waiting)}本" if waiting else "") + "）")
         for pub, vid, pts in cohort:
             mark = "新" if vid in mine else "旧"
@@ -426,6 +465,11 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
             out.append(f"  {pub:%H:%M} {mark} {vid:12s} {trail}{_growth(pts)}")
         for pub, vid, title in waiting:
             out.append(f"  {pub:%H:%M} 予 {vid:12s} まだ公開前（この日の本数に入る） {title[:30]}")
+        for pub, vid, pts in back:
+            last = pts[-1]
+            out.append(
+                f"  {pub:%H:%M} 戻 {vid:12s} {last['age_h']:.1f}h {last['views']}回 で private へ戻した"
+                "（**この日の本数に入れない**・この点は更新されない）")
     if not out:
         out.append("（台帳に、この日数のうちに公開された本の measured がありません）")
     # **帯の数は、帯の中に居る回だけでなく毎回 印字する** —— §7 は毎周この数を書き写しており、
