@@ -288,7 +288,7 @@ def cmd_reply(a):
     """視聴者のコメント1件に、手で書いた返信を1つ付ける（`yt.reply()`・50単位）。
 
     門: (1) `comment_id` が台帳の `viewer_comment` に在ること（自分のコメントや存在しない ID には撃たない）
-        (2) 同じ `comment_id` に `replied` が無いこと（2度 撃たない）
+        (2) 同じ `comment_id` に同じ文の `replied` が無いこと（同じ文を2度 撃たない。別の文 ＝ 次の問いへの答えは通す）
         (3) 文が空でないこと。`--dry-run` は文を印字するだけ。
     通れば台帳に `replied`（comment_id・text）を1行。背景から呼ぶ口は無い（人が文を書いて撃つだけ）。
     """
@@ -301,9 +301,15 @@ def cmd_reply(a):
     if src is None:
         print("台帳の viewer_comment に無い ID。先に `comments` を撃つ")
         return 1
-    if any(r.get("event") == "replied" and r.get("comment_id") == a.comment_id for r in rows):
-        print("もう返信ずみ（台帳 replied）。2度は撃たない")
+    # 門 (2) は「同じスレッドに同じ文を2度」だけ止める（2026-09-08 20:3x・hourly・Fable に緩めた）。
+    # 会話は同じスレッドに続く —— 実測: 1問目の返信（17:10・オーナーの手）に視聴者が 18:41 に2問目を返し、
+    # 2つ目の返信が要った。「同じ ID に2度 撃たない」のままだと、台帳に `replied` が1行 在るだけで 3問目に答えられない。
+    prev = [r for r in rows if r.get("event") == "replied" and r.get("comment_id") == a.comment_id]
+    if any((r.get("text") or "").strip() == text[:1000].strip() for r in prev):
+        print("同じ文をもう返信ずみ（台帳 replied）。2度は撃たない")
         return 1
+    if prev:
+        print(f"（このスレッドには台帳の返信が {len(prev)} 件 在る。別の文なので撃つ）")
     video_id = src.get("id", "")   # 台帳の行は本の ID を `id` に持つ（`common.ledger()` の骨）
     print(f"→ {video_id} {src.get('author')}「{(src.get('text') or '')[:60]}」")
     print("返信:", text)
