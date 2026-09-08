@@ -102,3 +102,5 @@
 {"at": "2026-09-07T12:37:03+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "open", "id": "9d0a9422", "source": "owner", "text": "ナレーション前の音声の方が良かった"}
 {"at": "2026-09-08T21:39:57+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "open", "id": "811902bc", "source": "owner", "text": "コメントで視聴者にAIですかって聞かれたら何で答えるの？"}
 {"at": "2026-09-08T21:39:57+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "open", "id": "62e77b34", "source": "owner", "text": "何で答えると思う？"}
+{"at": "2026-09-08T21:49:57+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "close", "id": "811902bc", "note": "答えは「はい」。docs/FOR_OWNER.md 22:00〜23:00 の窓で返し、reply の門 (4) と data/studio/replies/ai-desu.txt に置いた（hourly・21:5x）"}
+{"at": "2026-09-08T21:49:57+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "close", "id": "62e77b34", "note": "同上（1件の問いの2つ目）"}

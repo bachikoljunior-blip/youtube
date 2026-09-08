@@ -290,11 +290,17 @@ def cmd_reply(a):
     門: (1) `comment_id` が台帳の `viewer_comment` に在ること（自分のコメントや存在しない ID には撃たない）
         (2) 同じ `comment_id` に同じ文の `replied` が無いこと（同じ文を2度 撃たない。別の文 ＝ 次の問いへの答えは通す）
         (3) 文が空でないこと。`--dry-run` は文を印字するだけ。
+        (4) 人間だと名乗らない・AI を否定しない（`script.AI_DENIAL`・`script.HUMAN_CLAIM`）。
+            オーナー 09/08 21:4x「AIですかって聞かれたら何で答えるの？」→ 答えは「はい」（`data/studio/replies/ai-desu.txt`）。
     通れば台帳に `replied`（comment_id・text）を1行。背景から呼ぶ口は無い（人が文を書いて撃つだけ）。
     """
     text = (a.text or "").strip()
     if not text:
         print("--text が空")
+        return 1
+    m = script.AI_DENIAL.search(text) or script.HUMAN_CLAIM.search(text)
+    if m:
+        print(f"「{m.group()}」— 人間だと名乗る・AI を否定する文は撃たない。AIかと聞かれたら「はい」（data/studio/replies/ai-desu.txt）")
         return 1
     rows = ledger_rows()
     src = next((r for r in rows if r.get("event") == "viewer_comment" and r.get("comment_id") == a.comment_id), None)
