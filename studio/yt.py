@@ -176,16 +176,24 @@ def readiness(video_id: str) -> dict:
     （uploadStatus / processingStatus）が失敗していても private のまま黙って出ないので、
     公開前の周がそれを見られるように 1単位 で引く。
     実測 09/08 02:4x `lQHX9LJ80Sg`: upload=processed・processing=succeeded・失敗 None。
+
+    **2026-09-09 01:5x（hourly・Fable）**: 同じ 1単位 に `snippet` を足し、上がっている題・説明欄・tags も返す。
+    処理が通っていても、**上がっている説明欄が台本と違えば古いまま出る**（説明欄だけ直す回 ＝ 09/07 05:5x・09/08 19:1x
+    が、予約の後に来たら `update_meta` を撃たない限り誰にも見えない）。突き合わせは `cli.meta_drift`。
+    実測 09/09 01:4x `gv1u7n_pCAQ`: 題・説明欄 815字 一致。tags は同じ 9語 だが **YouTube は並べ替えて返す**
+    （['65歳', 'シニア', …] の順）ので、比べるときは集合で。
     """
-    r = svc().videos().list(part="status,processingDetails", id=video_id).execute()
+    r = svc().videos().list(part="snippet,status,processingDetails", id=video_id).execute()
     if not r.get("items"):
-        return {"upload": "missing", "processing": "missing", "failure": None, "rejection": None, "ok": False}
+        return {"upload": "missing", "processing": "missing", "failure": None, "rejection": None, "ok": False,
+                "title": None, "description": None, "tags": None}
     v = r["items"][0]
-    st, pd = v.get("status", {}), v.get("processingDetails", {})
+    sn, st, pd = v.get("snippet", {}), v.get("status", {}), v.get("processingDetails", {})
     up, pr = st.get("uploadStatus"), pd.get("processingStatus")
     fail, rej = st.get("failureReason"), st.get("rejectionReason")
     ok = up == "processed" and pr in ("succeeded", None) and not fail and not rej
-    return {"upload": up, "processing": pr, "failure": fail, "rejection": rej, "ok": ok}
+    return {"upload": up, "processing": pr, "failure": fail, "rejection": rej, "ok": ok,
+            "title": sn.get("title"), "description": sn.get("description"), "tags": sn.get("tags")}
 
 
 def stats(video_ids: list[str]) -> dict[str, dict]:
