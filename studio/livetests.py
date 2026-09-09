@@ -1,4 +1,4 @@
-"""**どの検査が「生きている道具」の信号か**を、1か所で決める（2026-09-08 06:5x・optimizer・Opus）。
+r"""**どの検査が「生きている道具」の信号か**を、1か所で決める（2026-09-08 06:5x・optimizer・Opus）。
 
 ## なぜ要るか（前の回が「数を見てから決めろ」と残した所・`docs/JOURNAL.md` 09/07 20:1x の 5.）
 
@@ -99,6 +99,8 @@ EXTRA = frozenset({
     "test_spawn_prompt_main_gap.py",
     "test_spawn_siblings_touched.py",
     "test_parent_record_before_spawn.py",
+    # 第1節の git と「親がやらないこと」の禁止が食い違わないこと（`docs/` を読むだけ ＝ A も C も引けない）
+    "test_parent_git_allowlist.py",
     # 旧道具を背景で起こす口が塞がっていること（§8「起こす口を全部 外すこと」の見張り・3回目）
     "test_no_background_kick.py",
 })

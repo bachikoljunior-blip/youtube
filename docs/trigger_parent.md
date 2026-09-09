@@ -899,8 +899,31 @@ push を見ること。
 
 ## 親がやらないこと（**こちらのほうが大事**）
 
-- **`git` を打たない。** fetch も commit も push もしない
-- **ファイルを書かない。** 読むのは `docs/FOR_OWNER.md` の1つだけ（GitHub 経由）
+- **`git` は、第1節が名指しした3つだけ打つ。それ以外は打たない。**
+
+      git pull --no-rebase origin claude/youtube-auto-post-revenue-ggedij   ← 起きたら最初
+      git add data/rounds.jsonl data/model_choice.jsonl && git commit       ← `--record` のあと
+      git push                                                             ← **立てる前**
+
+  **この3つは「省かないこと」と第1節に書いてあります。** 中身を読まない・
+  他のファイルを混ぜない・`merge` も `rebase` も `checkout` もしない。
+  **【2026-09-09 11:5x・optimizer・Opus に直した】** ここは 2026-08-10（`fd55abc7`
+  「親を『子を立てて畳むだけ』に削る（repo を一切触らない）」）から
+  **「`git` を打たない。fetch も commit も push もしない」**のままでした。
+  その後に親の手順は2度 変わっています —— `git pull`（起きたら最初・省かないこと）と、
+  **2026-09-07 22:4x の「記録して押す → そのあと立てる」**（第1節・`scripts/next_round.py` の
+  GO の枝・検査 `tests/test_parent_record_before_spawn.py`）。
+  **どちらも、この行を書き換えずに足されました。**
+  **＝ 第1節が「省かないこと」と言っている手を、「こちらのほうが大事」と題した節が
+  名指しで禁じていた**（この repo でいちばん多い壊れ方 ——「言っている所と、している所が別」）。
+  **禁止の側を読んだ親は、押さずに立てます。** そうなると 22:4x が閉じた穴が2つとも開き直ります:
+  サブの最初の fetch がこの周の押しに間に合わない（09/07 に2回 踏んだ）・
+  立てているあいだ周が押されない窓で別の親が GO を読む（08-25「なんでサブ増えてんの？」）。
+  **覆る条件**: 第1節の git が増減したら、この3行も一緒に動かすこと
+  （検査 `tests/test_parent_git_allowlist.py` が、両方を突き合わせて落ちます）。
+- **ファイルを書かない。** 読むのは `docs/FOR_OWNER.md` の1つだけ（GitHub 経由）。
+  **`--record` が書く `data/rounds.jsonl`・`data/model_choice.jsonl` は、
+  親が書くのではなく道具が書きます**（親は撃って commit するだけ）
 - **`status.py` を実行しない。分析しない。日誌を書かない**
 - **周を回さない** —— **ただし「子が立つ」あいだだけ**（下の「子が立たない日は、親が回す」）。
   1回や2回 `create_session` に失敗しただけの回は、**代わりにやらない。**
