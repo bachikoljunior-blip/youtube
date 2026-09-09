@@ -1,11 +1,11 @@
 {
- "id": "2026-09-11-zaishoku-teiji-kaitei-bg",
- "asked_at": "2026-09-10T01:05:20+09:00",
- "for": "2026-09-11 の本（2026-09-11-zaishoku-teiji-kaitei）の背景",
- "prompt": "日本の60代後半の男性が、明るいオフィスの窓ぎわで書類を手に持ち、おだやかな表情で立っている様子。やわらかい自然光。写実的な写真風。文字やロゴは入れない。縦長。",
- "avoid": "文字・ロゴ・実在の人物・透かし",
- "size": "1080x1920",
- "format": "jpg",
- "out": "assets/images/2026-09-11-zaishoku-teiji-kaitei-bg.jpg",
- "status": "pending"
+  "id": "2026-09-11-zaishoku-teiji-kaitei-bg",
+  "asked_at": "2026-09-10T01:05:20+09:00",
+  "for": "2026-09-11 の本（2026-09-11-zaishoku-teiji-kaitei）の背景",
+  "prompt": "日本の60代後半の男性が、明るいオフィスの窓ぎわで書類を手に持ち、おだやかな表情で立っている様子。やわらかい自然光。写実的な写真風。文字やロゴは入れない。縦長。",
+  "avoid": "文字・ロゴ・実在の人物・透かし",
+  "size": "1080x1920",
+  "format": "jpg",
+  "out": "assets/images/2026-09-11-zaishoku-teiji-kaitei-bg.jpg",
+  "status": "done"
 }
