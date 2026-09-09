@@ -456,6 +456,17 @@ def round_gaps(limit: int | None = None) -> list[float]:
     `round` を持たない古い行（36/441）は、時刻そのものを識別子に使います
     （同じ時刻の行だけが畳まれる ＝ 畳みすぎない側に倒す）。
     """
+    got = round_starts()
+    gaps = [(b - a).total_seconds() / 60.0 for a, b in zip(got, got[1:])]
+    return gaps[-limit:] if limit else gaps
+
+
+def round_starts() -> list[datetime]:
+    """**周の開始時刻**（`data/rounds.jsonl` を `round` で畳んだもの・古い順）。
+
+    `round_gaps` が使っていた畳み方を、そのまま切り出したもの
+    （2026-09-09 09:5x に `gap_ratios` が同じ畳みを要るので分けた）。畳む理由は `round_gaps` の註。
+    """
     starts: dict[str, datetime] = {}
     for row in rows():
         at = _at(row)
@@ -463,15 +474,78 @@ def round_gaps(limit: int | None = None) -> list[float]:
             continue
         key = str(row.get("round") or row.get("at"))
         starts[key] = min(starts.get(key, at), at)
-    got = sorted(starts.values())
-    gaps = [(b - a).total_seconds() / 60.0 for a, b in zip(got, got[1:])]
-    return gaps[-limit:] if limit else gaps
+    return sorted(starts.values())
 
 
 def gap_median(limit: int = 10) -> float | None:
     """直近 `limit` 区間の**周から周**の中央値（分）。無ければ `None`。"""
     got = round_gaps(limit=limit)
     return median(got) if got else None
+
+
+# 周の開始と、その周を出した GO の行を結ぶときの許し（分）。
+# GO は周を記録した直後に書かれるので、実測は数秒〜1分（09/09 00:38:47 の GO と 00:38 の周）。
+_GO_MATCH_MIN = 5.0
+
+
+def gap_ratios(limit: int = 10, got: list[dict] | None = None) -> list[float]:
+    """各区間を、**その区間を閉じた周が立ったときに効いていた `floor`** で割った比。
+
+    **なぜ「そのときの floor」なのか**（2026-09-09 09:5x JST・optimizer・Opus が踏んで足した）:
+    `decide()` は `gap_over_floor` を **「直近10区間の中央値 ÷ いまの floor」**で出していました。
+    ところが `floor` は `pace()` が目盛りを読み直すたびに動きます。**動いた直後、
+    分子は古い floor で作られた区間のまま・分母だけが新しくなります。**
+
+    実測（この回・`data/parent_wakes.jsonl`）:
+
+        09/08 21:51  floor **75.0分**   直近の区間 78.4分   → 1.05倍（追随している）
+        09/08 22:35  floor **53.6分**   ← `pace()` が目盛りを読み直して 21分 縮んだ
+        09/08 22:46  GO・実際の区間 **55.6分**   → **そのときの floor の 1.04倍**
+        09/09 00:38  GO・実際の区間 **56.3分**   → **1.06倍**
+        しかし印字は  `gap_median_min` **78.5** ÷ `floor` **53.3** ＝ **`gap_over_floor` 1.5**
+
+    §7 21:4x の覆る条件 (1) は **「中央値が `floor` の 1.25倍 を越えていたら、上限は丸めではない」**。
+    ＝ **親は 5% 以内で追随しているのに、条件は 1.5 で鳴ります。**
+    21:4x はその条件を書いたとき「条件をそのまま読んだ次の回は、**在りもしない上限を探しにいきます**」と
+    書いており、**その文のとおりのことが、条件そのものの分母で起きていました。**
+
+    **§5 が数えた「数えている物と訊きたいことがずれている」の 4つ目**で、向きが 3つとも違います:
+
+        12:4x  `merge-base --is-ancestor`   **必ず通る確かめ**（merge と同じ ref に同じ述語）
+        00:2x  「中央値が 1.25倍」            **必ず通らない門**（1周 2行 を素朴に数えると半分）
+        02:5x  「`live > 0` が 3回」          **通っても何も言えない門**（その行に数が無い）
+        09:5x  「÷ いまの floor」              **床が動いた直後に鳴る門**（分子と分母の刻が違う）
+
+    直し方は 1つで、**区間ごとに、その区間の floor で割ってから中央値をとる**こと
+    （比の中央値。中央値の比ではない）。floor を持たない古い区間は**捨てずに飛ばします**
+    （`data/parent_wakes.jsonl` は 09/08 13:00 UTC からしか数を持たない）。
+    """
+    if got is None:
+        got = wake_rows()
+    marks: list[tuple[datetime, float]] = []
+    for row in got:
+        at = _at(row)
+        if at is None or row.get("who") != "owner" or not row.get("go"):
+            continue
+        floor = row.get("floor_min")
+        if floor:
+            marks.append((at, float(floor)))
+    if not marks:
+        return []
+    starts = round_starts()
+    out: list[float] = []
+    for a, b in zip(starts, starts[1:]):
+        near = min(marks, key=lambda m: abs((m[0] - b).total_seconds()))
+        if abs((near[0] - b).total_seconds()) / 60.0 > _GO_MATCH_MIN:
+            continue                       # その周の GO の行が無い（台帳より前の周）
+        out.append(((b - a).total_seconds() / 60.0) / near[1])
+    return out[-limit:] if limit else out
+
+
+def gap_ratio_median(limit: int = 10) -> tuple[float | None, int]:
+    """**(区間ごとの比の中央値, その比を数えられた区間の数)**。註は `gap_ratios`。"""
+    got = gap_ratios(limit=limit)
+    return (median(got) if got else None), len(got)
 
 
 def rounding_evidence(rows: list[dict] | None = None) -> tuple[int, int]:
@@ -773,7 +847,17 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     gm = gap_median()
     if gm is not None:
         base["gap_median_min"] = round(gm, 1)
-        base["gap_over_floor"] = round(gm / floor, 2) if floor else None
+    # **比は、区間ごとに「そのときの floor」で割ってから中央値をとります**
+    # （2026-09-09 09:5x。それまでは「中央値 ÷ いまの floor」で、`pace()` が床を動かした直後に
+    #  分子だけ古いまま残り、追随している親に対して 1.5 と鳴りました ——`gap_ratios` の註）。
+    ratio, n = gap_ratio_median()
+    if ratio is not None:
+        base["gap_over_floor"] = round(ratio, 2)
+        base["gap_ratio_n"] = n
+    elif gm is not None and floor:
+        # 台帳が floor を持つ前の周しか無い回。**古い出し方だと分かる印を付けて残します。**
+        base["gap_over_floor"] = round(gm / floor, 2)
+        base["gap_ratio_n"] = 0
     # **丸めが効いたかを読むための分母**（2026-09-09 02:5x・§5 の覆る条件 (2)）。
     # `live > 0` の回だけを数えると、`decide()` の数を持たない古い行まで分母に入り、
     # **門は開くのに答えが無い**という形になります（`rounding_evidence` の註）。

@@ -65,6 +65,61 @@ JST = timezone(timedelta(hours=9))
 # 2026-08-15: 親が毎時（cron `9 * * * *`）になったので 60。
 INTERVAL_MIN = 60
 MARKS = Path(__file__).resolve().parent.parent / "data" / "runs.jsonl"
+_MARKS_REAL = MARKS   # 本物の控え。検査が tmp へ差し替えたかどうかを、これで見分ける
+
+
+def _marks_blocked() -> bool:
+    """**検査からは、本物の `data/runs.jsonl` に書かない**
+    （2026-09-09 09:5x JST・optimizer・Opus が踏んで足した。
+    `scripts/next_round.log_wake()` の同じ門と、同じ理由・同じ形）。
+
+    実測: `python -m pytest tests/test_premise_ledger_gate.py` を撃つだけで、
+    **本物の控えに 6行**（`kind="verdict_gate"`）入った。
+
+    **守りは 2つ 在ったのに、2つとも外れていました。**
+
+    1. 検査の `_ship_stub` は「この検査は控えに書きません」と註を付けて
+       `ship`・`premise_opened_today`・`note_premise_gate` の **3つ**を差し替える。
+       ところが `main()` は、そのあと足された **4つ目の `note_verdict_gate()`** も撃つ。
+       ＝ **呼ぶ側で1つずつ塞ぐ形は、書き口が増えるたびに漏れる。**
+    2. `tests/conftest.py` の `_alerts_ledger_to_tmp` は
+       `import scripts.run_marker as _rm` として `_rm.MARKS` を tmp へ向ける
+       （2026-09-05 06:5x に、まさにこの穴を塞ぐために足された段落）。
+       ところが当の検査は `sys.path` に `scripts/` を足して
+       **`import run_marker`（裸）**で読む。Python はこれを**別のモジュール**として持つ
+       （撃って確かめた: `scripts.run_marker is run_marker` → **False**）:
+
+           conftest が向けた   scripts.run_marker.MARKS  → tmp
+           検査が使っていた     run_marker.MARKS          → **本物**
+
+       ＝ **当て先が生きているか死んでいるかではなく、当て先が 2つ あった。**
+       09/09 00:1x の「死んだ当て先を monkeypatch していた 4件」と同じ族の、別の面。
+
+    → だから守りを**呼ぶ側から、書く側へ**移す。モジュールが何個 在っても、
+    どの検査が何を差し替え忘れても、**書く直前に「いま向いている先が本物か」を見る**。
+
+    **なぜ止めるか**（§8 06:5x「検査を撃つことに副作用と API の値段が付いていました」の続き。
+    こちらは**値段はゼロ・副作用だけ**）:
+    1. 検査を撃つたびに作業木が汚れる ——サブは押す前に必ず変更の一覧を見るので、
+       **他人の作業と見分けがつかない行**が毎回 混ざる。**この回に実際に混ざった。**
+    2. `data/runs.jsonl` は §8 の「使わないもの」だが、**書かれた行は消えない。**
+       控えを読む側（`ledger_days`・`drift.py`）は、その行を人の周と区別できない。
+       2026-09-05 06:5x の実測がその値段を数えている（`ship` 242件 中 空 6件 →
+       検査の行を外すと 236件 中 **0件**）。
+
+    **この門で「検査が落ちる／通る」は変わりません**（撃って確かめた ——
+    門の前後どちらでも `test_premise_ledger_gate.py` + `test_kinds_allowed.py` は
+    **6件 落ち・11件 通る**。この 6件 は門を足す前から落ちている **旧 `src/` の側**）。
+    **変わるのは、控えが動かないことだけです**（md5 が撃つ前と同じであることを確かめた）。
+
+    **差し替えた検査は書いてよい**（`MARKS` が tmp を向いていれば通す ——
+    そこを止めると、控えを読む検査そのものが書けなくなる）。
+
+    **覆る条件**: 裸の `import run_marker` が repo から消えたら（全部 `scripts.run_marker` に
+    なったら）、conftest の差し替えだけで足りるので、この門は外してよい
+    （見張り `tests/test_run_marker_no_real_ledger.py` の 1件目が、その日に落ちて教える）。
+    """
+    return bool(os.environ.get("PYTEST_CURRENT_TEST")) and MARKS == _MARKS_REAL
 KEEP = 500
 # **潰した宣言の位置合わせに使う目盛り。**（2026-08-16 に足した。理由は `ship()`）
 # 宣言した時点で日誌が何行あったかを一緒に残すと、`retro.py` の
@@ -268,6 +323,8 @@ def _records() -> list[dict]:
 
 
 def _append(rec: dict) -> str:
+    if _marks_blocked():
+        return json.dumps(rec, ensure_ascii=False)
     MARKS.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(rec, ensure_ascii=False)
     old = [x for x in (MARKS.read_text(encoding="utf-8").splitlines()
@@ -2162,6 +2219,8 @@ def ledger_days(as_of=None, window: int = 7) -> dict:
 
 def note_premise_gate(what: str, cover: float) -> None:
     """**止めたことを残す**（`note_fix_gate()` と同じ理由・同じ約束）。"""
+    if _marks_blocked():
+        return
     try:
         with MARKS.open("a", encoding="utf-8") as f:
             f.write(json.dumps({
@@ -2182,6 +2241,8 @@ def note_verdict_gate(what: str, run_len: int) -> None:
     `kind="verdict_gate"` ＝ `drift.py` は `kind != "ship"` を読み飛ばすので、
     漂流の比そのものは汚しません。
     """
+    if _marks_blocked():
+        return
     try:
         with MARKS.open("a", encoding="utf-8") as f:
             f.write(json.dumps({
@@ -2919,6 +2980,8 @@ def note_fix_gate(what: str, run_len: int, waived: bool = False) -> None:
     （`kind="fix_gate"`。`drift.py` は `kind != "ship"` を読み飛ばすので、
     漂流の比そのものは汚しません）。
     """
+    if _marks_blocked():
+        return
     try:
         with MARKS.open("a", encoding="utf-8") as f:
             f.write(json.dumps({
@@ -3604,7 +3667,8 @@ def closes_add(words: list[str]) -> int:
     added = [w for w in rec["closes"] if w not in before]
     rec.setdefault("journal_lines", journal_lines())
     lines[i] = json.dumps(rec, ensure_ascii=False)
-    MARKS.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if not _marks_blocked():
+        MARKS.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if not added:
         print(f"[marker] もう宣言されています（{' / '.join(words)}）。")
         return 0
