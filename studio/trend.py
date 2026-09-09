@@ -849,3 +849,55 @@ def by_day_count(rows: list[dict], old_path=None) -> list[str]:
                "**本数を軸にしても、日付のぶんは分けられません**（studio/trend.py の註。"
                "分けるには、同じ日に本数だけ変えた実測が要る）。")
     return out
+
+
+def pair_gap(rows: list[dict], at: dt.datetime | None = None) -> dict:
+    """**いま撃つ `measure` の点が、2点組に入るか**（2026-09-10 02:2x JST・optimizer・Opus が踏んで足した）。
+
+    返すもの: `last`（前の measured の刻）・`gap_min`・`pairs`（入るか）・`band`（帯の中か）。
+
+    **なぜ要るか —— この回に踏んだ。** 前の周の optimizer が帯（02:00〜10:00 JST）に入るのを
+    待って **02:06:25** に測り、その周が終わった **1分後** に親が穴埋めで次の optimizer を立て
+    （`data/parent_wakes.jsonl` 17:10:05Z の `patch: true`）、この回は **02:13:29** に測りました。
+    **差 7.1分 ＝ `MIN_PAIR_MIN`（10分）より短いので、この組は `_pairs` が丸ごと落とします。**
+    ＝ **§7 の「次の帯の回が (i)（20組 を越える）を越えます」は、この測りでは起こりませんでした。**
+    `measure` の印字は「記した: 19本」だけなので、**分母が動かなかったことが、どの印字にも出ません**
+    （`trend` の「帯の組は 16回 の測りから」を前の回の数と見比べて初めて分かる）。
+
+    **これは §6 `cli.comments_to_show` の 01:4x と同じ形です** —— 数は出るのに、
+    その数を動かせたかどうかが出ない。**測る側が「この測りは分母に入りません」と言うこと。**
+
+    **落とし穴**: 組は**本ごと**の連続する2点なので、前の回に測られなかった本（7日 の窓から
+    落ちた本・新しく公開した本）の gap はこれより長くなります。ここが見るのは
+    **全部の本の最後の measured 行**で、`measure` が毎回 全部を一度に書く形の近似です
+    （合わない本が出たら、そのときは本ごとに数えること）。
+
+    **覆る条件**: (1) `MIN_PAIR_MIN` を変えたら、この印字も一緒に動きます（同じ定数を読む）。
+    (2) `measure` を本ごとに撃ち分ける形に変えたら、この近似は捨てて `series()` から本ごとに数えること。
+    (3) 「入りません」と出た回が 3回 続けてそのまま撃たれていたら、印字では足りない
+        ＝ そのときは `measure` の側に門を置く（`--force` を付けない限り撃たない）。
+        **1回目は、この印字を足した回自身です**（02:18:42 ＝ 前の測りから 5.1分。
+        「10分 経ったはず」と時計を読み違えて撃ち、印字のとおり落ちました）。
+        ＝ **印字は正しく出て、それでも撃たれています。** 2回目・3回目を数えること。
+    """
+    at = at or now_jst()
+    pts = [_at(r) for r in rows if r.get("event") == "measured" and r.get("at")]
+    last = max(pts) if pts else None
+    gap = (at - last).total_seconds() / 60.0 if last else None
+    return {"last": last, "gap_min": gap,
+            "pairs": gap is None or gap >= MIN_PAIR_MIN,
+            "band": DEAD_START <= at.hour < DEAD_END}
+
+
+def pair_gap_line(rows: list[dict], at: dt.datetime | None = None) -> str:
+    """`pair_gap` を1行にする（`measure` が撃つ前に印字する）。"""
+    g = pair_gap(rows, at)
+    where = ("帯 %02d:00〜%02d:00 JST の中" % (DEAD_START, DEAD_END)) if g["band"] else "帯の外"
+    if g["gap_min"] is None:
+        return f"前の測りが台帳に在りません → この点は2点組の1点目・いまは{where}"
+    if g["pairs"]:
+        return (f"前の測りから {g['gap_min']:.1f}分（門 {MIN_PAIR_MIN:.0f}分）"
+                f"→ **2点組に入ります**・いまは{where}")
+    return (f"前の測りから {g['gap_min']:.1f}分（門 {MIN_PAIR_MIN:.0f}分）"
+            f"→ **この測りは2点組に入りません**（§7 (2) の分母は動きません）。"
+            f"あと {MIN_PAIR_MIN - g['gap_min']:.1f}分 待って撃ち直すこと・いまは{where}")

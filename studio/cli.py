@@ -375,6 +375,9 @@ SETTLE_WITHIN_H = 48
 
 
 def cmd_measure(a):
+    # **この測りが2点組に入るかを、撃つ前に言う**（2026-09-10 02:2x・optimizer・Opus。
+    # `trend.pair_gap` の註 —— この回に、前の周の測りの 7.1分 後に測って分母を動かせなかった）。
+    print(trend.pair_gap_line(ledger_rows()))
     pub = yt.published(MEASURE_WITHIN_H)
     # **齢が浅い本は、読み直して落ち着かせてから台帳へ**（2026-09-09 19:1x・optimizer・Opus）。
     # `videos.list` は伸びている本を、遅れの違う複数の複製から返す（`yt.settle_stats` の註と実測）。
