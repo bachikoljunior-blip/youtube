@@ -420,7 +420,8 @@ WAKE_LATENCY_CAP_MIN = 8.0
 WAKE_LATENCY_FALLBACK_MIN = 1.0
 
 
-def wake_latency_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
+def wake_latency_minutes(rows: list[dict] | None = None,
+                         placed_only: bool = False) -> tuple[float, str]:
     """**親が置いた起こしが、頼んだ時刻からどれだけ遅れて届くか（分）と、その出どころ。**
 
     **なぜ要るのか**（2026-09-09 18:2x・optimizer・Opus が実測して足した。§5・§7）:
@@ -522,9 +523,20 @@ def wake_latency_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
 
     **新しい (2)(3)**: (2) `wake_placed` が **False の行が 0 になったら**（＝ 親が
     起こしと心拍で二重に起きなくなったら）、そのとき初めて畳みは要らなくなる。
-    (3) `wake_placed` が **True の行だけ**を数えた中央値が、いまの畳みの中央値と
+    (3) `wake_placed` が **True の行だけ**を数えた中央値（`placed_only=True`）が、いまの畳みの中央値と
     **0.5分 以上 割れたら**、畳み（時刻から推す手）のほうを捨てて `wake_placed`（撃ったかどうか
     そのもの）で数えること —— **2つは違う物を見ています**（§5）。
+    **【2026-09-10 08:3x・optimizer・Opus】(3) は、書いてあるとおりに読むと 1度も読めませんでした。**
+    「True の行だけ」を**行ごと**絞ると、**届いた側の行まで落ちます** ——
+    届きを拾うのは「そのあとの owner 行」で、その多くは列が足される前（05:3x 以前）の行なので、
+    **届き 0本 < 門 5本** ＝ 写しへ倒れて終わり（実測: 25回 → **0回**）。
+    ＝ **絞るのは頼んだ側の行だけ**（`placed_only` はそう実装してあります）。
+    **この回に初めて両方 読めました**（n が門 8本 に届いた回）:
+    畳み **1.873分**（届き 25回）／`placed_only` **1.649分**（届き **6回**）＝ **差 0.224分**
+    ＝ **0.5分 の門に届かず、(3) は引かれません。** (2) も **False 2本 ≠ 0** で引かれません。
+    **2つが同じ物を指した理由も測れています**: False の 2本 は、畳みが落とした 12本 のうちの 2本 でした
+    （False を落とすと `dropped` が 12 → 10 に減り、中央値は 1桁も動かない）
+    ＝ **時刻から推す手と、撃ったかどうかそのものは、いまのところ同じ行を落としています。**
     ~~**いまは `wake_placed` の行が 0本 なので、まだ比べられません**（この回に足した列）。~~
 
     **【2026-09-10 05:3x・optimizer・Opus】(2) に分母の門を足しました —— 無いと、
@@ -554,6 +566,12 @@ def wake_latency_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
     at.sort(key=lambda x: x[0])
     lags: list[float] = []
     for i, (t, r) in enumerate(at):
+        # **(3) を読む側**（`placed_only`）: 絞るのは **頼んだ側の行だけ**。
+        # **届いた側は絞らないこと** —— 届きを拾うのは「そのあとの owner 行」で、
+        # その多くは `wake_placed` の列が足される前（05:3x 以前）の行です。
+        # 行ごと落とすと**届きが 0本 になり、(3) は永久に読めません**（2026-09-10 08:3x）。
+        if placed_only and r.get("wake_placed") is not True:
+            continue
         try:
             asked = int(r.get("wake_min") or 0)
         except (TypeError, ValueError):

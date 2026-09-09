@@ -164,3 +164,65 @@ def test_decide_が数を台帳へ書き写す_手で数えないため(tmp_path
     monkeypatch.setattr(next_round, "WAKES", tmp_path / "parent_wakes.jsonl")
     d = next_round.decide(live=1)
     assert "wake_placed_true" in d and "wake_placed_false" in d
+
+# ---- 2026-09-10 08:3x（optimizer・Opus）: 覆る条件 (3) を「読める形」にした ----
+# `wake_is_fresh` の (3) は「`wake_placed` が **True の行だけ** を数えた中央値」と書いてあり、
+# そのとおり **行ごと** 絞ると **届いた側の行まで落ちて 届き 0本**（門 5本）＝ **1度も読めない**。
+# 絞るのは **頼んだ側の行だけ**（`placed_only`）。**陽性対照つき**。
+
+
+def _wake_rows(base, spec):
+    """`(基準からの分, 頼んだ分数 or None, wake_placed or None)` の並びを台帳の行にする。"""
+    out = []
+    for mins, asked, placed in spec:
+        row = {"who": "owner", "at": _at(mins, base).isoformat()}
+        if asked is not None:
+            row["wake_min"] = asked
+        if placed is not None:
+            row["wake_placed"] = placed
+        out.append(row)
+    return out
+
+
+#: 頼み 5本（True・遅れ 1.0〜1.4分）＋ 頼み 6本（False・遅れ 5.0〜7.5分）。
+#: **届きの行は `wake_placed` の列を持ちません** —— 05:3x に列が足される前の
+#: 台帳の行と同じ形で、実物の届きのほとんどがこの形です。
+_TRUE_LAGS = (1.0, 1.1, 1.2, 1.3, 1.4)
+_FALSE_LAGS = (5.0, 5.5, 6.0, 6.5, 7.0, 7.5)
+
+
+def _rows_for_placed_only(base):
+    spec = []
+    for i, lag in enumerate([(x, True) for x in _TRUE_LAGS] + [(x, False) for x in _FALSE_LAGS]):
+        lag_min, placed = lag
+        spec.append((120.0 * i, 60, placed))
+        spec.append((120.0 * i + 60.0 + lag_min, None, None))
+    return _wake_rows(base, spec)
+
+
+def test_placed_onlyは頼んだ側だけを絞る_届いた側は絞らない():
+    """**陽性対照の当のもの**: 「True の行だけ」を行ごと絞ると、届いた側（列を持たない行）まで
+    落ちて **届き 0本** になり、写しへ倒れる（＝ (3) を 1度も読めない）。"""
+    base = dt.datetime(2026, 9, 10, 0, 0, tzinfo=dt.timezone.utc)
+    got, why = next_round.wake_latency_minutes(_rows_for_placed_only(base), placed_only=True)
+    assert "写し" not in why
+    assert "届き 5回" in why
+    assert abs(got - 1.2) < 0.01
+
+
+def test_placed_onlyを渡さなければ_Falseの行も数える():
+    """陰性対照: 既定（畳みの側）は `wake_placed` を見ない ＝ False の 6本 も分母に入る。"""
+    base = dt.datetime(2026, 9, 10, 0, 0, tzinfo=dt.timezone.utc)
+    got, why = next_round.wake_latency_minutes(_rows_for_placed_only(base))
+    assert "届き 11回" in why
+    assert abs(got - 5.0) < 0.01
+
+
+def test_2つが割れたら道具がそう答える():
+    """(3) の門そのものの陽性対照: 割れる台帳では 0.5分 以上 の差が出ること
+    （＝ 門が「必ず通る」側に寝ていない）。"""
+    base = dt.datetime(2026, 9, 10, 0, 0, tzinfo=dt.timezone.utc)
+    rows = _rows_for_placed_only(base)
+    folded, _ = next_round.wake_latency_minutes(rows)
+    placed, _ = next_round.wake_latency_minutes(rows, placed_only=True)
+    assert abs(folded - placed) >= 0.5
