@@ -131,15 +131,21 @@ def cmd_status(a):
         held = [c for c in cs if c.get("status", "published") != "published"]
         note = f"・**保留/迷惑 {len(held)}件**" if held else "・保留/迷惑 0件"
         nrep = sum(1 for c in cs if c.get("reply"))
+        # 2026-09-09 17:2x: **未返信の数**を出す（`yt._mark_answered` の註）。
+        # 「返信 n件」だけでは、その問いに**こちらが答えたか**が読めない ——
+        # この回は「30時間 放置」と読み違え、API を別に 1単位 撃って確かめた。
+        nun = sum(1 for c in cs if not c.get("answered"))
         print(f"視聴者コメント: {len(cs)}件（台帳に無い新着 {len(fresh)}件{note}"
-              + (f"・うちスレッドの返信 {nrep}件" if nrep else "") + "）")
+              + (f"・うちスレッドの返信 {nrep}件" if nrep else "")
+              + f"・**未返信 {nun}件**" + "）")
         # 新着は必ず出す（3件で切って隠さない）。2026-09-09 04:2x: 返信を引くようにしたので、
         # いちばん濃い反応（会話の続き）がここに来る。
         for c in (fresh + [c for c in cs if c not in fresh])[:3 + len(fresh)]:
             mark = "★新" if c["id"] in {f["id"] for f in fresh} else "  "
             st = "" if c.get("status", "published") == "published" else f"[{c['status']}]"
             arrow = "↳" if c.get("reply") else " "
-            print(f"  {mark}{st}{arrow} {c['at'][:16]} {c['video_id']} {c['author']}: {c['text'][:60]}")
+            ans = f"[返信ずみ {c['answered_at'][:16]}]" if c.get("answered") else "[未返信]"
+            print(f"  {mark}{st}{arrow} {c['at'][:16]} {c['video_id']} {ans} {c['author']}: {c['text'][:60]}")
     except Exception as e:  # noqa: BLE001
         print("視聴者コメントは引けなかった:", str(e)[:100])
     print("台帳 直近 5行:")
@@ -369,14 +375,17 @@ def cmd_comments(a):
         st = c.get("status", "published")
         # 返信は「スレッドの続き」と分かる形で出す（`parent_id` が返信先 ＝ `cli reply` が撃つ先）。
         head = f"↳返信 親 {c['parent_id']}" if c.get("reply") else c["video_id"]
-        print(f"{'★新着' if new else '     '} {c['at'][:16]} {head} いいね{c['likes']} "
+        # **答えたか**は台帳では埋まらない（`cli reply` を通らない返信が在る）。`yt._mark_answered` の註。
+        ans = f"返信ずみ {c['answered_at'][:16]}" if c.get("answered") else "**未返信**"
+        print(f"{'★新着' if new else '     '} {c['at'][:16]} {head} いいね{c['likes']} {ans} "
               f"{'' if st == 'published' else '[' + st + '] '}{c['author']}\n       {c['text'][:400]}")
         if new:
             ledger("viewer_comment", c["video_id"], comment_id=c["id"], author=c["author"],
                    posted_at=c["at"], status=st, parent_id=c.get("parent_id", c["id"]),
                    reply=bool(c.get("reply")), text=c["text"][:500])
     held = [c for c in cs if c.get("status", "published") != "published"]
-    print(f"—— {len(cs)}件（うち台帳に無かった新着 {sum(1 for c in cs if c['id'] not in seen)}件）")
+    print(f"—— {len(cs)}件（うち台帳に無かった新着 {sum(1 for c in cs if c['id'] not in seen)}件"
+          f"・**未返信 {sum(1 for c in cs if not c.get('answered'))}件**）")
     # 保留・迷惑の列は 2026-09-08 15:0x まで1度も引かれていなかった（`yt.viewer_comments()` の註）。
     # **0件 でも印字すること** —— 「消えた」と言われたときに、こちらが握り潰したかどうかは
     # この行が 0 かどうかでしか答えられない。
