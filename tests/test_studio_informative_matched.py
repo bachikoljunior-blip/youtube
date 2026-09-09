@@ -101,3 +101,86 @@ def test_そろえた側が印字に出る():
     hit = [ln for ln in lines if "齢の束をそろえると" in ln]
     assert hit, "門 (2) を読む側の数が印字に出ていない"
     assert "帯に1組も無い齢の束" in hit[0]
+
+
+# ---- 齢の次に「組の長さ」をそろえる（2026-09-10 03:4x・optimizer・Opus） --------
+#
+# **短い組は「伸びた」と出にくく、しかも短い組は帯の側にしか無い**
+# （本物の台帳: 帯の最短 10.7分 対 外の最短 41.0分・10〜30分 の組は 6組 とも帯で 0/6）。
+# ＝ そろえないと**帯の率だけが下へ引かれ**、それは**門 0.5 へ向かう向き**です。
+# 本物の台帳では齢の側が先に落としてくれて答えが割れませんでした（1.558 対 1.568倍）が、
+# **割れる並びは作れます** —— それがこの下の陽性対照で、そろえる側を外すと落ちます。
+
+
+def _ledger_gap():
+    """帯だけが 15分 の平らな組を持つ台帳（束ごとの率は同じ）。"""
+    rows = []
+    # M: 外にも帯にも 40分 の組を持つ本（齢 12〜24h）。どちらの側でも 1組 だけ伸びる。
+    views = 100
+    for t, grow in (
+        (dt.datetime(2026, 9, 1, 22, 0, tzinfo=JST), False),
+        (dt.datetime(2026, 9, 1, 22, 40, tzinfo=JST), False),
+        (dt.datetime(2026, 9, 1, 23, 20, tzinfo=JST), True),
+        (dt.datetime(2026, 9, 2, 0, 0, tzinfo=JST), False),
+        (dt.datetime(2026, 9, 2, 2, 0, tzinfo=JST), False),
+        (dt.datetime(2026, 9, 2, 2, 40, tzinfo=JST), True),
+        (dt.datetime(2026, 9, 2, 3, 20, tzinfo=JST), False),
+        (dt.datetime(2026, 9, 2, 4, 0, tzinfo=JST), False),
+    ):
+        rows.append(_m("M", t, views))
+        if grow:
+            views += 5
+    # S: 帯にしか無い本。15分 刻みで平ら（＝ 短すぎて伸びが出ない組）＋ 60分 で 1回 伸びる。
+    views = 500
+    for m in (0, 15, 30, 45, 60):
+        rows.append(_m("S", dt.datetime(2026, 9, 2, 5, 0, tzinfo=JST)
+                       + dt.timedelta(minutes=m), views))
+    rows.append(_m("S", dt.datetime(2026, 9, 2, 7, 0, tzinfo=JST), views + 10))
+    return rows
+
+
+def test_陽性対照_短い組が帯だけに在ると齢だけの比が下へ引かれる():
+    """**そろえる側（`GAP_BUCKETS` の突き合わせ）を外すと、この検査が落ちる。**"""
+    inf = trend.informative(_ledger_gap())
+    age_only = _ratio(inf["band_matched"], inf["out_matched"])
+    with_gap = _ratio(inf["band_gapmatched"], inf["out_gapmatched"])
+    assert age_only < 0.8, f"齢だけ {age_only:.3f} —— 平らな短い組が帯を下げるはず"
+    assert with_gap > age_only + 0.1, (
+        f"齢だけ {age_only:.3f} 対 齢＋長さ {with_gap:.3f} —— "
+        "長さをそろえたら帯が戻るはず（`_matched` の覆る条件 (0)）")
+
+
+def test_長さをそろえると帯の分母から短い組が落ちる():
+    inf = trend.informative(_ledger_gap())
+    assert inf["band_gapmatched"][1] < inf["band_matched"][1]
+    # 落ちるのは短い組だけ ＝ 伸びた数は減らない
+    assert inf["band_gapmatched"][0] == inf["band_matched"][0]
+
+
+def test_組の長さの中央値が両側で出る():
+    inf = trend.informative(_ledger_gap())
+    assert inf["band_gap_med"] is not None and inf["out_gap_med"] is not None
+    # 帯の側は 15分 の組を持つので、外より短い
+    assert inf["band_gap_med"] < inf["out_gap_med"]
+
+
+def test_長さもそろえた比が印字に出る():
+    hit = [ln for ln in trend.lines(_ledger_gap()) if "齢の束をそろえると" in ln]
+    assert hit and "組の長さもそろえると" in hit[0]
+    assert "齢だけの比との差" in hit[0]
+
+
+def test_本物の台帳では長さは門を動かさない():
+    """**動かす日が来たら教える** —— 差が 0.1倍 を越えたら門は齢＋長さ の側で読むこと。"""
+    from studio.cli import ledger_rows
+    inf = trend.informative(ledger_rows())
+    if not (inf["band_matched"][1] and inf["out_matched"][1] and inf["out_matched"][0]):
+        return
+    if not (inf["band_gapmatched"][1] and inf["out_gapmatched"][1]
+            and inf["out_gapmatched"][0]):
+        return
+    d = abs(_ratio(inf["band_gapmatched"], inf["out_gapmatched"])
+            - _ratio(inf["band_matched"], inf["out_matched"]))
+    assert d < 0.1, (
+        f"齢だけ と 齢＋長さ の比が {d:.3f}倍 割れた ＝ 長さが効いている。"
+        "`_matched` の覆る条件 (0) を読んで、門を齢＋長さ の側へ移すこと")

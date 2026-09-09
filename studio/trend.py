@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import statistics
 import json
 
 from .common import JST, ROOT, ledger_rows, now_jst
@@ -345,6 +346,12 @@ MIN_PAIR_MIN = 10.0
 #: 齢の帯（`band_vs_age` が「同じ齢どうし」で突き合わせるときの束）。
 AGE_BUCKETS = ((0, 12), (12, 24), (24, 36), (36, 48), (48, 72), (72, 10_000))
 
+#: 2点組の**長さ**の束（`_matched` が齢の次にそろえる物。単位は分）。
+#: **なぜ要るか**: 短い組は「伸びた」と出にくく、**短い組は帯の側にしか無い**
+#: （2026-09-10 03:4x 実測: 帯の最短 **10.7分**／外の最短 **41.0分**・10〜30分 の組は **6組 とも帯**で **0/6**）。
+#: ＝ そろえないと、帯の率だけが下へ引かれます（**門 0.5 へ向かう向き** ＝ 帯を「在る」と言わせる側）。
+GAP_BUCKETS = ((0, 30), (30, 60), (60, 120), (120, 1_000_000))
+
 
 def _pairs(rows: list[dict]) -> list[dict]:
     """`measured` の連続する2点を、判定に要る形だけにして並べる。
@@ -513,7 +520,26 @@ def _matched(inf: list[dict]) -> dict:
     **数え方**: `AGE_BUCKETS` のうち **帯と外の両方に組が在る束**だけを残し、両側をその束に絞る。
     帯に 1組 も無い束（＝比べる相手が居ない）は `unmatched` に名前で出す。
 
-    **覆る条件**: (1) 公開の刻を変えた本が出たら、帯が持てる齢が増えるので数え直すこと
+    **長さ（`gap_min`）もそろえた —— 動きませんでした**（2026-09-10 03:4x・optimizer・Opus）。
+    齢の次に疑うのは組の長さです（長い組ほど「伸びた」と出るはず・**外の側が 1.44倍 長い**:
+    帯 中央 66.9分／平均 70.4 対 外 中央 78.9分／平均 101.2・最長 151 対 495分）。
+    ところが撃つと **齢だけ 1.558倍 → 齢＋長さ 1.568倍**（帯 6/22 対 外 8/46）＝ **+0.6%**:
+
+        長さの束ごとの伸び率（帯と外を混ぜて・検出できた組だけ）
+          10〜30分   **0/6**     30〜60分  21/48 (43.8%)
+          60〜120分  13/44 (29.5%)   120分〜  9/36 (25.0%)
+
+    ＝ **30分 を越えると、長いほうが伸び率は低い**（＝ 長さは「伸びた」を予言しない。
+    長い組は測りが疎な時期＝伸びる本が居なかった時期から来ています）。
+    **§5 の「必ず一致する2つ目の意見に、確かめる力は無い」に当たるので、判定は齢の側のままにします。**
+    それでも `GAP_BUCKETS` を残して毎周 印字するのは、**偏りが片側にしか無いから**です ——
+    10〜30分 の組は **6組 とも帯**（帯の最短 10.7分 対 外の最短 41.0分。出どころは親の穴埋めの周・§5）で、
+    **0/6 が帯の分母だけを膨らませ、率を下げます**（実測: 帯 6/26 23.1% → 長さもそろえると 6/22 **27.3%** ＝ **+4.2 ポイント**）。
+    **その向きは門 0.5 へ向かう向き ＝ 帯を「在る」と言わせる側**なので、放っておけません。
+
+    **覆る条件**: (0) 齢だけの比と 齢＋長さ の比が **0.1倍 以上** 割れた回が出たら、
+    そのときは長さが効いている ＝ **門は齢＋長さ の側で読むこと**（いまは 0.010倍 差）。
+    (1) 公開の刻を変えた本が出たら、帯が持てる齢が増えるので数え直すこと
     （`band_vs_age` の覆る条件 (2) と同じ刻 —— そのとき `unmatched` が短くなって教える）。
     (2) そろえた側でも 20組 を越えて 0.5倍 を切ったら、**そのときは齢では説明が付かない**
     ＝ 門 (2) は本当に引かれた（判定は `hourly`・§5）。
@@ -530,6 +556,22 @@ def _matched(inf: list[dict]) -> dict:
     res["unmatched"] = [b for b in AGE_BUCKETS
                         if b not in buckets
                         and any(not p["band"] and p["bucket"] == b for p in inf)]
+
+    # **齢の次に、組の長さもそろえる**（2026-09-10 03:4x・`GAP_BUCKETS` の註）。
+    def _gb(p: dict) -> tuple[int, int] | None:
+        return next((b for b in GAP_BUCKETS if b[0] <= p["gap_min"] < b[1]), None)
+
+    keys = [(a, g) for a in buckets for g in GAP_BUCKETS
+            if any(p["band"] and p["bucket"] == a and _gb(p) == g for p in inf)
+            and any(not p["band"] and p["bucket"] == a and _gb(p) == g for p in inf)]
+    for key, want_band in (("band_gapmatched", True), ("out_gapmatched", False)):
+        side = [p for p in inf
+                if p["band"] is want_band and (p["bucket"], _gb(p)) in keys]
+        res[key] = (sum(p["grew"] for p in side), len(side))
+    for key, want_band in (("band_gap_med", True), ("out_gap_med", False)):
+        gaps = sorted(p["gap_min"] for p in inf
+                      if p["band"] is want_band and p["bucket"] in buckets)
+        res[key] = statistics.median(gaps) if gaps else None
     return res
 
 
@@ -728,10 +770,21 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     _un = "・".join(f"{lo}〜{hi if hi < 9999 else ''}h" for lo, hi in _inf["unmatched"]) or "無し"
     _raw = f"{(_bg / _bn) / (_og / _on):.3f}倍" if _bn and _on and _og else "—"
     _mat = f"{(_bmg / _bmn) / (_omg / _omn):.3f}倍" if _bmn and _omn and _omg else "—"
+    _gbg, _gbn = _inf["band_gapmatched"]
+    _gog, _gon = _inf["out_gapmatched"]
+    _r1 = (_bmg / _bmn) / (_omg / _omn) if _bmn and _omn and _omg else None
+    _r2 = (_gbg / _gbn) / (_gog / _gon) if _gbn and _gon and _gog else None
+    _gmat = f"{_r2:.3f}倍" if _r2 is not None else "—"
+    _gdiff = f"{abs(_r2 - _r1):.3f}倍" if _r1 is not None and _r2 is not None else "—"
+    _bgm = f"{_inf['band_gap_med']:.1f}分" if _inf.get("band_gap_med") else "—"
+    _ogm = f"{_inf['out_gap_med']:.1f}分" if _inf.get("out_gap_med") else "—"
     out.append(
         f"**齢の束をそろえると 帯 {_bmg}/{_bmn} 対 外 {_omg}/{_omn}（{_mat}）**"
         f" —— そろえない生の側は {_raw}。**§7 の門 (2)（0.5倍）は、そろえた側で読むこと**"
-        f"（`_matched` の註）。**帯に1組も無い齢の束**: {_un}"
+        f"（`_matched` の註）。**組の長さもそろえると {_gmat}**"
+        f"（帯 {_gbg}/{_gbn} 対 外 {_gog}/{_gon}・組の長さの中央値 帯 {_bgm}／外 {_ogm}）"
+        f" —— **齢だけの比との差 {_gdiff}**（門 0.1倍・`_matched` の覆る条件 (0)）。"
+        f"**帯に1組も無い齢の束**: {_un}"
         f" —— 公開が 10:00 JST に固定なので、帯が持てる齢は 16〜24h・40〜48h… だけです。"
         f"**そこは伸びのいちばん濃い齢を含みません** ＝ そろえない比は、帯ではなく齢を測ります。")
     np_, nd, worst, where = drops(rows)
