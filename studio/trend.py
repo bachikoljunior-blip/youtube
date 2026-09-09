@@ -153,6 +153,9 @@ def envelope(pts: list[dict]) -> list[int]:
 HOLD_AGES = (6.0, 12.0, 24.0)
 #: §1 の表が「公開 6時間で最終の 70〜90%」と書いている帯。**この帯に入るかを、毎回 数で見る。**
 HOLD_BAND = (70.0, 90.0)
+#: 「その齢ちょうどの点」と見なす幅（時間）。台帳の `age_h` は 0.1 刻みなので 3分 で足りる。
+#: **表示の `＊` の 0.5h とは別物** —— あちらは「読む人への注意」、こちらは**判定**に使う。
+HOLD_EXACT_H = 0.05
 
 
 def hold(rows: list[dict], ages: tuple[float, ...] = HOLD_AGES) -> list[dict]:
@@ -216,9 +219,72 @@ def hold(rows: list[dict], ages: tuple[float, ...] = HOLD_AGES) -> list[dict]:
                 row["at"][h] = None
                 continue
             age, val = got[-1]
-            row["at"][h] = {"age_h": age, "views": val, "pct": 100.0 * val / last}
+            # **齢 h ちょうどの点は、めったに在りません。** 下は「h 以前の最後の点」で、
+            # 真の h の値はそれ以上（再生は減らない ＝ 包絡）。**上は「h を越えた最初の点」**で、
+            # 真の h の値はそれ以下。＝ この 2つ が、模型も外挿も通さない**挟み**です。
+            # h ちょうどの点が在れば挟みは潰れる（下 ＝ 上 ＝ その点）。
+            after = [(float(p["age_h"]), v) for p, v in zip(pts, env) if float(p["age_h"]) > h]
+            if abs(age - h) <= HOLD_EXACT_H or not after:
+                hi_age, hi_val = age, val
+            else:
+                hi_age, hi_val = after[0]
+            row["at"][h] = {
+                "age_h": age, "views": val, "pct": 100.0 * val / last,
+                "hi_age_h": hi_age, "hi_views": hi_val, "hi_pct": 100.0 * hi_val / last,
+            }
         out.append(row)
     return out
+
+
+def hold_verdict(cell: dict | None, growing: bool,
+                 band: tuple[float, float] = HOLD_BAND) -> str | None:
+    """**その本が §1 の帯（70〜90%）に入るかを、挟みだけで決める**（2026-09-10 05:0x・optimizer・Opus）。
+
+    返すのは ``"in"`` / ``"out"`` / ``"unknown"``（点が無ければ None）。
+
+    **なぜ足したか（この回に踏んだ）**: `hold_lines` は「帯に入った本は **0/4**」と印字し、
+    その 0/4 が §1 の表と §7 の「いまの数」に写されていました。ところが 4本 のうち
+    **3本 は 6h ちょうどの点を持っていません**（齢 4.3h・4.4h・5.3h）。
+    `hold` は「h 以前の最後の点」を採るので、**1.7時間 手前の点を「6h の値」として数えていた**
+    ことになります。**実測（この回・API 0単位）**::
+
+        EkNqtkK49Bw  下 齢4.3h **60.7%** / 上 齢7.0h **90.0%**   → **帯 70〜90% を跨ぐ ＝ 分けられない**
+        nQbVxuWpWw8  下 齢4.4h  41.2% / 上 齢6.5h  41.2%       → 帯の外
+        lQHX9LJ80Sg  齢6.0h ちょうど 39.1%                      → 帯の外
+        gv1u7n_pCAQ  下 齢5.3h  49.4% / 上 齢6.3h  58.6%       → 帯の外
+
+    ＝ **正しい数は 0/4 ではなく「帯の外 3本・分けられない 1本・帯の中 0本」。**
+    23:2x の註は 1本目 を「÷0.72 しても 85%」（**帯の中の数**）と自分で書いたうえで
+    「4.3h は 6h の点ではない」と外していますが、それは**数えない理由**であって
+    **帯の外に数える理由ではありません**。
+
+    **向きは変わりません** —— 帯の中と言い切れる本は **0本** のままなので、
+    §1 の「6時間で最終の 70〜90%」は**いまも引けません**。変わったのは
+    「4本 とも外だ」から「**3本 は外・1本 は分からない**」へ、**主張の強さ**のほうです。
+
+    **伸びている本の扱い**: `pct` の分母（いまの再生）はこれから増えるので、
+    **`pct` も `hi_pct` も上限**です。＝ 上限が帯の下より低ければ「外」と言い切れますが、
+    **「中」は言い切れません**（真の値はもっと下）。だから `growing` の本に ``"in"`` は返しません。
+
+    **覆る条件**: (1) 齢 6h ちょうど（±`HOLD_EXACT_H`）の点を持つ本が 3本 そろったら、
+    挟みは潰れるので、この関数は 1点 の判定に戻してよい。
+    (2) ``unknown`` の本が 3本 を越えたら、足りないのは判定ではなく**測る刻**
+    （`measure` を齢 6h の近くで撃つ回り方）。
+    """
+    if not cell:
+        return None
+    lo = float(cell["pct"])
+    hi = float(cell.get("hi_pct", cell["pct"]))
+    b_lo, b_hi = band
+    if hi < b_lo:                      # 上限が帯の下より低い ＝ 伸びていても「外」と言い切れる
+        return "out"
+    if growing:                        # 分母が増える ＝ 下限が下限になっていない
+        return "unknown"
+    if lo > b_hi:
+        return "out"
+    if lo >= b_lo and hi <= b_hi:
+        return "in"
+    return "unknown"
 
 
 def hold_lines(rows: list[dict]) -> list[str]:
@@ -229,7 +295,7 @@ def hold_lines(rows: list[dict]) -> list[str]:
     out = [f"齢の割合（**いまの再生を 100% としたときに、齢 Nh までに付いていた割合**。"
            f"包絡・API 0単位・`trend.hold` の註）:"]
     lo, hi = HOLD_BAND
-    inband = 0
+    tally = {"in": 0, "out": 0, "unknown": 0}
     have = 0
     for r in got:
         cells = []
@@ -237,18 +303,26 @@ def hold_lines(rows: list[dict]) -> list[str]:
             c = r["at"].get(h)
             cells.append("%2dh %s" % (int(h), ("%3.0f%%" % c["pct"]) if c else "  -"))
         six = r["at"].get(HOLD_AGES[0])
-        if six:
+        v = hold_verdict(six, bool(r["growing"]))
+        if v:
             have += 1
-            if lo <= six["pct"] <= hi:
-                inband += 1
+            tally[v] += 1
+        # **6h ちょうどの点が無い本は、挟みで書く**（下の点だけを「6h の値」として読ませない）。
+        note = ""
+        if six and abs(six["hi_age_h"] - six["age_h"]) > 1e-9:
+            note = "  ＊%dh の点が無い ＝ 挟み 齢%.1fh %.0f%% 〜 齢%.1fh %.0f%%（%s）" % (
+                int(HOLD_AGES[0]), six["age_h"], six["pct"],
+                six["hi_age_h"], six["hi_pct"],
+                {"in": "帯の中", "out": "帯の外", "unknown": "**分けられない**"}.get(v, "-"))
         out.append("  %s %-12s %s   いま %d回（%.1fh%s）%s" % (
             r["day"], r["id"], " / ".join(cells), r["views"], r["age_h"],
-            "・**まだ伸びている ＝ この割合は上限**" if r["growing"] else "・確定",
-            ("  ＊%dh の点は齢 %.1fh" % (int(HOLD_AGES[0]), six["age_h"])) if six and abs(six["age_h"] - HOLD_AGES[0]) > 0.5 else ""))
+            "・**まだ伸びている ＝ この割合は上限**" if r["growing"] else "・確定", note))
     out.append(
-        f"§1 の表の「公開 6時間で最終の {lo:.0f}〜{hi:.0f}%」に入った本は **{inband}/{have}** です"
-        f"（§7 の「90秒の上限」の行が言う 6時間/48時間 の比。**齢 6h・12h の点で本の当たり外れを読まないこと** ——"
-        f"大きい本ほど尾が長く出ています。`trend.hold` の註）。")
+        f"§1 の表の「公開 6時間で最終の {lo:.0f}〜{hi:.0f}%」は、**帯の中 {tally['in']}本・"
+        f"帯の外 {tally['out']}本・分けられない {tally['unknown']}本**（数えた {have}本）です。"
+        f"**「分けられない」は 6h ちょうどの点が無く、挟みが帯を跨いだ本** ——"
+        f"「帯の外」に数えないこと（`trend.hold_verdict` の註・2026-09-10 05:0x に 0/4 から直した）。"
+        f"**齢 6h・12h の点で本の当たり外れを読まないこと** ——大きい本ほど尾が長く出ています。")
     return out
 
 

@@ -59,12 +59,86 @@ def test_growing_book_is_marked_because_its_share_is_an_upper_bound():
 
 
 def test_band_count_is_derived_from_the_numbers_not_a_copy():
-    """**印字の `n/m` は数から作る**（§7 が 7周 踏んだ「写しを持たない」）。"""
+    """**印字の数は数から作る**（§7 が 7周 踏んだ「写しを持たない」）。
+
+    2026-09-10 05:0x に `n/m` から「帯の中 n本・帯の外 m本・分けられない k本」へ変えた
+    （`trend.hold_verdict` の註）。**どちらの形でも、写しを持たないことは同じ。**
+    """
     inside = _rows([(1.0, 10), (6.0, 80), (60.0, 100), (61.0, 100)], vid="IN")
-    assert "**1/1**" in "\n".join(tr.hold_lines(inside))
+    assert "帯の中 1本・帯の外 0本・分けられない 0本" in "\n".join(tr.hold_lines(inside))
     outside = _rows([(1.0, 10), (6.0, 40), (60.0, 100), (61.0, 100)], vid="OUT")
-    assert "**0/1**" in "\n".join(tr.hold_lines(outside))
-    assert "**1/2**" in "\n".join(tr.hold_lines(inside + outside))
+    assert "帯の中 0本・帯の外 1本・分けられない 0本" in "\n".join(tr.hold_lines(outside))
+    assert "帯の中 1本・帯の外 1本・分けられない 0本" in "\n".join(tr.hold_lines(inside + outside))
+
+
+# ---------------------------------------------------------------------------
+# 挟み（2026-09-10 05:0x・optimizer・Opus）
+#   `hold` は「h 以前の最後の点」を採るので、6h ちょうどの点が無い本では
+#   **1.7時間 手前の点を「6h の値」として数えて**いた。`trend.hold_verdict` の註。
+# ---------------------------------------------------------------------------
+
+def test_上は_h_を越えた最初の点で作る():
+    """真の 6h の値は「6h 以前の最後の点」以上・「6h を越えた最初の点」以下。"""
+    six = tr.hold(_rows([(1.0, 10), (4.3, 61), (7.0, 90), (60.0, 100), (61.0, 100)]))[0]["at"][6.0]
+    assert six["age_h"] == 4.3 and round(six["pct"]) == 61
+    assert six["hi_age_h"] == 7.0 and round(six["hi_pct"]) == 90
+
+
+def test_h_ちょうどの点が在れば挟みは潰れる():
+    """6h の点が在るなら、挟む物は無い（下 ＝ 上 ＝ その点）。"""
+    six = tr.hold(_rows([(1.0, 10), (6.0, 39), (7.1, 45), (60.0, 100), (61.0, 100)]))[0]["at"][6.0]
+    assert six["age_h"] == 6.0
+    assert six["hi_age_h"] == 6.0 and six["hi_pct"] == six["pct"]
+    assert tr.hold_verdict(six, growing=False) == "out"
+
+
+def test_帯を跨いだ本は分けられないで_帯の外に数えない():
+    """**陽性対照つきの本体** —— 実物 `EkNqtkK49Bw` の形（挟み 61% 〜 90%）。
+
+    直す前は「6h の点 ＝ 61%」の 1点 で見て **帯の外** に数えており、
+    その 0/4 が §1 と §7 に写っていた。挟みは帯 70〜90% を跨ぐので **分けられない**。
+    """
+    rows = _rows([(1.0, 10), (4.3, 61), (7.0, 90), (60.0, 100), (61.0, 100)])
+    six = tr.hold(rows)[0]["at"][6.0]
+    assert tr.hold_verdict(six, growing=False) == "unknown"
+    line = "\n".join(tr.hold_lines(rows))
+    assert "分けられない 1本" in line and "帯の外 0本" in line
+    # **陽性対照**: 上を見ずに下の 1点 だけで判定すると（＝ 直す前の形）「帯の外」になる。
+    assert tr.hold_verdict({"pct": six["pct"], "hi_pct": six["pct"]}, growing=False) == "out"
+
+
+def test_伸びている本に_帯の中_は返さない():
+    """分母（いまの再生）が増える ＝ `pct` も `hi_pct` も**上限** ＝ 下限が下限でない。"""
+    growing = tr.hold(_rows([(1.0, 10), (4.0, 75), (7.0, 88), (30.0, 100)]))[0]
+    assert growing["growing"] is True
+    assert tr.hold_verdict(growing["at"][6.0], growing=True) == "unknown"
+    # **陽性対照**: 同じ挟みでも、確定した本なら「帯の中」と言い切れる。
+    assert tr.hold_verdict(growing["at"][6.0], growing=False) == "in"
+
+
+def test_上限が帯の下より低ければ_伸びていても外と言い切れる():
+    """上限が 70% を割っていれば、分母がこれから増えても帯には入らない。"""
+    six = tr.hold(_rows([(1.0, 10), (5.3, 49), (6.3, 59), (30.0, 100)]))[0]["at"][6.0]
+    assert round(six["hi_pct"]) == 59
+    assert tr.hold_verdict(six, growing=True) == "out"
+
+
+def test_実物の台帳で_分けられない本が_1本_出る():
+    """実物（`EkNqtkK49Bw` は 齢4.3h と 齢7.0h に挟まれ、帯 70〜90% を跨ぐ）。
+
+    **この検査は数を固定しません**（本が増えれば動く）—— 見るのは
+    「**挟みが帯を跨いだ本を、帯の外に数えていないこと**」だけ。
+    """
+    rows = tr.ledger_rows()
+    got = tr.hold(rows)
+    seen = {r["id"]: tr.hold_verdict(r["at"][6.0], bool(r["growing"])) for r in got if r["at"][6.0]}
+    for r in got:
+        six = r["at"][6.0]
+        if not six:
+            continue
+        lo, hi = six["pct"], six["hi_pct"]
+        if lo < tr.HOLD_BAND[0] <= hi:            # 挟みが帯の下端を跨いでいる
+            assert seen[r["id"]] != "out", r["id"]
 
 
 def test_only_our_books():
