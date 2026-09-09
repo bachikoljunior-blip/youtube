@@ -401,3 +401,41 @@ def reply(comment_id: str, text: str) -> str:
     r = svc().comments().insert(part="snippet", body={"snippet": {
         "parentId": comment_id, "textOriginal": text[:9000]}}).execute()
     return r.get("id", "")
+
+
+# 伸びている本の再生は、**同じ瞬間に 2つの値が返る**（2026-09-09 19:1x・optimizer・Opus が実測）。
+SETTLE_READS = 3
+
+
+def settle_stats(ids: list[str], reads: int = SETTLE_READS) -> dict[str, dict]:
+    """同じ本を `reads` 回 読み、**最大**（＝いちばん新しい複製）と最小・値の数を返す。**1回 1単位**。
+
+    **なぜ**（2026-09-09 19:1x JST・optimizer・Opus。撃って確かめた）: `videos.list` は
+    **伸びている本を、遅れの違う複数の複製から返す**。実測 12回（3秒 おき・4本 同時）:
+
+        gv1u7n_pCAQ（公開 9h・伸び中）  **637 が 6回・823 が 6回**（差 **186回 ＝ 29%**）
+        lQHX9LJ80Sg（33h・平ら）        468 が 12回（差 0）
+        nQbVxuWpWw8（57h）・PhQ2KvuQASQ（58h）  差 0
+
+    ＝ **揺れるのは伸びている本だけ**で、落ち着いた本は複製が揃う。低いほうの 637 は
+    **2時間 前（17:16 の台帳の行）の値そのもの**なので、低い側が「遅れている複製」。
+    真の再生は減らないので、**複数回 読んだ最大が いちばん新しい**（最小はその時刻の下限）。
+
+    この揺れは 09/09 19:09 の `measure` に **711 → 637（-74回）** と書かせ、その 1分前の
+    `status` は同じ本を **823回** と印字した（同じ `videos.list`・同じ道）。
+    §7 が 4か所で使っていた「再生は最大 -5回 しか減らない ＝ 下限で比べてよい」は、
+    **その -5 が複製の揺れの下端**だった（本物の下限は「複数回 読んだ最小」）。
+
+    **覆る条件**: 落ち着いた本（48h 超）でも差が出たら、遅れではなく数え直しの側 ——
+    そのときは最大ではなく中央値へ（`reads` を 5 に上げてから）。伸びている本で
+    3回 とも同じ値しか出ない回が 1週間 続いたら、複製が揃った ＝ この読み直しは外してよい。
+    """
+    seen: dict[str, list[int]] = {}
+    for _ in range(max(1, reads)):
+        for i in range(0, len(ids), 50):
+            r = svc().videos().list(part="statistics", id=",".join(ids[i:i + 50])).execute()
+            for v in r["items"]:
+                st = v.get("statistics", {})
+                seen.setdefault(v["id"], []).append(int(st.get("viewCount", 0)))
+    return {k: {"views": max(vs), "views_min": min(vs), "n_values": len(set(vs))}
+            for k, vs in seen.items() if vs}

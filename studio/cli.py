@@ -339,13 +339,33 @@ def cmd_schedule(a):
 # それで 09/05〜09/07 に公開された旧作りの本 14本 を 1行も台帳に書いていなかった（`yt.all_videos` の註）。
 MEASURE_WITHIN_H = 24 * 7
 
+# この齢までの本は `videos.list` を読み直して落ち着かせる（`yt.settle_stats`）。**48h**（§1 の
+# 「48時間でほぼ止まる」）—— 実測 2026-09-09 19:1x で揺れたのは齢 9h の本だけ・33h/57h/58h は
+# 12回 とも同じ値。**覆る条件**: 48h を越えた本で `n_values > 1` の行が出たら、ここを伸ばす。
+SETTLE_WITHIN_H = 48
+
 
 def cmd_measure(a):
     pub = yt.published(MEASURE_WITHIN_H)
+    # **齢が浅い本は、読み直して落ち着かせてから台帳へ**（2026-09-09 19:1x・optimizer・Opus）。
+    # `videos.list` は伸びている本を、遅れの違う複数の複製から返す（`yt.settle_stats` の註と実測）。
+    # 1回の読み直しは **1単位**（`all_videos()` の約 32単位 に対して 2単位 増える）。
+    young = [v["id"] for v in pub
+             if (now_jst() - yt.when(v)).total_seconds() / 3600 <= SETTLE_WITHIN_H]
+    settled = yt.settle_stats(young) if young else {}
     for v in pub:
         age = (now_jst() - yt.when(v)).total_seconds() / 3600
+        s = settled.get(v["id"])
+        extra = {}
+        if s:
+            # 遅れている複製を読んだ回に「減った」と書かせないため、**最大**を採る。
+            # 揺れた回だけ `views_min`（その時刻の本物の下限）と `n_values` を残す
+            # —— §7 が「下限」で比べるときに使う数はこちら。
+            if s["n_values"] > 1:
+                extra = {"views_min": s["views_min"], "n_values": s["n_values"]}
+            v = {**v, "views": max(v["views"], s["views"])}
         ledger("measured", v["id"], views=v["views"], likes=v["likes"],
-               comments=v.get("comments", 0), age_h=round(age, 1), title=v["title"][:40])
+               comments=v.get("comments", 0), age_h=round(age, 1), title=v["title"][:40], **extra)
     # **まだ公開前の本も1行 残す**（API は増えない ＝ `all_videos()` は同じ回で1度きり）。
     # 09/08 23:0x: 旧作りの `Yy7GmcGoQ6I` が「きょう 23:00」の予約のまま待っていたのに、
     # 台帳には 1行 も無く、`trend` の日の見出しは 22時間「09/08（1本）」だった
