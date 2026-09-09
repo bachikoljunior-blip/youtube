@@ -455,11 +455,15 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         waiting_days.setdefault(pub.strftime("%m/%d"), []).append((pub, vid, title))
     # **日の見出しの本数は、窓で切らずに台帳ぜんぶから数える**（2026-09-09 10:4x に直した。下の註）。
     all_day_count: dict[str, int] = {}
+    day_newest: dict[str, dt.datetime] = {}
     for vid, pts in ser.items():
         if vid in gone:
             continue
-        all_day_count[published_at(pts).strftime("%m/%d")] = \
-            all_day_count.get(published_at(pts).strftime("%m/%d"), 0) + 1
+        pub = published_at(pts)
+        key = pub.strftime("%m/%d")
+        all_day_count[key] = all_day_count.get(key, 0) + 1
+        if key not in day_newest or pub > day_newest[key]:
+            day_newest[key] = pub
     out: list[str] = []
     for day in sorted(set(days) | set(waiting_days) | set(back_days), reverse=True):
         cohort = sorted(days.get(day, []))
@@ -485,6 +489,25 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
                 "（**この日の本数に入れない**・この点は更新されない）")
     if not out:
         out.append("（台帳に、この日数のうちに公開された本の measured がありません）")
+    # **窓より前の日は、丸ごと消えるのではなく「切れている」と言う**
+    # （2026-09-09 15:2x・optimizer・Opus が踏んだ）。10:4x の直しは
+    # **一部だけ**が窓に入る日に「窓の縁で切れている」を付けたが、
+    # **その日の本が1本も入らない日は `days` に入らないので、見出しごと出ない**。
+    # 実測 09/09 15:2x: `--days 3`（既定）で **09/06 が丸ごと消えた** ——
+    # いちばん若い本が 73.3h ＝ 72h の窓の外に出たため。
+    # 09/06 は 8本 の日で、**§7 の「天井 437回」も「中央値 196回」もこの日から引いています**。
+    # ＝ **§7 が毎周 引く対照が、道具の既定の窓から黙って落ちた。**
+    # 読む側は「09/06 は無かった」と「09/06 は切れた」を区別できない。
+    # **覆る条件**: `--days` の既定が窓の外の日を持たない長さに変わったら、この行は出なくなる（害は無い）。
+    shown = set(days) | set(waiting_days) | set(back_days)
+    cut = sorted((d for d in all_day_count if d not in shown),
+                 key=lambda d: day_newest[d], reverse=True)
+    if cut:
+        head = "・".join(f"{d}（{all_day_count[d]}本）" for d in cut[:3])
+        more = f" ほか {len(cut) - 3}日" if len(cut) > 3 else ""
+        out.append(
+            f"窓（`--days {within_h / 24:g}`）より前の日は、この並びに**出ていません**: "
+            f"{head}{more}。**「その日は無かった」ではありません** —— 引くなら `--days` を伸ばすこと。")
     # **帯の数は、帯の中に居る回だけでなく毎回 印字する** —— §7 は毎周この数を書き写しており、
     # 手で数え直すたびに数え方が揺れていた（2026-09-09 00:2x）。
     nm, nt, om, ot = dead_window(rows)
