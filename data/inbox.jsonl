@@ -105,3 +105,4 @@
 {"at": "2026-09-08T21:49:57+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "close", "id": "811902bc", "note": "答えは「はい」。docs/FOR_OWNER.md 22:00〜23:00 の窓で返し、reply の門 (4) と data/studio/replies/ai-desu.txt に置いた（hourly・21:5x）"}
 {"at": "2026-09-08T21:49:57+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "close", "id": "62e77b34", "note": "同上（1件の問いの2つ目）"}
 {"at": "2026-09-09T07:10:52+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "open", "id": "dd9aa62f", "source": "owner", "text": "Fableのみの半分が全てに加算されるのわかってる？"}
+{"at": "2026-09-09T21:13:47+09:00", "session": "session_01AHfq4FUVAd5fxDM29yG1Cm", "kind": "open", "id": "a936dc8c", "source": "owner", "text": "全てのモデル100％いきそう？"}
