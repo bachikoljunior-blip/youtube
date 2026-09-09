@@ -130,11 +130,39 @@ def test_サブや人が撃った行は数えない(tmp_path, monkeypatch):
 # ---- 遅れを引く ----------------------------------------------------------
 
 def test_遅れのぶん手前へ置く(rounds, monkeypatch):
-    """届くのは「頼んだ時刻 ＋ 遅れ」なので、`target` に届かせるには手前に頼む。"""
+    """届くのは「頼んだ時刻 ＋ 遅れ」なので、狙い先の手前に頼む。
+
+    **狙い先は `floor`**（2026-09-09 20:5x に直した。18:2x は `target` を狙っていた）。
+    """
     d = _decide(monkeypatch, floor=53.0, passed=0.0, lat=4.0)
     assert d["go"] is False
-    # target = 53 - 4/2 = 51.0 → 頼むのは 51 - 4 = 47分 後
-    assert d["wake_min"] == 47
+    # 狙い先 53.0 → 頼むのは 53 - 4 = 49分 後（届くのは 49 + 4 = 53分 ＝ 床ちょうど）
+    assert d["wake_min"] == 49
+    assert d["aim_min"] == pytest.approx(53.0)
+
+
+def test_狙い先は境目ではなく床(rounds, monkeypatch):
+    """**同じ遅れを 2度 引かないこと。**
+
+    18:2x の形は `wait = target - passed` のまま `- lat` していたので、
+    狙い先が `floor - lat/2` ＝ **毎周きっかり `lat/2` だけ床の下**でした
+    （実測 2回 続けて -0.58/-0.98分。`next_round.wake_latency_minutes()` の註）。
+    `floor - lat/2` は「もう届いた `passed` を出すか待つか」の境目であって、狙い先ではない。
+    """
+    for lat in (2.0, 4.0, 8.0):
+        d = _decide(monkeypatch, floor=53.0, passed=10.0, lat=lat)
+        assert d["go"] is False
+        # 頼んだ分 ＋ 遅れ ＝ 届く時刻。床ちょうどに乗ること（切り上げのぶんだけ上）。
+        arrives = 10.0 + d["wake_min"] + lat
+        assert 53.0 <= arrives < 54.0, (lat, d["wake_min"], arrives)
+        # 境目を狙っていたら、届く時刻は床の下（lat/2 ぶん）になる。
+        assert arrives > 53.0 - lat / 2.0
+
+
+def test_境目のほうは動かしていない(rounds, monkeypatch):
+    """狙い先を床へ戻しても、**もう届いた回の「どちらが近いか」は 18:2x のまま**。"""
+    assert _decide(monkeypatch, floor=53.0, passed=51.0, lat=4.0)["go"] is True
+    assert _decide(monkeypatch, floor=53.0, passed=51.0, lat=4.0)["target_min"] == pytest.approx(51.0)
 
 
 def test_台帳のwake_atは送った起こしと一致する(rounds, monkeypatch):
