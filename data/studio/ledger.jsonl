@@ -1745,3 +1745,4 @@
 {"understand": 3, "n_real": 1, "done": false, "at": "2026-09-10T01:06:58+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "critique"}
 {"n": 0, "kinds": [], "at": "2026-09-10T01:10:07+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "crosscheck"}
 {"seconds": 84.7, "image": false, "chars": 464, "scenes": [7.4, 8.0, 8.6, 9.8, 7.4, 8.0, 5.9, 9.5, 5.5, 7.4, 7.3], "at": "2026-09-10T01:11:01+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "built"}
+{"mismatched": 2, "model": "small", "mode": "kana", "diffs": [{"i": 4, "d": [["これからまいとしもらうねんきんがおよそにまんえんおおくなります", ""]]}, {"i": 5, "d": [["んえ", "へ"]]}], "escalated": [8], "tail": {"4": true}, "voice": {"4": "音は在る"}, "how": {"8": "small→medium+prompt"}, "at": "2026-09-10T01:20:12+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "heard"}
