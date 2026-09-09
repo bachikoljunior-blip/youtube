@@ -158,6 +158,15 @@ def test_決めるのに使った数も残す_これが2つ目の本題(tmp_path
     `target_min` と `idle` が無いと**文字列を探す**しかありませんでした
     （実測: 直し以降の GO 2件 は、`why` の「走っているサブは 0体」で idle と判った）。
     `decide()` は既に数で返しているので、落とさずに書き写すだけ。
+
+    **2026-09-09 12:3x に、この検査が丸めの側で1件 直りました**（optimizer・Opus）。
+    もとは `target_min` 63.95 を入れて **`== 64.0`**、`heartbeat_min` 24.09 を入れて **`== 24.1`**
+    と書いており、**`log_wake` が 1桁 に丸め直すこと自体を留めていました。**
+    ところが `decide()` は `gap_over_floor` を**わざと 2桁**で作っています
+    （09:5x の実測「比 1.03〜1.06・中央値 1.05」・門は 1.25倍）ので、
+    1桁 に丸め直すと **1.05 が 1.1 にしかならず、作った側より粗い数**が台帳に残ります。
+    → 写す側の丸めを 2桁 にし、この検査も**入れた数がそのまま出ること**を留める形にしました。
+    **写す側は、作った側より丸めないこと。**
     """
     p = _use(tmp_path, monkeypatch)
     next_round.log_wake({"go": True, "live": 1, "wait_min": 0, "roles": ["hourly"],
@@ -165,8 +174,8 @@ def test_決めるのに使った数も残す_これが2つ目の本題(tmp_path
                          "target_min": 63.95, "idle": False,
                          "heartbeat_min": 24.09, "heartbeat_source": "台帳の実測"})
     (row,) = _read(p)
-    assert row["target_min"] == 64.0 and row["floor_min"] == 76.0
-    assert row["idle"] is False and row["heartbeat_min"] == 24.1
+    assert row["target_min"] == 63.95 and row["floor_min"] == 76.0
+    assert row["idle"] is False and row["heartbeat_min"] == 24.09
     assert row["heartbeat_source"] == "台帳の実測"
 
 

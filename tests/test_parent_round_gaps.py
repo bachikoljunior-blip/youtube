@@ -239,3 +239,79 @@ def test_周の時刻とGOの時刻が離れていたら結ばない(rounds, wak
     rounds(_round("2026-09-08T12:00:00+00:00") + _round("2026-09-08T13:20:00+00:00"))
     wakes([_go("2026-09-08T13:40:00+00:00", 75.0)])   # 20分 ずれている
     assert nr.gap_ratios() == []
+
+
+# ---------------------------------------------------------------------------
+# **2026-09-09 12:3x（optimizer・Opus）に足したぶん** ——
+# `decide()` が数を返しても、`log_wake` の**手で並べた白名簿**に無ければ台帳に載らない件。
+#
+# 09:5x は `gap_ratio_n` を `decide()` に足し、§5 の覆る条件 (2) を
+# 「`gap_ratio_n` が **10 に届かない**まま比が跳ねたら区間が薄いだけ ——3本 未満の回は比を読まないこと」
+# と書いた。ところが白名簿を直し忘れており、**本物の台帳の `who=owner` 42行 すべてで欠落**していた
+# ＝ **その回自身の覆る条件が、台帳から読めない。**
+# 上の 3件（101・208・234行）は全部 `decide()` の**返り**しか見ておらず、1件も気づかなかった。
+# ここで止めるのは「**decide() が返した数が、台帳の行に載っているか**」のほう。
+# ---------------------------------------------------------------------------
+
+
+def _logged(tmp_path, monkeypatch, d):
+    """`log_wake` が実際に書いた1行を読み返す（本物へは書かない）。"""
+    p = tmp_path / "wrote.jsonl"
+    monkeypatch.setattr(nr, "WAKES", p)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)   # 本物ではないので門を開ける
+    nr.log_wake(d)
+    return json.loads(p.read_text(encoding="utf-8").strip().splitlines()[-1])
+
+
+def test_decideが返した数は全部_台帳の行に載る(tmp_path, monkeypatch):
+    """**この検査が本体** —— 白名簿ではなく `decide()` の側が列を決める。"""
+    d = {"go": True, "live": 0, "roles": ["hourly"], "why": "検査",
+         "floor_min": 53.87, "gap_over_floor": 1.04, "gap_ratio_n": 10,
+         "rounding_live": 0, "source": "検査", "新しい数": 7}
+    got = _logged(tmp_path, monkeypatch, d)
+    for key, want in d.items():
+        assert key in got, f"{key} が台帳に載っていない: {got}"
+        assert got[key] == want, (key, got[key], want)
+    # **まだ名簿に無い名前でも載ること**が、この直しの当のもの（09:5x が漏らしたのはこれ）
+    assert got["新しい数"] == 7, got
+
+
+def test_白名簿に戻すと_gap_ratio_nが落ちる_これが踏んだ形(tmp_path, monkeypatch):
+    """**陽性対照** —— 09/09 09:5x の形（名簿に `gap_ratio_n` が無い）に戻すと、台帳から消える。"""
+    d = {"go": True, "live": 0, "roles": [], "why": "",
+         "floor_min": 53.87, "gap_over_floor": 1.04, "gap_ratio_n": 10}
+    白名簿 = ("floor_min", "passed_min", "target_min", "idle",
+              "heartbeat_min", "heartbeat_source", "patch",
+              "gap_median_min", "gap_over_floor",
+              "rounding_live", "rounding_gos")          # ← 09:5x の名簿（`gap_ratio_n` が無い）
+    assert "gap_ratio_n" not in 白名簿
+    落ちる = {k: v for k, v in d.items() if k in 白名簿}
+    assert "gap_ratio_n" not in 落ちる                   # 名簿で写すと消える ＝ 踏んだ形
+    assert "gap_ratio_n" in _logged(tmp_path, monkeypatch, d)   # いまは載る
+
+
+def test_datetimeを返しても親は落ちない(tmp_path, monkeypatch):
+    """`decide()` は `wake_at` を `datetime` で返す。**素朴に写すと `json.dumps` が `TypeError`**
+    ——`log_wake` の `except OSError` をすり抜けて親ごと落ちる（白名簿をやめた回に、その場で踏んだ）。"""
+    from datetime import datetime, timezone
+    at = datetime(2026, 9, 9, 4, 20, tzinfo=timezone.utc)
+    got = _logged(tmp_path, monkeypatch, {"go": False, "live": 0, "roles": [], "why": "",
+                                          "wake_at": at, "wake_min": 47})
+    assert got["wake_at"] == at.isoformat()
+    assert got["wake_min"] == 47
+
+
+def test_写す側は作った側より丸めない(tmp_path, monkeypatch):
+    """`decide()` は `gap_over_floor` を**わざと 2桁**で作る（09:5x の実測 1.03〜1.06・門は 1.25倍）。
+    1桁 に丸め直すと 1.05 が 1.1 にしかならず、**作った側より粗い数**が台帳に残る。"""
+    got = _logged(tmp_path, monkeypatch, {"go": True, "live": 0, "roles": [], "why": "",
+                                          "gap_over_floor": 1.05})
+    assert got["gap_over_floor"] == 1.05, got            # 1.1 ではない
+
+
+def test_JSONにならない型は列を作らずに捨てる(tmp_path, monkeypatch):
+    """**列を作らないほうが、嘘の列より安い**（`None` を落とすのと同じ理由）。周も止めない。"""
+    got = _logged(tmp_path, monkeypatch, {"go": True, "live": 0, "roles": [], "why": "",
+                                          "変な型": object(), "floor_min": 53.9})
+    assert "変な型" not in got
+    assert got["floor_min"] == 53.9                      # 隣の列は無事

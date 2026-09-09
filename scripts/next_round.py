@@ -139,6 +139,41 @@ def _who() -> str:
     return "direct"
 
 
+_DROP = object()
+
+
+def _jsonable(got):
+    """`log_wake` が1つの値を台帳へ写せる形にする。写せない型は `_DROP`（列を作らない）。
+
+    **2026-09-09 12:3x（optimizer・Opus）に足した。** それまで `log_wake` は
+    **手で並べた白名簿**の列だけを写しており、`decide()` が数を1つ足すたびに
+    名簿を直し忘れる口が開いていました（09:5x の `gap_ratio_n` が実際に漏れ、
+    `who=owner` **42行 すべてで欠落**していた ＝ その回自身の覆る条件が読めない）。
+    名簿を捨てて全部 写す形にしたので、**写せない型の受け口がここに要ります。**
+
+    - `datetime` は `isoformat()`（`decide()` は `wake_at` をこの型で返す。
+      **素朴に写すと `json.dumps` が `TypeError` を投げ、`log_wake` の `except OSError` を
+      すり抜けて親ごと落ちます** —— 白名簿をやめた回に、その場で踏んで気づいた）
+    - `float` は **2桁**。1桁 に丸め直すと `decide()` が わざと 2桁 で作っている
+      `gap_over_floor`（09:5x の実測 1.03〜1.06・門は 1.25倍）が **1.0 か 1.1 にしかならず、
+      作った側より粗い数**が残ります。**写す側は、作った側より丸めないこと。**
+    - `list`/`dict` は中身を同じ規則で畳む。それ以外で JSON にならない型は捨てる
+      （**列を作らないほうが、嘘の列より安い** ——`None` を落とすのと同じ理由）。
+    """
+    if isinstance(got, datetime):
+        return got.isoformat()
+    if isinstance(got, bool) or isinstance(got, int) or isinstance(got, str):
+        return got
+    if isinstance(got, float):
+        return round(got, 2)
+    if isinstance(got, (list, tuple)):
+        out = [_jsonable(x) for x in got]
+        return [x for x in out if x is not _DROP]
+    if isinstance(got, dict):
+        return {str(k): _jsonable(v) for k, v in got.items() if _jsonable(v) is not _DROP}
+    return _DROP
+
+
 def log_wake(d: dict, now: datetime | None = None) -> dict:
     """親が起きて `decide()` が答えを出すたびに、その答えを1行 足す。**GO も WAIT も。**
 
@@ -183,20 +218,40 @@ def log_wake(d: dict, now: datetime | None = None) -> dict:
     # `None` は落とします（古い行と混ぜても「無い」と読める。列を増やさない）。
     # `gap_median_min`／`gap_over_floor` は §7 21:4x の覆る条件 (1) が名指しで呼んでいる数
     # （2026-09-09 00:2x に足した。手で数えると 1周 2行 のせいで半分に出る ——`round_gaps` の註）。
-    for key in ("floor_min", "passed_min", "target_min", "idle",
-                "heartbeat_min", "heartbeat_source", "patch",
-                "gap_median_min", "gap_over_floor",
-                "rounding_live", "rounding_gos"):
-        got = d.get(key)
-        if got is None:
+    #
+    # **2026-09-09 12:3x（optimizer・Opus）に、手で並べた白名簿をやめました。**
+    # 09:5x が `gap_ratios()` を足したとき、`decide()` の側には `gap_ratio_n` を入れたのに
+    # **この名簿を直し忘れ**、台帳には **1行も載っていませんでした**（実測: `who=owner` 42行 すべて欠落）。
+    # その回自身の覆る条件 (2) は「`gap_ratio_n` が **10 に届かない**まま比が跳ねたら、
+    # それは区間が薄いだけ ——3本 未満の回は比を読まないこと」で、
+    # **その数が台帳に無い ＝ 次の回は比を読んでよいかを判定できません。**
+    # 検査 3件（`test_parent_round_gaps.py`）は全部 `decide()` の**返り**を見ており、
+    # `log_wake` が落としていることを 1件も見ていませんでした。
+    # ＝ §8 の 06:5x／09:5x が2度 書いた「**呼ぶ側で1つずつ塞ぐ形は、書き口が増えるたびに漏れる**」と同じ形で、
+    # ここでは「書く側で1つずつ許す形は、**数が増えるたびに漏れる**」という裏返し。
+    # → 名簿を捨て、**`row` に既に置いた列以外を全部 写します**（列を決めるのは `decide()` の側）。
+    #
+    # **丸めは 2桁**（前は 1桁）。`decide()` は `gap_over_floor` を**わざと 2桁**で作っており
+    # （09:5x の実測は「比 1.03〜1.06・中央値 **1.05**」・門は 1.25倍）、
+    # ここで 1桁 に丸め直すと **1.05 が 1.1 にしかならず、作った側より粗い数**が台帳に残ります。
+    # **写す側は、作った側より丸めないこと。**
+    for key, got in d.items():
+        if key in row or got is None:
             continue
-        row[key] = round(got, 1) if isinstance(got, float) else got
+        wrote = _jsonable(got)
+        if wrote is not _DROP:
+            row[key] = wrote
     try:
         WAKES.parent.mkdir(parents=True, exist_ok=True)
         with WAKES.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    except OSError:
+    except Exception:
         # 記録に失敗しても周は止めない（止める仕掛けを足さないこと・`CLAUDE.md`）。
+        # **`OSError` だけを受けていたのを 2026-09-09 12:3x に広げました** —— 白名簿をやめた回に
+        # `decide()` の返りへ `wake_at`（`datetime`）が入っており、素朴に写すと
+        # `json.dumps` が `TypeError` を投げます。**それは `OSError` ではないので親ごと落ちます。**
+        # `_jsonable()` がその1件を先に畳んでいますが、**畳み損ねた型で周が止まらない**ようにここも広げます
+        # （台帳は周のための道具で、周が台帳のために止まるのは向きが逆）。
         pass
     return row
 
