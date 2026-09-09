@@ -105,13 +105,58 @@ def published_at(points: list[dict]) -> dt.datetime:
     return _at(p) - dt.timedelta(hours=float(p["age_h"]))
 
 
-def _growth(pts: list[dict]) -> str:
+def envelope(pts: list[dict]) -> list[int]:
+    """齢の順の点を、**それまでの最大**（単調な包絡）に直した再生の並びを返す。API 0単位。
+
+    **なぜ（2026-09-09 20:0x JST・optimizer・Opus。この回に撃って確かめた）**:
+    `videos.list` は伸びている本を **遅れの違う複数の複製**から返す（`yt.settle_stats` の註 ＝ 19:1x の実測 2つ）。
+    19:1x は「複製は2つ・低いほうは 2時間 前の値」と書きましたが、**この回に 10回 撃つと 3つ**出ました:
+
+        gv1u7n_pCAQ（齢 10h・伸び中）  **886 が 6回・637 が 3回・823 が 1回**
+          637 ＝ **17:16 の台帳の行そのもの（2.8時間 前）**・823 ＝ 19:08 の `status` の値（1時間 前）
+        lQHX9LJ80Sg（34h）             **501 が 8回・493 が 2回**
+        nQbVxuWpWw8（58h）・PhQ2KvuQASQ（59h）  差 0（10回 とも同じ）
+
+    ＝ **1点の台帳の値は、真の再生を最大 28%（886 に対し 637 ＝ -249回）下に外します。**
+
+    **読み直しを増やす手では埋まりません**（19:1x が 12回 撃って測ってある）: 同じ `lQHX9LJ80Sg` を
+    19:14 に **3回 とも 468**・12回 とも 468 と読んだ回に、別の 3回 の当てでは 499 が 1度 出ています。
+    ＝ **遅れている複製が「多数派」になる回が在る**ので、`settle_stats` の `max` でも救えません
+    （実測: 19:14 の台帳の行は **468**、その 47分後 の 20:01 は **501**・10回 撃つと 501 が 8回）。
+
+    **救えるのは、次の回です** —— 再生は減らないので、**それまでの最大**が、その齢での下限として
+    いちばん良い推定になります。1点で救えないものを、並びで救う形。
+
+    **効く先**: (1) `lines()` の並びと `_growth()` が、複製の取り違えで **偽の減り**（09/09 19:09 の
+    711 → 637 ＝ **-74回**）と **偽の平ら**を出さなくなる。(2) §7 が 09/09 15:0x〜19:1x の 5周 にわたり
+    「3本目は 3回 続けて +0 ＝ 500回 を越えない側」と書いた当のものが、**遅れている複製を 5回 読んでいた**
+    ことが並びに出る（30.3h〜33.2h の 468 が 5点 続き、34.0h で 501）。
+
+    **生の値は消しません** —— 台帳は足すだけで、`drops()` は生の組を数え続けます（§7 が引いている数なので）。
+    `lines()` は上げた点に **`(生 N)`** を添えて、どこを上げたかが読めるようにします。
+
+    **覆る条件**: (1) 再生が**本当に**減る道が出たら（本を非公開に戻す・YouTube が数を取り消す）、
+    包絡はその減りを隠します —— `drops()` の生の減りが **-5回 より大きい**組で、
+    同じ本の次の点が戻らなかった回が出たら、そこは包絡ではなく生で読むこと。
+    (2) 伸びている本で 10回 読んで差が 0 の回が 1週間 続いたら、複製が揃った ＝ 包絡ごと要らない
+    （`settle_stats` の覆る条件 (2) と同じ刻に外す）。
+    """
+    out: list[int] = []
+    hi = None
+    for p in pts:
+        v = int(p["views"])
+        hi = v if hi is None else max(hi, v)
+        out.append(hi)
+    return out
+
+def _growth(pts: list[dict], vals: list[int] | None = None) -> str:
     """直近の2点の伸び。平らな区間の中で「止まった」と読まないための目印。"""
     if len(pts) < 2:
         return ""
+    vals = vals or [int(p["views"]) for p in pts]
     a, b = pts[-2], pts[-1]
     dh = float(b["age_h"]) - float(a["age_h"])
-    dv = int(b["views"]) - int(a["views"])
+    dv = vals[-1] - vals[-2]
     if dh <= 0:
         return ""
     return f"   [直近 {dv:+d}回 / {dh:.1f}h]"
@@ -478,8 +523,11 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         out.append(head)
         for pub, vid, pts in cohort:
             mark = "新" if vid in mine else "旧"
-            trail = " → ".join(f"{p['age_h']:.1f}h {p['views']}" for p in pts[-6:])
-            out.append(f"  {pub:%H:%M} {mark} {vid:12s} {trail}{_growth(pts)}")
+            env = envelope(pts)
+            trail = " → ".join(
+                f"{p['age_h']:.1f}h {v}" + (f"(生 {p['views']})" if v != int(p["views"]) else "")
+                for p, v in list(zip(pts, env))[-6:])
+            out.append(f"  {pub:%H:%M} {mark} {vid:12s} {trail}{_growth(pts, env)}")
         for pub, vid, title in waiting:
             out.append(f"  {pub:%H:%M} 予 {vid:12s} まだ公開前（この日の本数に入る） {title[:30]}")
         for pub, vid, pts in back:
@@ -536,6 +584,11 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         + (f"・いちばん大きい減り **{worst}回**（{where}）" if nd else "")
         + "。**帯の率と同じ分母です**（手で数え直すと分母が2つになる —— studio/trend.py の `drops` の註）。")
     # **この一文は最後に置くこと**（`tests/test_studio_trend.py` が末尾で止めている）。
+    out.append(
+        "並びの再生は **それまでの最大（単調な包絡）** です（`trend.envelope` の註・2026-09-09 20:0x）"
+        "—— `videos.list` は伸びている本を **遅れの違う 3つ の複製**から返し、"
+        "1点は真の値を **最大 28%（-249回）** 下に外します。**上げた点には `(生 N)` が付きます。**"
+        "生の減りは下の行（`drops`）で数え続けています。")
     out.append("平らは「止まった」ではない —— 実測は studio/trend.py の註。齢の浅い1点で本を比べないこと。")
     if DEAD_START <= now.hour < DEAD_END:
         # **この一文は、数に追随させること**（2026-09-09 02:5x に直した）。
