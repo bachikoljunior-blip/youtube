@@ -97,6 +97,35 @@ def meta_mark(drift: list[str] | None) -> str:
             "（50単位・ID も予約もそのまま）。本文（声・画面）も変えたなら `schedule --replace`")
 
 
+def comments_to_show(cs: list[dict], fresh: list[dict], keep: int = 3) -> list[dict]:
+    """`status` に印字する視聴者コメントの行を選ぶ。
+
+    **必ず出す**: 台帳に無い新着（`fresh`）と、**まだこちらが答えていない行**（`answered` が偽）。
+    残りは新しい順に `keep` 件まで。
+
+    2026-09-10 01:4x JST（optimizer・Opus）に足した。**この回に踏んだ**:
+    `status` は「**未返信 3件**」と数を印字しながら、行のほうは新しい順に 3件 で
+    切っていたので、**その 3件 が 1行も出ませんでした**（実測 01:2x: 出た 3行 は
+    どれも `[返信ずみ]`）。未返信の 3件 は **08/21・08/29×2 の古い行**で、
+    その中に **このチャンネルが受け取った唯一の批評「ＡＩナレーショングダグダ」**が
+    在ります（§7 の 20:4x の行が「ここに出し続けること」と書いている当のもの）。
+    ＝ **新しい順の窓は、放置された行を構造的に隠します**（古いほど隠れる ＝
+    放置が長いほど見えない・向きが逆）。`comments` を撃てば出ますが、
+    毎周 撃たれるのは `status` のほうです。
+
+    **覆る条件**: 未返信が 10件 を越えて `status` が読めなくなったら、ここで切るのではなく
+    「未返信の古い順に 3件 ＋ 残り n件」の形にすること（数だけ残す形は、
+    上と同じ隠し方になるので、**必ず何行かは出すこと**）。
+    """
+    must, seen_ids = [], set()
+    for c in fresh + [c for c in cs if not c.get("answered")]:
+        if c["id"] not in seen_ids:
+            seen_ids.add(c["id"])
+            must.append(c)
+    rest = [c for c in cs if c["id"] not in seen_ids]
+    return must + rest[:keep]
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
@@ -140,7 +169,7 @@ def cmd_status(a):
               + f"・**未返信 {nun}件**" + "）")
         # 新着は必ず出す（3件で切って隠さない）。2026-09-09 04:2x: 返信を引くようにしたので、
         # いちばん濃い反応（会話の続き）がここに来る。
-        for c in (fresh + [c for c in cs if c not in fresh])[:3 + len(fresh)]:
+        for c in comments_to_show(cs, fresh):
             mark = "★新" if c["id"] in {f["id"] for f in fresh} else "  "
             st = "" if c.get("status", "published") == "published" else f"[{c['status']}]"
             arrow = "↳" if c.get("reply") else " "

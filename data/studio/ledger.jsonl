@@ -1746,3 +1746,23 @@
 {"n": 0, "kinds": [], "at": "2026-09-10T01:10:07+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "crosscheck"}
 {"seconds": 84.7, "image": false, "chars": 464, "scenes": [7.4, 8.0, 8.6, 9.8, 7.4, 8.0, 5.9, 9.5, 5.5, 7.4, 7.3], "at": "2026-09-10T01:11:01+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "built"}
 {"mismatched": 2, "model": "small", "mode": "kana", "diffs": [{"i": 4, "d": [["これからまいとしもらうねんきんがおよそにまんえんおおくなります", ""]]}, {"i": 5, "d": [["んえ", "へ"]]}], "escalated": [8], "tail": {"4": true}, "voice": {"4": "音は在る"}, "how": {"8": "small→medium+prompt"}, "at": "2026-09-10T01:20:12+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "heard"}
+{"views": 926, "likes": 4, "comments": 0, "age_h": 15.5, "title": "配偶者が年下だと年金が年42万3700円ふえる 加給年金 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "gv1u7n_pCAQ", "event": "measured"}
+{"views": 510, "likes": 3, "comments": 4, "age_h": 39.5, "title": "年金を60歳からもらうと24%減る 80歳10か月より長生きなら損 #Short", "at": "2026-09-10T01:28:46+09:00", "id": "lQHX9LJ80Sg", "event": "measured"}
+{"views": 66, "likes": 0, "comments": 0, "age_h": 63.5, "title": "年金を70歳まで遅らせると 得になるのは81歳11か月から #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "nQbVxuWpWw8", "event": "measured"}
+{"views": 74, "likes": 0, "comments": 0, "age_h": 64.5, "title": "【育休181日目】手取り比22.0614pt低下 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "PhQ2KvuQASQ", "event": "measured"}
+{"views": 350, "likes": 0, "comments": 0, "age_h": 83.5, "title": "自動車税13年超 1000cc以下は1.356倍 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "N75-k7r6pLw", "event": "measured"}
+{"views": 290, "likes": 1, "comments": 0, "age_h": 84.5, "title": "軽の重課 2015年3月までの車は何%上がる #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "CIPYV_r1Hdo", "event": "measured"}
+{"views": 17, "likes": 0, "comments": 0, "age_h": 85.5, "title": "生命保険料控除 最初の1円は12.00倍 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "o6P0ageZd9k", "event": "measured"}
+{"views": 437, "likes": 0, "comments": 0, "age_h": 86.5, "title": "生命保険料控除 6.67倍でも戻りは2.87倍 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "4C7_gciPt8c", "event": "measured"}
+{"views": 140, "likes": 0, "comments": 0, "age_h": 87.5, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho", "at": "2026-09-10T01:28:46+09:00", "id": "EkNqtkK49Bw", "event": "measured"}
+{"views": 214, "likes": 0, "comments": 0, "age_h": 87.5, "title": "iDeCoの節税が一番減る年収は660万台 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "lywTMXD6WDM", "event": "measured"}
+{"views": 156, "likes": 0, "comments": 0, "age_h": 88.5, "title": "【小規模企業共済】240か月と241か月で税額はいくら違う？ #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "qyVdpAoT_40", "event": "measured"}
+{"views": 178, "likes": 0, "comments": 0, "age_h": 90.5, "title": "iDeCoの効きが落ちる年収は91点中11点 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "OwFjo4kLA9U", "event": "measured"}
+{"views": 347, "likes": 0, "comments": 0, "age_h": 102.5, "title": "育休1年 月給30万で差は734,508円 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "cQ-gLLQ8onQ", "event": "measured"}
+{"views": 232, "likes": 0, "comments": 0, "age_h": 103.5, "title": "小規模企業共済 同じ840万円で税額3.46倍 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "TfetZ_qhS-E", "event": "measured"}
+{"views": 0, "likes": 0, "comments": 1, "age_h": 104.5, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受", "at": "2026-09-10T01:28:46+09:00", "id": "fMlY_uzHOMw", "event": "measured"}
+{"views": 191, "likes": 0, "comments": 1, "age_h": 111.5, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "a23e696j0f8", "event": "measured"}
+{"views": 189, "likes": 0, "comments": 1, "age_h": 112.5, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "kzefG44_APU", "event": "measured"}
+{"views": 5, "likes": 0, "comments": 1, "age_h": 136.5, "title": "【知らないと損】2026年4月 働く年金受給者は年54万円増える", "at": "2026-09-10T01:28:46+09:00", "id": "1huadpEk6HY", "event": "measured"}
+{"views": 59, "likes": 0, "comments": 1, "age_h": 160.5, "title": "小規模企業共済を11か月でやめるといくらか #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "9zkfjEH48PY", "event": "measured"}
+{"publish_at": "2026-09-10T10:00:00+09:00", "title": "夫が亡くなると妻の年金はいくら減るか 遺族厚生年金は4分の3 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "2YZ_4FXC-XI", "event": "pending"}
