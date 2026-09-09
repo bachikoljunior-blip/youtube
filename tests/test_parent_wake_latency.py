@@ -203,3 +203,16 @@ def test_決めに使った遅れが台帳に残る(rounds, monkeypatch):
     d = _decide(monkeypatch, floor=53.0, passed=10.0, lat=4.0)
     assert d["wake_latency_min"] == pytest.approx(4.0)
     assert d["wake_latency_source"] == "検査"
+
+
+def test_台帳から起こしの算数が読めること(rounds, monkeypatch):
+    """`wait_min`（境目まで）と `wake_wait_min`（狙い先まで）は**分母が違う**。
+
+    20:5x に狙い先を `floor` へ移したので、`wake_min` を `wait_min` から
+    引き算し直すと合いません。**次の回が台帳の1行で確かめられること**
+    （`rounding_evidence()` の註「うち target_min を持つ 0 ＝ 1行も答えられない」の族）。
+    """
+    d = _decide(monkeypatch, floor=53.0, passed=10.0, lat=4.0)
+    assert d["wait_min"] == pytest.approx(51.0 - 10.0)        # 境目 51.0 まで
+    assert d["wake_wait_min"] == pytest.approx(53.0 - 10.0)   # 狙い先 53.0 まで
+    assert d["wake_min"] == pytest.approx(d["wake_wait_min"] - 4.0, abs=1.0)

@@ -1117,6 +1117,10 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
         # **狙う先ではありません**（実測は `wake_latency_minutes()` の註）。
         aim = floor
         out["aim_min"] = aim
+        # **台帳から算数が読めること。** `wait_min` は境目まで（もう起きている回の
+        # 「あと何分」）、`wake_wait_min` は狙い先まで —— 分母が違うので、
+        # `wake_min` を `wait_min` から引き算し直すと合いません（20:5x に分かれた）。
+        out["wake_wait_min"] = aim - passed
         want = max(1.0, (aim - passed) - lat)
         out["wake_min"] = max(1, math.ceil(want))
         out["wake_at"] = now + timedelta(minutes=out["wake_min"])
