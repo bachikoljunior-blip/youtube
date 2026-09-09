@@ -85,7 +85,11 @@ def test_死んだ控えを読んでいないこと():
     code = []
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name in (
-                "today_slot_empty", "_studio_today_slot_empty"):
+                # `_studio_ledger` は 2026-09-10 00:0x に割った口（環境変数で台帳の道を
+                # 上書きできる ＝ 子プロセスの検査が「きょうの枠」を固定できる）。
+                # **割った先も、この検査の中に入れておくこと** —— でないと
+                # 「死んだ控えへ戻っていないか」を見ている面が、割った側で抜けます。
+                "today_slot_empty", "_studio_today_slot_empty", "_studio_ledger"):
             body = list(node.body)
             # **註で名前を出すのは良い**（なぜやめたかの説明）。見るのは**動く側**だけ。
             if (body and isinstance(body[0], ast.Expr)

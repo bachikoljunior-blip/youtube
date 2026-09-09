@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,31 @@ def _sessions(born: datetime) -> list[dict]:
     ]
 
 
+def _slot_filled_env(tmp_path: Path) -> dict:
+    """**きょうの枠に本が 1本 在る**台帳を置いて、その道を環境変数で渡す。
+
+    2026-09-10 00:0x・optimizer・Opus。**この検査が見ているのは「間隔の下限が効いている枝」**
+    ですが、`--phase spawn` は **きょうの枠が空なら下限を丸ごと外します**
+    （`sibling_check.today_slot_empty()` の註）。＝ **枠が空の間、その枝は存在しません。**
+    それは毎晩 起きます —— JST の日が変わってから、その日の本が `scheduled` に載るまで
+    （実測 00:33〜00:54）＝ **毎日 30〜60分**。2026-09-10 00:0x にその窓のまん中に入り、
+    この 5件 が赤で出ました（道具は 1行も変わっていない）。
+
+    **固定していなかったのは「下限の分数」ではなく「きょうの枠の状態」でした。**
+    子プロセスなので `monkeypatch.setattr` は届かず、口は環境変数です
+    （`sibling_check._studio_ledger()` の註）。
+    """
+    jst = timezone(timedelta(hours=9))
+    today = datetime.now(jst).date()
+    led = tmp_path / "ledger.jsonl"
+    led.write_text(json.dumps({
+        "event": "scheduled", "video_id": "vid_SLOT_FILLED",
+        "publish_at": f"{today.isoformat()}T10:00+09:00",
+        "at": f"{today.isoformat()}T00:30:00+09:00",
+    }) + "\n", encoding="utf-8")
+    return {**os.environ, "YT_STUDIO_LEDGER": str(led)}
+
+
 def _run(tmp_path: Path, born_minutes_ago: float, cron_minute: int) -> tuple[int, str]:
     now = datetime.now(timezone.utc)
     born = now - timedelta(minutes=born_minutes_ago)
@@ -55,6 +81,7 @@ def _run(tmp_path: Path, born_minutes_ago: float, cron_minute: int) -> tuple[int
         [sys.executable, str(SCRIPT), "--sessions", str(f), "--phase", "spawn",
          "--me", ME, "--cron-minute", str(cron_minute)],
         capture_output=True, text=True, cwd=str(ROOT),
+        env=_slot_filled_env(tmp_path),
     )
     return p.returncode, p.stdout + p.stderr
 

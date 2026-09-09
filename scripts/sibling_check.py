@@ -501,6 +501,42 @@ def today_slot_empty(now: datetime | None = None) -> bool | None:
 #: （2026-09-09 09:0x・optimizer・Opus が踏んだ。下の註）。
 STUDIO_LEDGER = Path(__file__).resolve().parent.parent / "data" / "studio" / "ledger.jsonl"
 
+#: **台帳の置き場を上書きする環境変数**（2026-09-10 00:0x・optimizer・Opus が足した）。
+#: `--phase spawn` は**子プロセス**で走るので、`monkeypatch.setattr(STUDIO_LEDGER, ...)` は
+#: 届きません。届かないせいで、下の 5件 の検査が**毎晩 赤**になっていました（`_studio_ledger()` の註）。
+STUDIO_LEDGER_ENV = "YT_STUDIO_LEDGER"
+
+
+def _studio_ledger() -> Path:
+    """いま読むべき台帳。**環境変数が在ればそちら。**
+
+    **なぜ要ったか**（2026-09-10 00:0x・optimizer・Opus。**踏んだのではなく、赤で見つけた**）:
+    `tests/test_pace.py` の 3件 と `tests/test_spawn_gate_overrun.py` の 2件 は
+    「**間隔の下限が効いている枝**」（返り 5 ＝ 待つ／6 ＝ 畳む）を見ています。
+    ところが `--phase spawn` は **きょうの枠が空なら下限を丸ごと外す**ので
+    （`today_slot_empty()` の註 ——「その日が丸ごと落ちる」ほうが重いから）、
+    **枠が空の間だけ、その枝は存在しません**。検査は 0（立ててよい）を受け取って赤くなります。
+
+    **それは毎晩 起きます**: JST の日が変わった瞬間から、その日の本が
+    `scheduled` に載るまで（実測 00:33〜00:54）＝ **毎日 30〜60分**。
+    2026-09-10 00:0x にこの窓のまん中に入り、5件 が赤で出ました
+    （23:2x の §7 は同じ検査を **538 passed** と記録しています ＝ 道具は 1行も変わっていない）。
+
+    **検査が固定していなかったのは「下限の分数」ではなく「きょうの枠の状態」でした。**
+    上の `test_早すぎる子は待たされる` は 08/22 に「分数を書かず、いまの下限から作れ」と
+    直していますが、**下限を消せる入力のほうは開いたまま**でした
+    （§5「数えている物と訊きたいことがずれている」の、入力側の形）。
+
+    → **子プロセスからも枠の状態を固定できる口**がこれです。検査は
+    `YT_STUDIO_LEDGER` に「きょうの本が 1本 在る」台帳を置いてから撃ちます。
+
+    **覆る条件**: 本番でこの環境変数が置かれていたら、下限の判断が
+    偽の台帳で下ります。**置くのは検査だけ**（`docs/trigger_parent.md` は置きません）。
+    置かれていた回を疑うときは、`--phase spawn` の印字に出る台帳の道を見ること。
+    """
+    raw = os.environ.get(STUDIO_LEDGER_ENV) or ""
+    return Path(raw) if raw.strip() else STUDIO_LEDGER
+
 
 def _studio_today_slot_empty(now: datetime | None = None) -> bool | None:
     """`data/studio/ledger.jsonl` から「きょうの枠が空か」を出す。**API 0単位。**
@@ -535,7 +571,7 @@ def _studio_today_slot_empty(now: datetime | None = None) -> bool | None:
         today = now.astimezone(JST).date()
         placed: dict[str, tuple[datetime, datetime]] = {}   # id → (publish_at, 置いた刻)
         dropped: dict[str, datetime] = {}                   # id → 最後に戻した刻
-        with STUDIO_LEDGER.open(encoding="utf-8") as fh:
+        with _studio_ledger().open(encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:

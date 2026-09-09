@@ -1320,12 +1320,17 @@ def reach_at_reset(used_now: float, left_hours: float, per_lap: float,
     ＝ **答えは「いく／いかない」ではなく「床に乗るか」**です。
     遅れが +8分/周 を越えて初めて 99.2% へ落ちます（この回に撃った）。
 
-    **覆る条件**: (1) `per_lap` が枠の途中で変わったら（役が opus に切り替わる・
-    サブの数が変わる）この見込みは外れます —— 実測でずれたら
-    `per_lap` を段ごとに分ける形へ。**「Fable のみ」100% は 09/11 11:37 JST 見込みで、
-    その後は 2体 とも opus** なので、これは**この枠の中で起きます**。
+    **覆る条件**: ~~(1) `per_lap` が枠の途中で変わったら（役が opus に切り替わる・
+    サブの数が変わる）この見込みは外れます —— 実測でずれたら `per_lap` を段ごとに分ける形へ。~~
+    **【2026-09-09 23:5x・optimizer・Opus が撃って閉じました】外れません。**
+    `per_lap` を 0.20〜1.20 で掃いても着地は 99.2〜99.9% で平ら（差は最後の1周の切り捨てだけ）＝
+    **段ごとに分ける形は、作っても答えが変わりません**（0.0〜0.2 ポイント・門は 5）。
+    床が毎周 `per_lap / fwd` で引き直される以上、1周の重さは**間隔に吸われて %/時 に出ない**からです。
+    実測（段で分けて回した）: 段なし **99.80%** 対 前半 0.600→後半 0.540 **99.50%** ＝ 差 **0.30 ポイント**。
+    derivation と、この平らが破れる 1つの条件は `ceiling_rate()` の註。
     (2) 床が `FLOOR_MIN_CLAMP` に当たったら、そこから先は縮まないので
-    閉じた輪ではなくなる（当たった回にこの註を書き直すこと）。
+    閉じた輪ではなくなる —— **(1) が閉じたいま、着地を動かせるのはこれだけです。**
+    当たる手前で気づくための数が `ceiling_rate()`（**いま 3.22倍・門は 3.0倍**）。
     """
     if per_lap is None or per_lap <= 0 or left_hours is None or left_hours <= 0:
         return None
@@ -1343,6 +1348,59 @@ def reach_at_reset(used_now: float, left_hours: float, per_lap: float,
         left -= step_h
         used += per_lap
     return min(100.0, used)
+
+
+def ceiling_rate(per_lap: float, lag_min: float = 0.0,
+                 floor_min: float = FLOOR_MIN_CLAMP) -> float | None:
+    """**閉じた輪が出せる、いちばん速い %/時。** 床に従う見込みを疑う条件はここに在ります。
+
+    2026-09-09 23:5x・optimizer・Opus。**足したのは数ではなく「その数を疑う条件」**です。
+
+    **なぜ要るのか**: `reach_at_reset()` は「床に従えば 99.8%」と答えますが、
+    その 99.8 は **`per_lap` にも遅れにも動きません**（下の掃き）。
+    ＝ **着地の数を見ていても、見込みが壊れる瞬間は見えません。**
+    壊れるのは 1周が最短になっても要る速さに追いつかなくなったときで、その最短は
+
+        1周の最短 ＝ `FLOOR_MIN_CLAMP`（10分・床はこれより短くならない）＋ 遅れ
+        出せる最速 ＝ `per_lap * 60 / (FLOOR_MIN_CLAMP + 遅れ)`   ← この関数
+
+    **遅れを足すのを落とさないこと**（この回に 1度 落として、陽性対照に捕まりました。
+    底だけで数えた `per_lap*60/FLOOR_MIN_CLAMP` は、掃きの 3割 を説明できません）。
+
+    **掃いて確かめた**（`used 52.4%`・残り 54.9時間・要る速さ 0.868 %/時。
+    `per_lap` 0.15〜2.0 × 遅れ 0〜40分 の **144点**）:
+
+        余裕（この天井 ÷ 要る速さ）が **3.0倍 以上** の点  **68点 中 0点** で天井が効いた
+        ＝ そこでの不足は**最後の1周の切り捨てだけ**（`100 - 着地 < per_lap`）
+        余裕 **1.04〜2.77倍** は混ざる帯・**1.0倍 未満**は 1点も 99% に届かない
+
+    **効く先 1 —— `reach_at_reset()` の覆る条件 (1) は閉じました。**
+    「`per_lap` が枠の途中で変わる（Fable が尽きて `hourly` も opus）→ 段ごとに分ける形へ」は
+    **作っても答えが変わりません**。実測（この回・段で分けて回した）:
+
+        段で分けない（0.600 のまま）      **99.80%**
+        前半 0.600 → 後半 0.540（実際の形）  **99.50%**   ＝ 差 **0.30 ポイント**（門は 5）
+
+    **効く先 2 —— 向きが逆でした。** `landing()` は「尽きたあとは軽い周になり、
+    床が縮んで**届きやすい**（＝ この関数は下振れ）」と書いていましたが、
+    軽くなると**周の数が増え、遅れの取り分がそのぶん増える**ので、上のとおり **0.3 ポイント 低い**側です。
+    平ら（差は切り捨て）と読むのが正しく、**上振れでも下振れでもありません。**
+
+    **覆る条件**: (1) **余裕が 3.0倍 を切ったら、着地の数を信じずに掃き直すこと**
+    （混ざる帯に入るので、`per_lap` と遅れの実際の組で `reach_at_reset()` を掃く）。
+    **いま 3.22倍・Fable が尽きて opus 2体 になると 2.90倍** ＝ **その周に 1度 掃くこと**
+    （掃いた結果がこの註と同じなら、書き足さずにこの行の数だけ直す）。
+    (2) `FLOOR_MIN_CLAMP` を動かしたら天井も動きます。
+    (3) 遅れ（`wake_latency_minutes()`）が **10分** を越えたら、いまの `per_lap` でも
+    余裕は 2.1倍 まで落ちます —— そのときは遅れを削る手が初めて着地に効きます
+    （いまは効きません。0〜5分 で着地は 1つも動きませんでした）。
+    """
+    if per_lap is None or per_lap <= 0:
+        return None
+    denom = float(floor_min or 0.0) + float(lag_min or 0.0)
+    if denom <= 0:
+        return None
+    return float(per_lap) * 60.0 / denom
 
 
 def landing(used_now: float, left_hours: float, per_lap: float,
@@ -1368,9 +1426,16 @@ def landing(used_now: float, left_hours: float, per_lap: float,
     `fable_spent_h_before_reset` は **正なら「リセットより前に尽きる」**（その時間ぶん
     Fable 抜きで回る）・None なら尽きない。
 
-    **覆る条件**: Fable が尽きた後は `hourly` も opus になる（`ROLE_TIER`）ので
+    **覆る条件**: ~~Fable が尽きた後は `hourly` も opus になる（`ROLE_TIER`）ので
     1周の重さが変わります。この関数は**変わらない前提**で運んでいるので、
-    尽きたあとの「すべて」は**下振れ**（実際はもっと軽い周になり、床が縮んで届きやすい）。
+    尽きたあとの「すべて」は**下振れ**（実際はもっと軽い周になり、床が縮んで届きやすい）。~~
+    **【2026-09-09 23:5x・optimizer・Opus。撃って確かめたら、向きが違いました】**
+    軽い周になっても**届きやすくはなりません** —— 着地は `per_lap` に対して**平ら**です
+    （0.20〜1.20 で 99.2〜99.9%）。床が毎周 引き直されるので、重さは間隔に吸われます。
+    **むしろ向きは逆**（軽い ＝ 周が増える ＝ 遅れの取り分が増える ＝ **届きにくい**）:
+    段で分けて回すと **99.50%** で、分けない **99.80%** より **0.30 ポイント 低い**側でした。
+    derivation は `ceiling_rate()` の註。
+    ＝ **この関数は「変わらない前提」でよく、尽きたあとも上振れも下振れもしません。**
     尽きる時刻そのものは、その前の話なので影響を受けません。
     """
     if per_lap is None or per_lap <= 0 or left_hours is None or left_hours <= 0:
@@ -1647,6 +1712,13 @@ def pace(now: datetime | None = None) -> dict | None:
         # **枠が戻る瞬間の到達%**（`reach_at_reset()` の註）。
         "reach_floor": reach_floor, "reach_carry": reach_carry,
         "reach_lag_min": lag_min,
+        # **閉じた輪が出せる最速と、その余裕**（`ceiling_rate()` の註）。
+        # **着地の数（`reach_floor`）は `per_lap` にも遅れにも動きません** ——
+        # 見込みが壊れる瞬間が見えるのは、こちらの余裕のほうです。**3.0倍 が門**。
+        "reach_ceiling_rate": ceiling_rate(per_lap, lag_min),
+        "reach_ceiling_margin": ((ceiling_rate(per_lap, lag_min) / forward_rate)
+                                 if forward_rate and forward_rate > 0
+                                 and ceiling_rate(per_lap, lag_min) else None),
         "dead_hours": ((resets - exhaust).total_seconds() / 3600
                        if exhaust and exhaust < resets else 0.0),
         "over": (rate / forward_rate - 1.0) if forward_rate > 0 else 0.0,
@@ -1859,6 +1931,18 @@ def pace_report(now: datetime | None = None) -> None:
         print(f"      床に従えば **{p['reach_floor']:.1f}%**"
               f"（床 {p['floor_min']:.0f}分・遅れ {p['reach_lag_min']:.1f}分/周 を乗せて数えた。"
               f"床は毎周 引き直されるので**閉じた輪**です）")
+        # **この数は 1周の重さにも遅れにも動きません**（`clamp_binding_rate()` の註。
+        # 掃いて確かめた）。動き始めるのは、床が `FLOOR_MIN_CLAMP` に当たってから ＝
+        # **見るのは着地の 0.2 ポイントではなく、この余裕のほう**です。
+        if p.get("reach_ceiling_margin"):
+            m = p["reach_ceiling_margin"]
+            print(f"      ＊この着地は **1周の重さ（{p['per_lap']:.2f}%）にも遅れにも動きません**"
+                  f"（掃いて確かめた・`ceiling_rate()` の註）。**見るのはこちら** —— "
+                  f"閉じた輪が出せる最速 **{p['reach_ceiling_rate']:.2f} %/時**"
+                  f"（1周の最短 {FLOOR_MIN_CLAMP:.0f}分 ＋ 遅れ {p['reach_lag_min']:.1f}分）に対し、"
+                  f"要るのは **{p['forward_rate']:.2f} %/時** ＝ **{m:.2f}倍 の余裕**"
+                  + ("（門 3.0倍 を切っています ＝ **着地を信じずに掃き直すこと**）" if m < 3.0
+                     else "（門 3.0倍）"))
         print(f"      いまの間隔のまま **{p['reach_carry']:.1f}%**"
               f"（＝ 直近の区間の {p['carry_rate']:.3f} %/時。"
               f"**残す {100.0 - p['reach_carry']:.0f}% は、リセットで消えます**）")
