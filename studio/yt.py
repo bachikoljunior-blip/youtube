@@ -238,6 +238,32 @@ def _replies(thread: dict, cid: str) -> list[dict]:
             return out or got
 
 
+def _mark_answered(row: dict, ours: list[str]) -> dict:
+    """その1行に **こちらが答えたか** を書き込む（`answered` / `answered_at`）。
+
+    2026-09-09 17:2x JST（optimizer・Opus）に足した。**実物で1度 払った値段**:
+    `viewer_comments()` は自分の行を落とすので、`comments`／`status` は
+    **「答えた」を1度も出せません**。この回は `status` の
+    「うちスレッドの返信 1件」を見て「未返信の質問が 30時間 放置されている」と読み、
+    API を別に 1単位 撃って初めて **答えは 09/08 17:10 JST に出ていた**と分かりました。
+    **台帳では埋まりません** —— 実測: このスレッドに こちらの返信は **2件**（08:10Z・11:29Z）
+    在るのに、台帳 `replied` は **1件** だけ（`cli reply` を通らずに出た 1件が落ちている）。
+    ＝ 「答えたか」の唯一の正本は API の側で、それは毎回もう引けています（追加 0単位）。
+
+    **時刻で見ること**（数では見ない）: 答えたあとに視聴者が次を書けば、それは未返信です。
+    だから「この行より**後**に こちらの返信が在るか」で決める（実測 09/08:
+    03:38 の問い → 08:10 に答え → 09:41 に次の問い → 11:29 に答え ＝ どちらも返信ずみ）。
+
+    **覆る条件**: こちらの返信が視聴者の行と**同じ秒**に並ぶ回が出たら（`>` が効かない）、
+    ID の順で見ること。`cli reply` を通らない返信が 1か月 出なくなったら、
+    台帳 `replied` だけで足りるので、この関数は消してよい（そのときは上の 2件/1件 も数え直す）。
+    """
+    later = [t for t in ours if t > (row.get("at") or "")]
+    row["answered"] = bool(later)
+    row["answered_at"] = later[0] if later else None
+    return row
+
+
 def viewer_comments(with_moderation: bool = True) -> list[dict]:
     """**視聴者が書いたコメント**を、新しい順に。自分のチャンネルが書いた分は落とす。
 
@@ -339,14 +365,22 @@ def viewer_comments(with_moderation: bool = True) -> list[dict]:
             for t in r.get("items", []):
                 vid = t["snippet"].get("videoId", "")
                 tls = t["snippet"]["topLevelComment"]["snippet"]
+                reps = _replies(t, cid)
+                # **こちらが書いた返信の時刻**（行は返さないが、「答えたか」はここでしか分からない）。
+                ours = sorted(c["snippet"].get("publishedAt", "") for c in reps
+                              if c["snippet"].get("authorChannelId", {}).get("value") == cid)
+                rows = []
                 # 最上位が自分でも **スレッドは落とさない**（返信に視聴者が居る）。落とすのはこの行だけ。
                 if tls.get("authorChannelId", {}).get("value") != cid:
-                    out.append(_comment_row(t["id"], vid, tls, col, t["id"], False))
-                for c in _replies(t, cid):
+                    rows.append(_comment_row(t["id"], vid, tls, col, t["id"], False))
+                for c in reps:
                     cs = c["snippet"]
                     if cs.get("authorChannelId", {}).get("value") == cid:
                         continue
-                    out.append(_comment_row(c["id"], vid or cs.get("videoId", ""), cs, col, t["id"], True))
+                    rows.append(_comment_row(c["id"], vid or cs.get("videoId", ""), cs, col, t["id"], True))
+                for row in rows:
+                    _mark_answered(row, ours)
+                out.extend(rows)
             tok = r.get("nextPageToken")
             if not tok:
                 break
