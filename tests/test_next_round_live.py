@@ -50,12 +50,20 @@ _spec.loader.exec_module(nr)
 
 NOW = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
 STARTED = NOW - timedelta(minutes=5)
+FLOOR, PASSED, LAT = 191.0, 5.0, 3.0
 
 
 @pytest.fixture(autouse=True)
 def _pinned(monkeypatch, tmp_path):
     """**間隔と台帳を、この検査の外の実物から切り離す。**"""
     monkeypatch.setattr(nr, "floor_minutes", lambda: (191.0, "検査で固定"))
+    # **起こしの遅れも固定する**（2026-09-09 21:5x・optimizer・Opus）。
+    # ここは長らく実物の `data/parent_wakes.jsonl` を読んでおり、**台帳が伸びるたびに
+    # 答えが動く検査**でした（この回の実測: 期待 186.0 に対し 184.56 ＝ ちょうど 遅れ/2）。
+    # しかも**この検査は `pytest -m live` に入っていなかった**ので、18:2x と 20:5x が
+    # `decide()` の狙い先を 2度 書き換えたあいだ、**1度も撃たれていません**。
+    # ＝ 規則Cの当て先が 1つ だった（`studio/livetests.py` の `IMPORTS_PARENT_BARE` の註）。
+    monkeypatch.setattr(nr, "wake_latency_minutes", lambda *a, **k: (LAT, "検査で固定"))
     monkeypatch.setattr(nr, "LIVE", tmp_path / "live_subs.json")
     monkeypatch.setattr(nr, "WAKE", tmp_path / "parent_wake.json")
     # 直前に「そろった周」が立っている ＝ 穴埋めの枝には落ちない
@@ -69,10 +77,19 @@ def test_サブが0体でも間隔の途中ならWAITで起こしを返す():
     d = nr.decide(now=NOW, live=0)
     assert d["go"] is False, d
     assert d.get("idle") is True
-    assert d["wait_min"] == pytest.approx(186.0, abs=0.5)
+    # **境目は `floor - 遅れ/2`**（もう届いた回に、出すか次の届きまで待つか）。
+    assert d["wait_min"] == pytest.approx(FLOOR - LAT / 2.0 - PASSED, abs=0.5)
+    # **狙い先は `floor` そのもの**（20:5x。境目を狙い先に使うと同じ遅れを 2度 引く）。
+    assert d["wake_wait_min"] == pytest.approx(FLOOR - PASSED, abs=0.5)
+    assert d["aim_min"] == pytest.approx(FLOOR, abs=0.01)
     assert d["wake_min"] >= 1
-    assert d["wake_at"] > NOW + timedelta(minutes=186), "起こしが間隔より前に置かれています"
-    assert d["wake_at"] <= NOW + timedelta(minutes=188), "起こしが間隔からいくらも遅れています"
+    # **起こしは、遅れのぶん わざと手前へ置く**（18:2x）。見るのは置いた時刻ではなく
+    # **届く時刻**で、それが床に乗ること。
+    arrives = d["wake_at"] + timedelta(minutes=LAT)
+    assert abs((arrives - (NOW + timedelta(minutes=FLOOR - PASSED))).total_seconds()) <= 90, \
+        "起こしが床に乗っていません（届く時刻 ＝ 頼んだ時刻 ＋ 遅れ）"
+    assert d["wake_at"] < NOW + timedelta(minutes=FLOOR - PASSED), \
+        "起こしが手前へ置かれていません（遅れを引いていない）"
 
 
 def test_0体で間隔が明けていればGO(monkeypatch):

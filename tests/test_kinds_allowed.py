@@ -94,21 +94,31 @@ def test_下読みは門と食い違わない():
         f"下読み（fix 止め={said_blocked}）と門（止め={gate_trips}）が食い違っています")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="旧道具（`scripts/run_marker.py` の枠の本）の側。名指しできない `vmAll8GDkU8` は "
-           "2026-09-05 に private へ戻した旧作りの本（`docs/METHOD.md` §8/§9）。"
-           "当てにしている前提のほうを捨てたので、直す先が無い。**消さない**（§8）。"
-           "strict なので、旧道具が戻って**通るようになったら赤**になり、そこで気づける。"
-           "生きている信号は `python -m pytest -m live -q`（`studio/livetests.py`）",
-)
 def test_止まるなら枠の本を名指しする():
-    """止めるなら、**通る手**を必ず名指しすること（出口を塞がない門にしない）。"""
+    """止めるなら、**通る手**を必ず名指しすること（出口を塞がない門にしない）。
+
+    **【2026-09-09 21:5x・optimizer・Opus】`xfail(strict=True)` を外しました。**
+    09/08 06:5x が strict にしたのは「**旧道具が戻って通るようになったら赤になる**」ため
+    でしたが、この回 `pytest -m live` に入った初回に **XPASS で赤**になり、撃って確かめたら
+    **旧道具は戻っていません** —— `run_marker.untreated_slot()` が
+    `{'video_id': '', 'topic': ''}` を返すようになり、`if tgt:` が**素通りして
+    1つも assert しないまま通った**（＝ 空振りの緑）だけでした。
+
+    **strict xfail は「通った」しか見ないので、
+    「直った」と「見る物が消えた」を分けられません。** 分ける形にします ——
+    枠の本が無い回は `skip`（**評価できない**と言う）、在る回は前と同じ assert。
+    旧道具が本当に戻れば `tgt` が入り、assert がその場で効きます。
+
+    **覆る条件**: `untreated_slot()` が枠の本を返す回が出たのに、この検査が
+    skip のままなら、空を返す枝のほうを疑うこと。
+    """
     got = next_round.kinds_allowed()
-    if "fix" in got["blocked"]:
-        body = "\n".join(got["lines"])
-        import run_marker as rm
-        slot = rm.untreated_slot()
-        tgt = slot.get("video_id") or slot.get("topic")
-        if tgt:
-            assert tgt in body, f"止めたのに枠の本 {tgt} を名指ししていません"
+    if "fix" not in got["blocked"]:
+        pytest.skip("この回は fix が止まっていない ＝ 名指しの出番が無い")
+    body = "\n".join(got["lines"])
+    import run_marker as rm
+    slot = rm.untreated_slot()
+    tgt = slot.get("video_id") or slot.get("topic")
+    if not tgt:
+        pytest.skip("旧道具の枠の本が無い（§8 —— 当てにしている前提そのものが消えている）")
+    assert tgt in body, f"止めたのに枠の本 {tgt} を名指ししていません"

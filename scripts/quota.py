@@ -1279,6 +1279,72 @@ def sub_model(now: datetime | None = None, role: str | None = None) -> tuple[str
                       float(fe["est"]), role)
 
 
+#: `reach_at_reset()` が「床に従って回った」と見なすときに、1周ごとに床の上へ
+#: 乗せる遅れ（分）。**0 ではなく実測の中央値を渡すこと** —— `next_round.py` の
+#: `wake_latency_minutes()` が数えている、起こしの届きの遅れです。
+#: 既定を 0 にしてあるのは、呼ぶ側が実測を渡さなかったときに
+#: **甘い側（速い側）ではなく、床そのもの**へ倒すため。
+REACH_LAG_DEFAULT_MIN = 0.0
+
+
+def reach_at_reset(used_now: float, left_hours: float, per_lap: float,
+                   lag_min: float = REACH_LAG_DEFAULT_MIN,
+                   floor_min: float = FLOOR_MIN_CLAMP) -> float | None:
+    """**床に従って回ったら、枠が戻る瞬間までに何%まで行くか。**
+
+    2026-09-09 21:5x・optimizer・Opus が足した。オーナー 21:13
+    「全てのモデル100％いきそう？」21:1x「どうすんの？」への、**画面に無かった数**。
+
+    **なぜ `exhaust_at` では答えられないのか**（この回に踏んだ）:
+    `exhaust_at` は **`carry_rate`（直近の区間の %/時）のまま走り続けたら**
+    いつ 100% に着くか、です。ところが `carry_rate` は**間隔を変える前**の速さで、
+    **床は目盛りが来るたびに動きます**。実測 09/09 21:13 の目盛り（50%）で
+
+        床      52.9分 → **41.6分**（`pace()` が同じ刻に付け替えた）
+        `exhaust_at`  09/13 03:09 JST（リセット 09/12 07:00 より **後**）
+        画面の行      「**このままならリセットまで届きます**」
+
+    ＝ 親はこの行を読んで「いきません」と答えました（**結論は正しい**）。
+    しかし行そのものは「届きます」と書いてあり、**100% の時刻は枠が戻った後**で、
+    **その時刻は決して来ません**（枠はその前に 0% へ戻る）。
+    **「このまま」＝ 56分 間隔のまま、の意味**で、床はもう 42分 になっています。
+
+    **この関数が答えるのは、その先です** —— 床は毎周
+    `per_lap / ((100 - used) / left)` で引き直されるので、**閉じた輪**です。
+    1周 遅れれば残りが増え、次の床がそのぶん縮む。だから
+
+        床に従う           リセット時 **99.8%**（遅れ +5分/周 でも 99.8%）
+        56分 のまま        リセット時 **86.9%**
+        42分 に固定        リセット時 **100.0%**
+
+    ＝ **答えは「いく／いかない」ではなく「床に乗るか」**です。
+    遅れが +8分/周 を越えて初めて 99.2% へ落ちます（この回に撃った）。
+
+    **覆る条件**: (1) `per_lap` が枠の途中で変わったら（役が opus に切り替わる・
+    サブの数が変わる）この見込みは外れます —— 実測でずれたら
+    `per_lap` を段ごとに分ける形へ。**「Fable のみ」100% は 09/11 11:37 JST 見込みで、
+    その後は 2体 とも opus** なので、これは**この枠の中で起きます**。
+    (2) 床が `FLOOR_MIN_CLAMP` に当たったら、そこから先は縮まないので
+    閉じた輪ではなくなる（当たった回にこの註を書き直すこと）。
+    """
+    if per_lap is None or per_lap <= 0 or left_hours is None or left_hours <= 0:
+        return None
+    used, left = float(used_now), float(left_hours)
+    # 1周ずつ進める。床は毎周 引き直す（`pace()` と同じ式）＝ 閉じた輪。
+    for _ in range(10000):
+        if used >= 100.0 or left <= 0:
+            break
+        fwd = (100.0 - used) / left
+        if fwd <= 0:
+            break
+        step_h = (max(float(floor_min), per_lap / fwd * 60.0) + float(lag_min)) / 60.0
+        if step_h > left:
+            break
+        left -= step_h
+        used += per_lap
+    return min(100.0, used)
+
+
 def pace(now: datetime | None = None) -> dict | None:
     """いまの速さと、持続できる1周の間隔。目盛りが無ければ None。
 
@@ -1474,6 +1540,28 @@ def pace(now: datetime | None = None) -> dict | None:
     exhaust = (now + timedelta(hours=(100.0 - used_now) / carry_rate)
                if carry_rate > 0 and used_now < 100.0
                else (now if used_now >= 100.0 else None))
+
+    # **枠が戻る瞬間に何%まで行くか**（2026-09-09 21:5x）。`exhaust_at` は
+    # `carry_rate`（間隔を変える前の速さ）のままの話で、**床が動いた直後は
+    # 前の速さを見ています**。オーナー 21:13「全てのモデル100％いきそう？」に
+    # 答えられるのは、こちら（`reach_at_reset()` の註）。
+    #   reach_floor  床に従って回ったら（床は毎周 引き直される ＝ 閉じた輪）
+    #   reach_carry  いまの間隔のまま（＝ 「このまま」）
+    # 遅れの実測は親の側が数えている。**当て先は 2つ**（`scripts.next_round` と
+    # 裸の `next_round`）—— `python scripts/quota.py` で撃つと `sys.path[0]` が
+    # `scripts/` になり、パッケージ側の import が落ちます。片方だけ試すと
+    # **画面には「遅れ 0.0分/周」と出て、測った 2.9分 が消えます**（この回に踏んだ）。
+    lag_min = 0.0
+    for _mod in ("scripts.next_round", "next_round"):
+        try:
+            _m = __import__(_mod, fromlist=["wake_latency_minutes"])
+            lag_min = float(_m.wake_latency_minutes()[0])
+            break
+        except Exception:                                      # noqa: BLE001
+            continue
+    reach_floor = reach_at_reset(used_now, left_hours, per_lap, lag_min=lag_min)
+    reach_carry = (min(100.0, used_now + carry_rate * left_hours)
+                   if left_hours > 0 and carry_rate > 0 else None)
     return {
         "anchor_at": at, "anchor_used": used, "anchor_source": a.get("source", ""),
         "window_start": win_start, "window_reset": win_reset,
@@ -1501,6 +1589,9 @@ def pace(now: datetime | None = None) -> dict | None:
         #     **長い間隔が要ると測っている**」の意味です（＝ いまの鎖は速すぎる）。
         "floor_raw": floor_raw, "floor_clipped": floor_clipped,
         "exhaust_at": exhaust,
+        # **枠が戻る瞬間の到達%**（`reach_at_reset()` の註）。
+        "reach_floor": reach_floor, "reach_carry": reach_carry,
+        "reach_lag_min": lag_min,
         "dead_hours": ((resets - exhaust).total_seconds() / 3600
                        if exhaust and exhaust < resets else 0.0),
         "over": (rate / forward_rate - 1.0) if forward_rate > 0 else 0.0,
@@ -1704,18 +1795,38 @@ def pace_report(now: datetime | None = None) -> None:
                   "歯止めの上限そのものです（閉じた枠に鎖を突っ込まないため）")
     else:
         print("    **誕生を1件も数えられていません。**`quota.jsonl` が薄すぎます")
+    # **枠が戻る瞬間に何%まで行くか**（2026-09-09 21:5x・optimizer・Opus）。
+    # オーナー 21:13「全てのモデル100％いきそう？」に答えるのはこの2行で、
+    # 下の `exhaust_at` の行では答えられません（`reach_at_reset()` の註）。
+    if p.get("reach_floor") is not None and p.get("reach_carry") is not None:
+        print(f"    **リセット（{p['window_reset'].astimezone(JST):%m/%d %H:%M} JST）"
+              f"に何%まで行くか**")
+        print(f"      床に従えば **{p['reach_floor']:.1f}%**"
+              f"（床 {p['floor_min']:.0f}分・遅れ {p['reach_lag_min']:.1f}分/周 を乗せて数えた。"
+              f"床は毎周 引き直されるので**閉じた輪**です）")
+        print(f"      いまの間隔のまま **{p['reach_carry']:.1f}%**"
+              f"（＝ 直近の区間の {p['carry_rate']:.3f} %/時。"
+              f"**残す {100.0 - p['reach_carry']:.0f}% は、リセットで消えます**）")
+        if p["reach_floor"] - p["reach_carry"] > 2.0:
+            print(f"      ＊差の **{p['reach_floor'] - p['reach_carry']:.0f} ポイント**は"
+                  f"**間隔だけ**で決まります。**「いく／いかない」ではなく「床に乗るか」。**")
     if p["exhaust_at"]:
         if p["dead_hours"] > 0:
             print(f"    このままなら 100% は "
                   f"{p['exhaust_at'].astimezone(JST):%m/%d %H:%M} JST"
                   f" → **リセットまで {p['dead_hours']:.0f}時間、鎖が止まります**")
-            print(f"      ＊**「このまま」＝ 直近の速さ {p['carry_rate']:.3f} %/時 のまま**、"
-                  "という意味です。**間隔を変えた直後のこの行は、まだ前の速さを見ています** ——"
-                  "新しい点が積まれるまで動きません。"
-                  "**変えた効きを見るのは、1つ上の『持続できる間隔』のほう。**")
         else:
-            print(f"    このままならリセットまで届きます"
-                  f"（100% 到達は {p['exhaust_at'].astimezone(JST):%m/%d %H:%M} JST）")
+            # **この時刻は来ません** —— 枠がその前に 0% へ戻るからです。
+            # 2026-09-09 21:1x に、親がこの行（旧「リセットまで届きます」）を読んで
+            # 「いきません」と答えました。**結論は正しかったが、行は逆の語で書いてあった。**
+            print(f"    100% には**リセットまでに届きません**"
+                  f"（このままなら 100% は {p['exhaust_at'].astimezone(JST):%m/%d %H:%M} JST ＝ "
+                  f"**枠が戻った後 ＝ その時刻は来ません**）。"
+                  f"**鎖は止まりません**（枠を使い切る前にリセットが来る側）")
+        print(f"      ＊**「このまま」＝ 直近の速さ {p['carry_rate']:.3f} %/時 のまま**、"
+              "という意味です。**間隔を変えた直後のこの行は、まだ前の速さを見ています** ——"
+              "新しい点が積まれるまで動きません。"
+              "**変えた効きを見るのは、上の『床に従えば』と『持続できる間隔』のほう。**")
 
 
 def report(now: datetime | None = None) -> None:

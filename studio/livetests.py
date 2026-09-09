@@ -88,10 +88,36 @@ IMPORTS_STUDIO = re.compile(r"^[ \t]*(?:from|import)[ \t]+studio\b", re.M)
 #: **それを import する検査は、親の手続きの検査です。**
 #: 註が警戒していたのは「**本文に名前が出てくれば live**」に広げる形（31ファイル 当たる）で、
 #: **import に限れば 7ファイル**（この回に数えた。全部 緑・1.53秒）。**本文への言及では引かないこと。**
-PARENT_MODULES = ("next_round", "next_round_owner", "spawn_prompt")
+#: **【2026-09-09 21:5x・optimizer・Opus】`quota` を足しました（3回目の「規則Bは忘れられる」）。**
+#: 註は「親の手続きの本体は 3つ」と書いていましたが、**周の間隔を決めているのは
+#: `scripts/quota.py` の `pace()`／`recommended_floor_minutes()`** で、
+#: `next_round.floor_minutes()` はそれを読むだけです。実測（この回に `is_live()` を撃った）:
+#:
+#:     tests/test_pace_carry_by_laps.py     False   ← 09/06 の「時間ではなく周で運ぶ」直しの見張り
+#:     tests/test_quota_usage_lag.py        False
+#:     tests/test_next_round_gauge_floor.py False
+#:
+#: ＝ **親を 6時間×2回 待たせた欠陥の見張りが、`pytest -m live` から落ちていました。**
+#: `quota` を足すと 3件 が明るくなります（本文への言及では引かない ＝ import だけ、は変えない）。
+PARENT_MODULES = ("next_round", "next_round_owner", "spawn_prompt", "quota")
 IMPORTS_PARENT = re.compile(
     r"^[ \t]*(?:from|import)[ \t]+scripts[ \t.].*?\b(?:%s)\b" % "|".join(PARENT_MODULES),
     re.M)
+
+#: **当て先は 1つ ではありません**（2026-09-09 21:5x・optimizer・Opus）。
+#: 親の手続きを読む検査には、`from scripts import …` 以外に **2つの形**が在り、
+#: どちらも上の規則Cから黙って落ちていました（この回に `is_live()` を撃って数えた）:
+#:
+#:     tests/test_quota_usage_lag.py         `sys.path` に scripts/ を足して **裸の `import quota`**
+#:     tests/test_next_round_gauge_floor.py  `importlib` で **`scripts/next_round.py` をパスから**
+#:
+#: ＝ 09/09 09:5x の `run_marker`（`scripts.run_marker` と裸の `run_marker` が別物）と同じ族で、
+#: **こちらは「検査を集める側」に出ました。** 引くのは、どちらも**その module を名指ししている形**
+#: だけです —— **散文の言及では引きません**（註が警戒している 31ファイルの形には広げない）。
+IMPORTS_PARENT_BARE = re.compile(
+    r"^[ \t]*(?:from|import)[ \t]+(?:%s)\b" % "|".join(PARENT_MODULES), re.M)
+LOADS_PARENT_PATH = re.compile(
+    r"scripts[\"'/ ]+[/]?[\"' ]*(?:%s)\.py" % "|".join(PARENT_MODULES))
 
 #: 規則B —— import でも引けない、親の手続きの検査（本文や `docs/` を**読む**側）。
 #: **名指し。広げないこと**（上の註）。規則C が引けるものは、ここに足さないこと。
@@ -117,7 +143,8 @@ def is_live(path: Path | str) -> bool:
         text = p.read_text(encoding="utf-8")
     except OSError:
         return False
-    return bool(IMPORTS_STUDIO.search(text) or IMPORTS_PARENT.search(text))
+    return bool(IMPORTS_STUDIO.search(text) or IMPORTS_PARENT.search(text)
+                or IMPORTS_PARENT_BARE.search(text) or LOADS_PARENT_PATH.search(text))
 
 
 def live_files() -> list[Path]:
