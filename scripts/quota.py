@@ -1161,6 +1161,17 @@ ROLE_TIER: dict[str, str] = {
     "owner-full": "routine",  # 記録 ＋ 1周（定型側）
     "owner-record": "light",  # 単純な記録だけ → sonnet（Fable の残りに関係なく）
 }
+#: **親が1周に立てるサブの役**（`ROLE_TIER` から引く ＝ 名簿を2か所に持たない）。
+#: `owner-*` は親自身の回なのでサブではない。§5 の覆る条件が「役を1つ足す」と言う日に、
+#: `ROLE_TIER` へ1行 足せば `--pace` の印字も一緒に増えます。
+SUB_TIERS = ("leverage", "other")
+
+
+def sub_roles() -> tuple[str, ...]:
+    """`ROLE_TIER` のうち、サブとして立つ役だけ（`--pace` が役ごとに印字するため）。"""
+    return tuple(r for r, t in ROLE_TIER.items() if t in SUB_TIERS)
+
+
 #: 軽い段に渡す模型。
 LIGHT_MODEL = "sonnet"
 #: 「他モデルの半分」の段に渡す模型（09/07 08:1x）。
@@ -1877,8 +1888,16 @@ def pace_report(now: datetime | None = None) -> None:
         print(f"      **残りは目盛りの時刻からではなく、いまから数えること。**"
               f"目盛りは人手でしか入らないので必ず古くなり、"
               f"**古いまま割ると必ず「速すぎてよい」側に外れます**（2026-08-21 に 9% ずれた）")
-    _m, _why = sub_model(now)
-    print(f"    サブの模型: **{_m}**（{_why}）")
+    # **役ごとに印字する**（2026-09-10 05:2x・optimizer・Opus）。
+    # 09/07 08:1x から、親は1周に **2体** を違う模型で立てます（`ROLE_TIER`:
+    # hourly ＝ Fable・optimizer ＝ Opus）。ここは `sub_model(now)` を**役なし**で
+    # 呼んでいたので、**どの回も「fable」1つ**しか出ず、Opus で走っている optimizer が
+    # 自分の模型を「fable」と読む行になっていました。
+    # `docs/spawn_prompt.md` はサブに「実物は `quota.py --pace`」と言うので、
+    # **サブが自分について読む行**です。§8 の「嘘の印字がサブの本文の土台になる」と同じ族。
+    for _role in sub_roles():
+        _m, _why = sub_model(now, _role)
+        print(f"    サブの模型（役 `{_role}`）: **{_m}**（{_why}）")
     if p.get("rate_cap") is not None:
         mx = p.get("rate_max") or {}
         print(f"    オーナーの上限: **{p['rate_cap']:.3f} %/時**"
