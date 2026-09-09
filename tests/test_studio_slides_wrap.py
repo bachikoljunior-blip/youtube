@@ -58,3 +58,16 @@ def test_字で折るときも句読点で行が_n字を越えない():
         assert all(len(ln) <= n for ln in lines), lines
         assert all(ln[0] not in "、。" for ln in lines), lines
         assert all(ln[0] not in "、。" for ln in slides.wrap(say, n))
+
+
+def test_分数は1語():
+    # 実測 09/09 15:5x（hourly・Fable）: 09/10 の本のコマ4 が「夫の厚生年金の4分の\n3です」と折れた（sheet.png）
+    assert "4分の3です。" in slides._chunks("夫の厚生年金の4分の3です。")
+    for ln in _no_loss("夫が亡くなりました。のこされた妻のくらしをささえるのが遺族厚生年金で、夫の厚生年金の4分の3です。", 16):
+        assert not ln.endswith("分の")
+
+
+def test_制度名の複合語は1語():
+    # janome は 遺族/厚生/年金 と3語に割る → 「遺族厚生\n年金」と折れていた（同じコマ）
+    ch = slides._chunks("ささえるのが遺族厚生年金で、夫の厚生年金の4分の3です。毎年6月の年金額改定通知書を見る")
+    assert "遺族厚生年金で、" in ch and "厚生年金の" in ch and "年金額改定通知書を" in ch
