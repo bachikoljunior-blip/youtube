@@ -494,11 +494,81 @@ def today_slot_empty(now: datetime | None = None) -> bool | None:
 
     **覆る条件**: `PUBLISH_PER_DAY` が 1 に戻っても、この式はそのまま正しい（1 と比べている）。
     """
+    return _studio_today_slot_empty(now)
+
+
+#: きょうの枠を数える台帳。**旧 `data/uploaded.jsonl` ではありません**
+#: （2026-09-09 09:0x・optimizer・Opus が踏んだ。下の註）。
+STUDIO_LEDGER = Path(__file__).resolve().parent.parent / "data" / "studio" / "ledger.jsonl"
+
+
+def _studio_today_slot_empty(now: datetime | None = None) -> bool | None:
+    """`data/studio/ledger.jsonl` から「きょうの枠が空か」を出す。**API 0単位。**
+
+    **なぜ旧 `src/next_slot.today_count()` をやめたか**（2026-09-09 09:0x・実測）:
+    あれは `data/uploaded.jsonl` を読みますが、**その控えは 2026-09-05 15:01 を最後に
+    1行も増えていません** —— 同じ日にオーナーの「今の手法全てまっさらにして」で
+    道具が `studio/` へ組み直され、**新しい道具はこの控えを書かない**からです。
+    ＝ `today_count()` は **毎日 0** を返し、この関数は **4日間ずっと「まだ空です」**と答え、
+    呼び手（`--phase spawn`）は**間隔の下限を毎周 外し続けて**いました。
+
+    **すぐ上の註が 09/05 09:3x に直した「毎周 必ず当たる線」の 3件目**で、
+    向きが違うだけです —— あちらは比べる相手（`cap()`）が毎周 真になる形、
+    こちらは**数える元の控えが死んでいて**分子が毎周 0 になる形。
+    **どちらも「読めなかった」とは言わずに「空です」と答えます。**
+    2件の検査（`tests/test_spawn_gate_overrun.py`）は、**その 4日間ずっと赤**でした。
+
+    **数え方**: `scheduled`（studio が枠へ置いた）と `pending`（`measure` が見た予約）の
+    `publish_at` が **きょう（JST）** の本を数え、そのあと `unscheduled`（public から
+    private へ戻した）が**より後の刻**に在る本を落とす。1本でも残れば「空ではない」。
+
+    **読めなければ `None`**（＝ 呼び手は下限をそのまま効かせる）。**ずれる向きはこちら側**
+    —— 読み違えて「空ではない」に倒れても、待つだけで枠を余計に食いません。
+    逆に「空です」へ倒れると下限が外れるので、**確かめられた本が在るときだけ False** を返します。
+
+    **覆る条件**: 台帳の置き場か `scheduled`/`pending`/`unscheduled` の名前が変わったら、
+    ここも一緒に変えること。`data/uploaded.jsonl` が再び増え出したら（旧道具が戻ったら）、
+    どちらを正本にするかを決め直すこと。
+    """
+    now = now or datetime.now(timezone.utc)
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from src import next_slot                              # noqa: PLC0415
-        return int(next_slot.today_count(now)) < 1
-    except Exception:                                          # noqa: BLE001
+        today = now.astimezone(JST).date()
+        placed: dict[str, tuple[datetime, datetime]] = {}   # id → (publish_at, 置いた刻)
+        dropped: dict[str, datetime] = {}                   # id → 最後に戻した刻
+        with STUDIO_LEDGER.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                ev = r.get("event")
+                if ev in ("scheduled", "pending") and r.get("publish_at"):
+                    # `scheduled` は video_id、`pending` は id が本の ID
+                    vid = r.get("video_id") or r.get("id")
+                    try:
+                        pub = datetime.fromisoformat(r["publish_at"]).astimezone(JST)
+                        at = datetime.fromisoformat(r["at"]).astimezone(JST)
+                    except (ValueError, KeyError):
+                        continue
+                    if vid:
+                        placed[vid] = (pub, at)
+                elif ev == "unscheduled" and r.get("id"):
+                    try:
+                        dropped[r["id"]] = datetime.fromisoformat(r["at"]).astimezone(JST)
+                    except (ValueError, KeyError):
+                        continue
+        for vid, (pub, at) in placed.items():
+            if pub.date() != today:
+                continue
+            gone = dropped.get(vid)
+            if gone is not None and gone >= at:
+                continue          # 置いたあと private へ戻した本は、枠を埋めていない
+            return False          # きょうの本が1本 在る
+        return True
+    except OSError:
         return None
 
 
