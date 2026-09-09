@@ -120,3 +120,47 @@ def test_本物の台帳では_重なりが二重の届きになっていない_
     assert twice == 0, (
         f"同じ狙い先へ 2回 届いた回が {twice} 件 出ました ＝ 親が本当に起こしを"
         " 2本 置いています。`wake_latency_minutes` の覆る条件 (3) を書き直すこと")
+
+
+# --- 2026-09-10 05:3x（optimizer・Opus）: **(2) の分母の門** ---------------------
+#
+# 04:5x が置いた新しい覆る条件 (2)「`wake_placed` が **False の行が 0 になったら**
+# 畳みは要らない」には、**n が書かれていませんでした。**
+# 書いた回には行が 0本、その1周あとには **2本・どちらも True** ＝ 文字どおりには
+# **もう満たされています**。しかし置く側の癖は変わっていません（実測 32.3% が False の側）。
+# ＝ **黙って通る門**（`rounding_evidence` の註が名指しした「通っても何も言えない門」の裏返し）。
+# 下の 4件 は、その門が「数えられる本数」を持つことと、数が台帳へ出ることを見ます。
+
+
+def test_列を持たない古い行は分母に入れない_これが本題():
+    """列を足す前の行を False に数えると、**台帳のほとんどが「置かなかった」に化けます**。"""
+    rows = [{"who": "owner", "wake_placed": True},
+            {"who": "owner", "wake_placed": False},
+            {"who": "owner"},                      # 列を足す前の行
+            {"who": "sub", "wake_placed": True}]   # 親以外
+    assert next_round.wake_placed_counts(rows) == (1, 1)
+
+
+def test_門の本数は_率が変わらなくても通ってしまう確率が_5パーセントを切る所に在る():
+    """実測の率 32.3% で `0.677 ** n < 0.05` を満たす最小の n が `WAKE_PLACED_MIN_N`。
+
+    **陽性対照**: 門を 1つ 下げると 5% を越える（＝ この数は「切りのいい 10」ではない）。
+    """
+    n = next_round.WAKE_PLACED_MIN_N
+    assert 0.677 ** n < 0.05
+    assert 0.677 ** (n - 1) >= 0.05
+
+
+def test_門に届かないうちは_False_が_0_でも引かれたと読まないこと():
+    """いまの台帳（True 2本・False 0本）で (2) を読むと「引かれた」に化ける形。"""
+    rows = [{"who": "owner", "wake_placed": True} for _ in range(2)]
+    yes, no = next_round.wake_placed_counts(rows)
+    assert no == 0                                   # 文字どおりには満たされる
+    assert yes < next_round.WAKE_PLACED_MIN_N        # **が、まだ読んではいけない**
+
+
+def test_decide_が数を台帳へ書き写す_手で数えないため(tmp_path, monkeypatch):
+    """`gap_ratio_n` を書き忘れた 09:5x と同じ穴を、こちらで開けないこと。"""
+    monkeypatch.setattr(next_round, "WAKES", tmp_path / "parent_wakes.jsonl")
+    d = next_round.decide(live=1)
+    assert "wake_placed_true" in d and "wake_placed_false" in d

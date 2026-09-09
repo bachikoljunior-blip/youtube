@@ -525,7 +525,28 @@ def wake_latency_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
     (3) `wake_placed` が **True の行だけ**を数えた中央値が、いまの畳みの中央値と
     **0.5分 以上 割れたら**、畳み（時刻から推す手）のほうを捨てて `wake_placed`（撃ったかどうか
     そのもの）で数えること —— **2つは違う物を見ています**（§5）。
-    **いまは `wake_placed` の行が 0本 なので、まだ比べられません**（この回に足した列）。
+    ~~**いまは `wake_placed` の行が 0本 なので、まだ比べられません**（この回に足した列）。~~
+
+    **【2026-09-10 05:3x・optimizer・Opus】(2) に分母の門を足しました —— 無いと、
+    次の回は「引かれた」と読みます。**
+    04:5x のこの註を書いた回には行が **0本** で、その1周あとには **2本・どちらも True**
+    ＝ **「False の行が 0」は、文字どおりには もう満たされています。**
+    しかし置く側の癖は変わっておらず、**過去の実測では 32.3% が False の側**です
+    （`data/parent_wakes.jsonl` の WAIT 行 31本 を狙い先 ±120秒 で束ねた実測:
+     いちばん早い 21本 が True・残る **10本 が False** ＝ 32.3%）。
+    ＝ **その率のままでも、2本 とも True になる確率は 0.677² ＝ 46%** で、
+    **ほぼ表裏です。**「0本 だから比べられない」は 04:5x のその日の写しで、
+    **条件そのものには n が書かれていませんでした** ——
+    `rounding_evidence` の註が名指しした「**通っても何も言えない門**」と同じ族の、
+    こちらは「**黙って通る門**」です。
+
+    → **(2) は `wake_placed_counts()` が `WAKE_PLACED_MIN_N`（8本）以上を数えた回にだけ読むこと。**
+    n=8 を選んだ理由: 率が 32.3% のままなら 0.677⁸ ＝ **4.4%**（20回に1回）まで落ちるので、
+    そこで False が 0 なら**本当に置き方が変わった**側です。
+    数は `decide()` が `wake_placed_true` / `wake_placed_false` で毎周 台帳へ書き写すので、
+    **次の回は撃つだけで読めます**（手で数えない ——`gap_ratio_n` を書き忘れた 09:5x の形）。
+    **(3) の側も同じ門で読むこと**（中央値には `WAKE_LATENCY_MIN_N`（5本）の**届き**が要るので、
+    True の行が 8本 でも まだ足りない回が在ります ——そのときは「まだ比べられない」と書くこと）。
     """
     got = rows if rows is not None else wake_rows()
     owner = [r for r in got if r.get("who") == "owner"]
@@ -665,6 +686,28 @@ def wake_is_fresh(wake_at: datetime,
             (pending - wake_at).total_seconds()) <= WAKE_SAME_SEC:
         return False, pending
     return True, pending
+
+
+#: **`wake_placed` の行が何本 溜まったら (2) を読んでよいか**（2026-09-10 05:3x・optimizer・Opus）。
+#: 置く側の癖が変わっていなくても False が 0 になる確率が 5% を切る本数。
+#: 実測の率 32.3%（`wake_is_fresh` の註の derivation）で 0.677**8 = 4.4%。
+WAKE_PLACED_MIN_N = 8
+
+
+def wake_placed_counts(rows: list[dict] | None = None) -> tuple[int, int]:
+    """**(`wake_placed` が True の行, False の行)**。註は `wake_is_fresh` の (2)(3)。
+
+    数えるのは **`who` が `owner` で、この列を持つ行だけ**です。
+    列を足す前の行（`.get()` が `None`）を False の側に数えると、
+    **台帳のほとんどが「置かなかった」に化けます** ——`rounding_evidence` が
+    「条件に答えられない行が分母を埋めていた」と書いた当のものなので、
+    ここでは **列の在る行だけ**を分母にします。
+    """
+    got = rows if rows is not None else wake_rows()
+    on = [r for r in got
+          if r.get("who") == "owner" and r.get("wake_placed") is not None]
+    yes = sum(1 for r in on if r.get("wake_placed"))
+    return yes, len(on) - yes
 
 
 def rows() -> list[dict]:
@@ -1154,6 +1197,10 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     # `live > 0` の回だけを数えると、`decide()` の数を持たない古い行まで分母に入り、
     # **門は開くのに答えが無い**という形になります（`rounding_evidence` の註）。
     base["rounding_live"], base["rounding_gos"] = rounding_evidence()
+    # **置いたのか、起こされただけなのか**（2026-09-10 05:3x・`wake_is_fresh` の (2)(3)）。
+    # 門は `WAKE_PLACED_MIN_N`。**この 2つ が無いと、次の回は「False が 0」を
+    # 手で数えて「引かれた」と読みます**（実測: 列を足した1周あとに 2本 とも True）。
+    base["wake_placed_true"], base["wake_placed_false"] = wake_placed_counts()
     group = current_round(span_min=round_span(floor))
 
     # **0体 は「間隔を見ない」ではなく「起こしを置いて待つ」**（2026-09-03・上の節）。
