@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -407,6 +408,73 @@ def heartbeat_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
     # 歯止め。台帳が壊れた回に、心拍を 0 や 1日 と読ませない。
     got_med = min(180.0, max(10.0, got_med))
     return got_med, f"`data/parent_wakes.jsonl` の実測（間隔 {len(gaps)}本 の中央値）"
+
+#: **置いた起こしが届くまでの遅れ（分）**を数え直すのに要る、最低の本数。
+WAKE_LATENCY_MIN_N = 5
+
+#: 遅れの歯止め（分）。台帳が壊れた回に、起こしを何十分も手前へ置かせない。
+WAKE_LATENCY_CAP_MIN = 8.0
+
+#: 数え直せない回に使う写し（分）。**0 にしないこと** —— 0 は「遅れは無い」という
+#: 主張で、下の実測はそれを否定しています。
+WAKE_LATENCY_FALLBACK_MIN = 1.0
+
+
+def wake_latency_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
+    """**親が置いた起こしが、頼んだ時刻からどれだけ遅れて届くか（分）と、その出どころ。**
+
+    **なぜ要るのか**（2026-09-09 18:2x・optimizer・Opus が実測して足した。§5・§7）:
+
+    `decide()` の idle の枝は、起こしを「間隔が明ける瞬間」へ置き、
+    上の `heartbeat_minutes()` の註は **「0体 の回は丸めません。親は `send_later` で
+    分の粒度の起こしを置けるので、心拍の刻みに縛られていません」** と書いています。
+    **その前提だけが、実測で外れました** —— 頼んだ時刻と、次に親が起きた時刻の差
+    （`data/parent_wakes.jsonl` の `at + wake_min` と、その後の最初の `at`）は
+
+        1.0 1.3 1.3 1.5 2.9 3.8 4.0 4.3 4.6 4.8 4.9 5.0 5.4 分（n=13・中央値 **3.96分**）
+
+    ＝ **idle の枝も量子化されています。刻みは心拍ではなく、この遅れです。**
+    そしてこの遅れは**片側にしか出ません**（最小 1.0分・負は 1本も無い）。
+    実測の効き目: 床 53分 に対し GO は **毎回** 超過し（直近19回の中央値 **+3.1分**・最小 +1.6）、
+    周から周は **56〜58分**。**＝ 1周あたり 7% を、誰も見ていない所で落としていました。**
+    `pace()` は床そのものを決める側なので、床の上に乗るこの遅れは `pace()` から見えません
+    （床が下がるたびに、同じ遅れがそのまま残る）。
+
+    **中央値で取る**のは、`heartbeat_minutes()` と同じ理由（穴が1つ入るだけで平均は倍になる）。
+    **最小で取らない**のは、最小（1.0分）を引いても取り戻せるのが 1分 だけだからです。
+    中央値を引けば、届く時刻の半分は床の手前に落ちますが、そちらは `decide()` の
+    「どちらが `floor` に近いか」（下）が拾います。
+
+    **覆る条件**: 遅れの中央値が 1分 を切ったら（＝ 起こしが頼んだとおり届くようになったら）、
+    この補正ごと外してよい —— 台帳から数え直す形なので、そのときは自分で 0 に近づきます。
+    逆に、周から周の中央値（`gap_median_min`）が `floor` を**下回る**回が続いたら、
+    引きすぎ ＝ 中央値ではなく 25% 点へ落とすこと。
+    """
+    got = rows if rows is not None else wake_rows()
+    owner = [r for r in got if r.get("who") == "owner"]
+    at = [(t, r) for r in owner if (t := _wake_at(r)) is not None]
+    at.sort(key=lambda x: x[0])
+    lags: list[float] = []
+    for i, (t, r) in enumerate(at):
+        try:
+            asked = int(r.get("wake_min") or 0)
+        except (TypeError, ValueError):
+            continue
+        if asked <= 0:
+            continue
+        want = t + timedelta(minutes=asked)
+        for later, _ in at[i + 1:]:
+            if later >= want - timedelta(seconds=5):
+                lags.append((later - want).total_seconds() / 60.0)
+                break
+    # 起こしが届かず、心拍が拾った回（遅れが刻みの大きさに化ける）は分母から外す。
+    lags = [g for g in lags if 0.0 <= g <= WAKE_LATENCY_CAP_MIN * 2]
+    if len(lags) < WAKE_LATENCY_MIN_N:
+        return WAKE_LATENCY_FALLBACK_MIN, (
+            f"写し（届いた起こし {len(lags)}本 < {WAKE_LATENCY_MIN_N}本）")
+    got_med = min(WAKE_LATENCY_CAP_MIN, max(0.0, median(lags)))
+    return got_med, f"`data/parent_wakes.jsonl` の実測（届いた起こし {len(lags)}本 の中央値）"
+
 
 #: **親が置いた起こし**の台帳（`decide()` が WAIT を印字したときに書く）。
 #: 同じ周のあいだに親が何度 起きても（サブの完了通知は何度も来る）、
@@ -969,6 +1037,11 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     beat, beat_src = heartbeat_minutes()
     base["heartbeat_min"] = beat
     base["heartbeat_source"] = beat_src
+    # **0体 の枝の刻みは、心拍ではなく「置いた起こしが届くまでの遅れ」です**
+    # （2026-09-09 18:2x・optimizer・Opus。実測は `wake_latency_minutes()` の註）。
+    lat, lat_src = wake_latency_minutes()
+    base["wake_latency_min"] = round(lat, 2)
+    base["wake_latency_source"] = lat_src
     # **0体 の回は丸めません。** そのときは親が `send_later` で**分の粒度**の起こしを
     # 置けるので（下）、心拍の刻みに縛られていません ＝ 丸める理由がない。
     #
@@ -978,6 +1051,16 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     if not idle:
         target = max(floor - beat / 2.0, beat - HEARTBEAT_SLACK_MIN)
         target = min(target, floor)
+    else:
+        # **0体 の枝にも、同じ「どちらが floor に近いか」を当てます。**
+        # 上の 19:1x の註は「0体 の回は丸めません。`send_later` は分の粒度だから」と
+        # 書いていますが、**分の粒度で頼めることと、分の粒度で届くことは別**でした
+        # （実測 中央値 3.96分 遅れ・負は 1本も無い。`wake_latency_minutes()` の註）。
+        #     いま出す        → 間隔は passed（floor に足りない ぶんだけ短い）
+        #     次の届きまで待つ → 間隔は passed + 遅れ（floor を越えた ぶんだけ長い）
+        # なので境目は `floor - 遅れ/2`。**上振れは pace() が次の周で引き戻します**
+        # （心拍の側と同じ形 —— 引き戻しの利かない片側の偏りだけを外す）。
+        target = min(floor, max(floor - lat / 2.0, 0.0))
     if passed >= target:
         early = floor - passed
         return {**base, "go": True, "roles": list(ROLES), "passed_min": passed,
@@ -995,8 +1078,14 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     if idle:
         # **起こしの時刻**（間隔が明ける瞬間 ＋ 1分。起きたとき `passed >= floor` に
         #     なっているように。`send_later` は分の粒度）。
-        out["wake_at"] = started + timedelta(minutes=floor + 1.0)
-        out["wake_min"] = max(1, int(wait) + 1)
+        # **遅れのぶん、手前へ置きます**（2026-09-09 18:2x）。届くのは
+        # 「頼んだ時刻 ＋ 遅れ」なので、`target` に届かせるには `target - 遅れ` に頼む。
+        # **`wake_at` は、実際に頼む分（`wake_min`）から作ります** —— 前の形は
+        # `floor + 1.0` を別に組み立てており、送った起こしと台帳が最大 1分 ずれていました
+        # （`send_later` は分の粒度なので、ずれる側は必ず「遅い側」）。
+        want = max(1.0, wait - lat)
+        out["wake_min"] = max(1, math.ceil(want))
+        out["wake_at"] = now + timedelta(minutes=out["wake_min"])
         out["why"] = (f"**0体・間隔の途中**（前の周の開始から {passed:.0f}分・間隔 {floor:.0f}分）。"
                       f"**起こしを置いて待つ** —— 立てると上限 "
                       f"{OWNER_CAP_WORDS} を越え、枠を使い切った先で 31時間 止まる"

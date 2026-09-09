@@ -40,9 +40,12 @@ def rounds(tmp_path, monkeypatch):
     return p
 
 
-def _decide(monkeypatch, *, floor, passed, live=1, beat=BEAT):
+def _decide(monkeypatch, *, floor, passed, live=1, beat=BEAT, lat=0.0):
     monkeypatch.setattr(next_round, "floor_minutes", lambda: (floor, "検査"))
     monkeypatch.setattr(next_round, "heartbeat_minutes", lambda *a, **k: (beat, "検査"))
+    # **既定は遅れ 0**（この束は心拍の丸めだけを見る）。0体 の枝の遅れは
+    # `tests/test_parent_wake_latency.py` が見ます。
+    monkeypatch.setattr(next_round, "wake_latency_minutes", lambda *a, **k: (lat, "検査"))
     return next_round.decide(now=T0 + timedelta(minutes=passed), live=live)
 
 
@@ -127,12 +130,25 @@ def test_求めが心拍より短い回は今までどおり(rounds, monkeypatch
     assert _decide(monkeypatch, floor=48.0, passed=47.0)["go"] is False
 
 
-def test_0体の回は丸めない(rounds, monkeypatch):
-    """**0体 なら親は `send_later` で分の粒度の起こしを置ける** ＝ 刻みに縛られていない。
-    丸める理由が無く、丸めると起こしの時刻と食い違う。"""
+def test_0体の回は心拍では丸めない(rounds, monkeypatch):
+    """**0体 の枝は心拍の刻みに縛られていない**（`send_later` は分の粒度で頼める）ので、
+    心拍 60分 で 59.8分 でも、求め 77分 なら GO にならない。
+
+    **2026-09-09 18:2x に、この検査の後半を書き換えました**（optimizer・Opus）——
+    前の形は `wake_at == floor + 1.0` を見ており、**「分の粒度で頼める ＝ 分の粒度で届く」**
+    を前提にしていました。**届きは実測で中央値 3.96分 遅れます**（負は 1本も無い）ので、
+    0体 の枝も量子化されています。刻みが心拍ではない、という上の主張だけが残ります。
+    **遅れそのものの検査は `tests/test_parent_wake_latency.py`。**
+    """
     d = _decide(monkeypatch, floor=77.0, passed=59.8, live=0)
     assert d["go"] is False
-    assert d["wake_at"] == T0 + timedelta(minutes=78.0)
+    # 遅れ 0 の回に頼む先は `floor` そのもの。`send_later` は分の粒度なので、
+    # **`floor` 以後の最初の分ちょうど**（前の形は `floor + 1.0` を別に組み立てていた）。
+    want = T0 + timedelta(minutes=77.0)
+    assert want <= d["wake_at"] < want + timedelta(minutes=1)
+    # 台帳の `wake_at` は、実際に送る `wake_min` から作ること（送った物とずれない）。
+    now = T0 + timedelta(minutes=59.8)
+    assert d["wake_at"] == now + timedelta(minutes=d["wake_min"])
 
 
 def test_理由に数が出る(rounds, monkeypatch):
