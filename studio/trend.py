@@ -271,7 +271,34 @@ def flats(rows: list[dict]) -> dict:
         lQHX9LJ80Sg  齢 37.9→40.2h（2.3時間・512回）        → **伸びた**
         ＝ **戻った 5件 / 戻らないまま 6時間 以上 見た 0件**
 
-    **「戻らないまま」の門は `FLAT_STOP_H`（24時間）です。** ここは一度 書き損じて、撃って直しました:
+    **【2026-09-10 09:2x に直した（optimizer・Opus）—— 下の 08:4x の形は、`stayed` を 1件も数えられませんでした】**
+    門が **平らの「終わり」** に置かれていました（`ages[j] < 48.0`）。ところが
+    **伸びが戻らない平らは、定義から並びの最後の点まで続きます**（途中に高い点が在れば包絡が上がり、
+    それは「戻った」側）。＝ **`ages[j]` は必ず「いまの齢」**なので、落ち着いた本（齢 48h 超）の
+    平らは **1件も通りません**。台帳の実測（この回に列挙した・`flats(rows)["runs"]`）:
+
+        EkNqtkK49Bw  齢 34.6→94.2h（**59.6時間** 平ら・140回）→ 戻らない  … `ages[j]`=94.2 で**捨てられていた**
+        nQbVxuWpWw8  齢  8.6→70.2h（**61.6時間** 平ら・ 66回）→ 戻らない  … `ages[j]`=70.2 で**捨てられていた**
+
+    ＝ **いちばん強い 2件**（61.6時間 平らのまま伸びなかった本）が、両方 落ちていました。
+    通れるのは「齢 24〜48h のあいだに居る本」だけで、**1本/日 では その窓に居る本は常に 1本**
+    ＝ **覆る条件の「3件」は、構造として来ませんでした**（06:3x・08:4x の族の 3度目）。
+    **検査が拾えなかった理由**: 08:4x の検査データには「48h の手前で始まり 48h を越えて続く平ら」が
+    1つも無く（`test_48hを越えた平らは数えない` は **始まりも** 50h）、**実物の形だけが抜けていた**。
+
+    **直し**: 門は**平らの始まり**（`ages[i] < 48.0`）に置く。「戻らないまま」は**長さ**で決める。
+    **その長さの門は定数ではなく、実測でいちばん長い「戻った平ら」**（いま `EkNqtkK49Bw` の **20.9時間**）
+    ——`FLAT_STOP_H`（24時間）はその床です。覆る条件 (2) を、手ではなく道具が引きます。
+    **直した後の数**: 戻った **5件** / 戻らないまま **2件** / まだ見ている途中 **1件**。
+
+    **決めに使う数は件数ではなく、境目です。** 落ち着いた本は必ず終わりの平らを 1つ 出すので、
+    件数は「落ち着いた本の数」とほぼ同じに増えます（3件 は 3本目が落ち着けば来る ＝ 安い）。
+    **効くのはこちら**: **戻った平らのいちばん長いもの 20.9時間** と
+    **戻らなかった平らのいちばん短いもの 59.6時間** のあいだが、**まだ測れていない**。
+    ＝ **20.9時間 より短い平らを「止まった」と読まないこと**（5/5 が戻っている）。
+    その 2つ を `trend` が毎周 印字します（`longest_resumed_h` / `shortest_stayed_h`）。
+
+    **（08:4x の記録）「戻らないまま」の門は `FLAT_STOP_H`（24時間）です。** ここは一度 書き損じて、撃って直しました:
 
       **最初に書いた形**「区間が終わってから 6時間 以上 見て、伸びが戻らなかったら数える」は、
       **一度も数えられません** —— 伸びが戻らない平らは**並びの最後まで続く**ので、
@@ -283,16 +310,18 @@ def flats(rows: list[dict]) -> dict:
       この本は **20.9時間 平らだったあとに伸びました**（上の実測の1件目 ＝ いちばん強い証拠）。
       だから門は**戻った中でいちばん長い平ら（20.9時間）より上**に置く。24時間 はその margin つき。
 
-    **覆る条件**: (1)「戻らないまま」が **3件** 出たら、平らは本当に止まり ＝ 冒頭の註と §7 の
-    「齢の浅い1点で本を比べないこと」を、そのときに書き直すこと（いまは 0件 なので引かれません）。
-    (2) **24時間 より長い平らのあとに伸びた本が 1本 でも出たら、`FLAT_STOP_H` をその長さの上へ**
-    （いまの門は n=5 の中のいちばん長い 20.9時間 からしか決まっていません）。
+    **覆る条件**（2026-09-10 09:2x に、件数から境目へ移した）:
+    (1) **`longest_resumed_h`（いま 20.9時間）が上がったら**、そのぶん「止まったと読んでよい長さ」も上がる
+    ——道具が自分で門を上げるので、書き直すのは §7 の本文だけ。
+    (2) **`shortest_stayed_h`（いま 59.6時間）が下がったら**、境目は狭まる。
+    **2つ が出会ったら（差が `FLAT_MIN_H` 2時間 を切ったら）、そこが「平らは止まり」の長さ** ＝ そのときに
+    冒頭の註と §7 の「齢の浅い1点で本を比べないこと」を書き直すこと。いまの差は **38.7時間**。
+    (3) 件数（`stayed`）は**落ち着いた本の数とほぼ同じに増える**ので、**3件 を判定に使わないこと**
+    （08:4x の「3件」は、そう読むと安すぎ、`ages[j]` の門を付けると来なさすぎでした）。
 
     """
     mine = ours(rows)
-    back = 0
-    stayed: list[dict] = []
-    open_runs = 0
+    runs: list[dict] = []
     for vid, pts in series(rows).items():
         if vid not in mine or len(pts) < 3:
             continue
@@ -303,15 +332,24 @@ def flats(rows: list[dict]) -> dict:
             j = i
             while j + 1 < len(env) and env[j + 1] == env[i]:
                 j += 1
-            if j > i and ages[j] - ages[i] >= FLAT_MIN_H and ages[j] < 48.0:
-                if env[-1] > env[i]:
-                    back += 1
-                elif ages[j] - ages[i] >= FLAT_STOP_H:
-                    stayed.append({"id": vid, "from_h": ages[i], "to_h": ages[j], "views": env[i]})
-                else:
-                    open_runs += 1
+            # **門は平らの「始まり」に置く**（終わりではない ——下の 09:2x の実測）。
+            if j > i and ages[j] - ages[i] >= FLAT_MIN_H and ages[i] < 48.0:
+                runs.append({"id": vid, "from_h": ages[i], "to_h": ages[j],
+                             "len_h": ages[j] - ages[i], "views": env[i],
+                             "resumed": env[-1] > env[i]})
             i = max(j, i + 1)
-    return {"resumed": back, "stayed": stayed, "open": open_runs}
+
+    resumed = [r for r in runs if r["resumed"]]
+    # **門は定数ではなく、実測でいちばん長い「戻った平ら」**（`FLAT_STOP_H` はその床）。
+    # 覆る条件 (2)「より長い平らのあとに伸びた本が出たら門を上げる」を、手ではなく道具が引く。
+    longest_back = max((r["len_h"] for r in resumed), default=0.0)
+    thresh = max(FLAT_STOP_H, longest_back)
+    stayed = [r for r in runs if not r["resumed"] and r["len_h"] > thresh]
+    open_runs = [r for r in runs if not r["resumed"] and r["len_h"] <= thresh]
+    shortest_stay = min((r["len_h"] for r in stayed), default=0.0)
+    return {"resumed": len(resumed), "stayed": stayed, "open": len(open_runs),
+            "thresh_h": thresh, "longest_resumed_h": longest_back,
+            "shortest_stayed_h": shortest_stay, "runs": runs}
 
 
 HOLD_AGES = (6.0, 12.0, 24.0)
@@ -1061,14 +1099,21 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         "1点は真の値を **最大 28%（-249回）** 下に外します。**上げた点には `(生 N)` が付きます。**"
         "生の減りは下の行（`drops`）で数え続けています。")
     fl = flats(rows)
-    where = "・".join(f"{r['id']} 齢{r['from_h']:.1f}→{r['to_h']:.1f}h" for r in fl["stayed"])
+    where = "・".join(
+        f"{r['id']} 齢{r['from_h']:.1f}→{r['to_h']:.1f}h（{r['len_h']:.1f}時間）" for r in fl["stayed"])
+    # **門の数は `flats` から引くこと**（`ENVELOPE_LAG_H` は別の道具の定数で、
+    # 2026-09-10 09:2x まで**ここだけ 6時間 と印字**していた。実際の門は 24時間 だった）。
     out.append(
-        f"**平らは「止まった」ではない**（齢 48h 前の {FLAT_MIN_H:.0f}時間 以上 の平らな区間・`trend.flats`）: "
-        f"**伸びが戻った {fl['resumed']}件 / 戻らないまま {ENVELOPE_LAG_H:.0f}時間 以上 見た {len(fl['stayed'])}件**"
+        f"**平らは「止まった」ではない**（**始まり**が齢 48h 前の {FLAT_MIN_H:.0f}時間 以上 の平らな区間・`trend.flats`）: "
+        f"**伸びが戻った {fl['resumed']}件 / 戻らないまま {fl['thresh_h']:.1f}時間 より長く見た {len(fl['stayed'])}件**"
         + (f"（{where}）" if where else "")
-        + f"・まだ見ている途中の平ら {fl['open']}件。"
-        "**「戻らないまま」が 3件 出たら、平らは本当に止まり**（`trend.flats` の覆る条件）。"
-        "齢の浅い1点で本を比べないこと。")
+        + f"・まだ言えない平ら {fl['open']}件。"
+        + (f"**決めに使うのは件数ではなく境目**: 戻った平らのいちばん長いもの **{fl['longest_resumed_h']:.1f}時間**"
+           + (f" 〜 戻らなかった平らのいちばん短いもの **{fl['shortest_stayed_h']:.1f}時間** の"
+              f"あいだは、まだ測れていません（差 {fl['shortest_stayed_h'] - fl['longest_resumed_h']:.1f}時間）。"
+              if fl["stayed"] else "より短い平らを「止まった」と読まないこと。")
+           if fl["resumed"] else "")
+        + "齢の浅い1点で本を比べないこと。")
     if DEAD_START <= now.hour < DEAD_END:
         # **この一文は、数に追随させること**（2026-09-09 02:5x に直した）。
         # ここは長らく「**この台帳で再生が伸びたことのない帯です**」と、括弧の中の数と別に
