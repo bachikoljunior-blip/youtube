@@ -149,6 +149,108 @@ def envelope(pts: list[dict]) -> list[int]:
         out.append(hi)
     return out
 
+HOLD_AGES = (6.0, 12.0, 24.0)
+#: §1 の表が「公開 6時間で最終の 70〜90%」と書いている帯。**この帯に入るかを、毎回 数で見る。**
+HOLD_BAND = (70.0, 90.0)
+
+
+def hold(rows: list[dict], ages: tuple[float, ...] = HOLD_AGES) -> list[dict]:
+    """こちらの作りの本の「齢 Nh までに、**いまの再生の何%**が付いていたか」（包絡・API 0単位）。
+
+    **なぜ（2026-09-09 23:2x JST・optimizer・Opus が足した）**: §7 の「90秒の上限」の行は
+    **「機械で測れる代わりの数は `measured` の 6時間再生／48時間再生の比」**と 09/05 から書いていますが、
+    **その比を出す道具が 1つも無く**、4日 のあいだ 1度も数えられていませんでした
+    （この回に手で数えて初めて出た ＝ 手で数えた数は次の回に残らない。§7 が 7周 踏んだ形）。
+
+    **この回に出た数**（包絡・台帳ぜんぶ）:
+
+        1本目 EkNqtkK49Bw  6h(齢4.3) **61%** / 12h 91% / 24h 91%   最終 140回（85.2h・確定）
+        2本目 nQbVxuWpWw8  6h(齢4.4) **41%** / 12h 100%            最終  68回（61.2h・確定）
+        3本目 lQHX9LJ80Sg  6h(齢6.0) **40%** / 12h 64% / 24h 79%   いま 510回（37.2h・**まだ伸びている**）
+        4本目 gv1u7n_pCAQ  6h(齢5.3) **50%** / 12h 100%            いま 923回（13.2h・**まだ伸びている**）
+
+    ＝ **§1 の表の「公開 6時間で最終の 70〜90%」に入った本は 0/4**。
+    しかも**まだ伸びている 2本 の割合は上限です**（分母がこれから増えるので、真の割合はもっと低い）。
+    §1 のその行は 08/15〜08/24 の 873本 の話で、**いまの絞られたチャンネルでは引けません。**
+
+    **効く先**（ここが本体・数だけ置きます。判定は `hourly`・§5）:
+    **齢 6h・12h の点で本の当たり外れを読まないこと。** 大きい本ほど尾が長く出ています ——
+    68回 の本は 10.6h で終わり、510回 の本は 23.7h で 79%・**37.2h でもまだ +9回/1.4h**。
+    §7 が「48h の点で比べる」と書いている側が、この数で支えられます（**6h ではなく 48h**）。
+
+    **複製の遅れの向き**（`envelope` の註）: 早い齢の点は単発の読みで、真の値を**下に**外します
+    （最大 28%）。＝ ここの割合は **その 28% ぶんまで上振れしうる** ——
+    それでも 6h の 61/41/40/50% は、÷0.72 しても **85/57/56/69%** で、帯（70〜90%）に届くのは
+    **1本目の 4.3h の点だけ**です（4.3h は 6h の点ではない）。**向きは変わりません。**
+
+    **覆る条件**: (1) `settle_stats`（19:1x）の後に公開した本 **3本** の 6h の割合が
+    70% を越えたら、上の数は「複製の遅れを見ていた」側 ＝ この註ごと数え直すこと
+    （**その 3本 は 6h の点も 3回 読みで取られています** ＝ 遅れの上振れが無い）。
+    (2) 48h を越えて確定した本が **5本** そろったら、分母を「いまの再生」から「48h の点」へ移すこと
+    （§7 の行の文言どおりの比になる）。いまは確定 2本 だけなので、確定と伸び中を混ぜないために
+    分母を「いまの再生」にして、伸び中の本には印を付けています。
+    """
+    mine = ours(rows)
+    out: list[dict] = []
+    for vid, pts in sorted(series(rows).items(), key=lambda kv: published_at(kv[1])):
+        if vid not in mine or not pts:
+            continue
+        env = envelope(pts)
+        last_age = float(pts[-1]["age_h"])
+        last = env[-1]
+        if not last:
+            continue
+        row: dict = {
+            "id": vid,
+            "day": published_at(pts).strftime("%m/%d"),
+            "age_h": last_age,
+            "views": last,
+            # **まだ伸びている ＝ 分母がこれから増える**（割合は上限）。直近2点で見る。
+            "growing": len(env) > 1 and (env[-1] > env[-2] or last_age < 48.0),
+            "at": {},
+        }
+        for h in ages:
+            got = [(float(p["age_h"]), v) for p, v in zip(pts, env) if float(p["age_h"]) <= h]
+            if not got or h > last_age:
+                row["at"][h] = None
+                continue
+            age, val = got[-1]
+            row["at"][h] = {"age_h": age, "views": val, "pct": 100.0 * val / last}
+        out.append(row)
+    return out
+
+
+def hold_lines(rows: list[dict]) -> list[str]:
+    """`hold()` を印字する。**帯に入った本の数は、写しではなく数から作る**（`hold` の註）。"""
+    got = hold(rows)
+    if not got:
+        return []
+    out = [f"齢の割合（**いまの再生を 100% としたときに、齢 Nh までに付いていた割合**。"
+           f"包絡・API 0単位・`trend.hold` の註）:"]
+    lo, hi = HOLD_BAND
+    inband = 0
+    have = 0
+    for r in got:
+        cells = []
+        for h in HOLD_AGES:
+            c = r["at"].get(h)
+            cells.append("%2dh %s" % (int(h), ("%3.0f%%" % c["pct"]) if c else "  -"))
+        six = r["at"].get(HOLD_AGES[0])
+        if six:
+            have += 1
+            if lo <= six["pct"] <= hi:
+                inband += 1
+        out.append("  %s %-12s %s   いま %d回（%.1fh%s）%s" % (
+            r["day"], r["id"], " / ".join(cells), r["views"], r["age_h"],
+            "・**まだ伸びている ＝ この割合は上限**" if r["growing"] else "・確定",
+            ("  ＊%dh の点は齢 %.1fh" % (int(HOLD_AGES[0]), six["age_h"])) if six and abs(six["age_h"] - HOLD_AGES[0]) > 0.5 else ""))
+    out.append(
+        f"§1 の表の「公開 6時間で最終の {lo:.0f}〜{hi:.0f}%」に入った本は **{inband}/{have}** です"
+        f"（§7 の「90秒の上限」の行が言う 6時間/48時間 の比。**齢 6h・12h の点で本の当たり外れを読まないこと** ——"
+        f"大きい本ほど尾が長く出ています。`trend.hold` の註）。")
+    return out
+
+
 def _growth(pts: list[dict], vals: list[int] | None = None) -> str:
     """直近の2点の伸び。平らな区間の中で「止まった」と読まないための目印。"""
     if len(pts) < 2:
@@ -557,6 +659,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
             f"窓（`--days {within_h / 24:g}`）より前の日は、この並びに**出ていません**: "
             f"{head}{more}。**「その日は無かった」ではありません** —— 引くなら `--days` を伸ばすこと。")
     # **帯の数は、帯の中に居る回だけでなく毎回 印字する** —— §7 は毎周この数を書き写しており、
+    out.extend(hold_lines(rows))
     # 手で数え直すたびに数え方が揺れていた（2026-09-09 00:2x）。
     nm, nt, om, ot = dead_window(rows)
     out.append(
