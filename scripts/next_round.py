@@ -667,6 +667,35 @@ def gap_ratios(limit: int = 10, got: list[dict] | None = None) -> list[float]:
     直し方は 1つで、**区間ごとに、その区間の floor で割ってから中央値をとる**こと
     （比の中央値。中央値の比ではない）。floor を持たない古い区間は**捨てずに飛ばします**
     （`data/parent_wakes.jsonl` は 09/08 13:00 UTC からしか数を持たない）。
+
+    **【2026-09-09 22:4x・optimizer・Opus】その 09:5x の直しは、刻ずれを半分しか閉じていませんでした。**
+    分母を「いまの floor」から「**その区間を閉じた GO の floor**」へ移しましたが、
+    **`pace()` が目盛りを読み直すのは、その GO の中**です。＝ 床が動いた回では、
+    **分子は古い床の下で待った区間・分母はその場で生まれた新しい床**になります。
+    上の docstring が名指ししている「動いた直後、分子は古いまま・分母だけが新しい」**そのもの**が、
+    直したはずの側に残っていました（**同じ穴の 2つ目の口**）。
+
+    実測（この回・09/09 の周）:
+
+        11:49 GO  floor **52.89**            ← この床の下で待った
+        12:06     `aim_min` **53.44**・起こしを 12:40 に置いた   ← 親が実際に狙った先
+        12:45:55 GO  `pace()` が目盛りを読み直して floor **41.21**（-12分）・実際の区間 **56.47分**
+          09:5x の形:  56.47 ÷ **41.21** ＝ **1.374**   ← 37% 超過。親は 3分 しか外していない
+          この回の形:  56.47 ÷ **53.44** ＝ **1.06**    ← 狙った先に対して +3.0分
+
+    **§7 の覆る条件 (1) は「中央値が 1.25倍 を越えたら上限は丸めではない」**なので、
+    床が動くたびに 1.37 が積まれる形は、**在りもしない上限を探しにいかせます**
+    —— 09:5x が「条件をそのまま読んだ次の回は」と書いた、その文のとおり。
+
+    → **分母は「親が実際に狙った先」＝ その区間の中に在る最後の `aim_min`**
+    （20:5x に `decide()` が書き始めた欄）。無い区間（`aim_min` より前の台帳）は
+    **これまでどおり GO の `floor_min`** で割る ＝ **過去の数は 1つも動きません**
+    （実測: 直近20区間のうち動いたのは床が動いた 2区間だけ・1.374→1.060・0.999→0.996）。
+    **なぜ `aim` か**: (d) が訊いているのは「起こしの機械が狙いに当たっているか」で、
+    狙いは `aim_min` に書いてある。**床は毎周 引き直されるので、問いの側の定数ではありません。**
+    **覆る条件**: `decide()` が `aim_min` を書かなくなったら（欄名が変わったら）、
+    この分母は黙って GO の床へ落ちて 1.37 が戻ります —— 検査
+    `tests/test_next_round_gap_ratio_aim.py` の 1件目がその日に落ちて教えます。
     """
     if got is None:
         got = wake_rows()
@@ -680,13 +709,24 @@ def gap_ratios(limit: int = 10, got: list[dict] | None = None) -> list[float]:
             marks.append((at, float(floor)))
     if not marks:
         return []
+    aims: list[tuple[datetime, float]] = []
+    for row in got:
+        at = _at(row)
+        if at is None or row.get("who") != "owner":
+            continue
+        aim = row.get("aim_min")
+        if aim:
+            aims.append((at, float(aim)))
     starts = round_starts()
     out: list[float] = []
     for a, b in zip(starts, starts[1:]):
         near = min(marks, key=lambda m: abs((m[0] - b).total_seconds()))
         if abs((near[0] - b).total_seconds()) / 60.0 > _GO_MATCH_MIN:
             continue                       # その周の GO の行が無い（台帳より前の周）
-        out.append(((b - a).total_seconds() / 60.0) / near[1])
+        # **分母は、その区間で親が実際に狙った先**（`aim_min`）。無ければ GO の `floor_min`。
+        # 註は `gap_ratios` の docstring の「4つ目の刻ずれ」。
+        want = [v for (t, v) in aims if a < t < near[0]]
+        out.append(((b - a).total_seconds() / 60.0) / (want[-1] if want else near[1]))
     return out[-limit:] if limit else out
 
 
