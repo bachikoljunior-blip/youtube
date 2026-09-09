@@ -1734,3 +1734,9 @@
 {"views": 5, "likes": 0, "comments": 1, "age_h": 135.7, "title": "【知らないと損】2026年4月 働く年金受給者は年54万円増える", "at": "2026-09-10T00:43:20+09:00", "id": "1huadpEk6HY", "event": "measured"}
 {"views": 59, "likes": 0, "comments": 1, "age_h": 159.7, "title": "小規模企業共済を11か月でやめるといくらか #Shorts", "at": "2026-09-10T00:43:20+09:00", "id": "9zkfjEH48PY", "event": "measured"}
 {"publish_at": "2026-09-10T10:00:00+09:00", "title": "夫が亡くなると妻の年金はいくら減るか 遺族厚生年金は4分の3 #Shorts", "at": "2026-09-10T00:43:20+09:00", "id": "2YZ_4FXC-XI", "event": "pending"}
+{"takeaway": "65歳以降も働き続けると、働いた期間に応じて年金額が毎年増え、その増加分は生涯ずっと受け取れる。", "unclear": ["厚生年金の保険料とは何か、どのように計算されるのか", "月収30万円でなぜ年2万円の増加という具体的な計算ロジック", "在職定時改定という専門用語が何を意味するのか", "1月～8月分をまとめて10月から適用する理由や仕組み", "ねんきん定期便と年金額改定通知書がどう違うのか", "12月にふりこまれるのが何月分の年金なのか"], "at": "2026-09-10T00:52:39+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "cold_read"}
+{"understand": 2, "n_real": 8, "done": false, "at": "2026-09-10T00:54:01+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "critique"}
+{"understand": 2, "n_real": 5, "done": false, "at": "2026-09-10T00:56:24+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "critique"}
+{"understand": 3, "n_real": 4, "done": false, "at": "2026-09-10T00:58:51+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "critique"}
+{"takeaway": "65歳以降も働き続けると、厚生年金の保険料納付により毎年年金額が増え、その増額は翌年10月分の年金から自動的に反映される", "unclear": ["厚生年金", "在職定時改定", "ねんきん定期便"], "at": "2026-09-10T01:00:36+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "cold_read"}
+{"understand": 3, "n_real": 2, "done": false, "at": "2026-09-10T01:02:49+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "critique"}
