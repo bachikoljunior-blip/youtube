@@ -470,10 +470,43 @@ def wake_latency_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
     周から周は **51.5分 → 52.9分**（床ちょうど）。18:2x の稼ぎ（約 3.9分）は残ります
     ——直す前の狙い先は `floor + 1` で 遅れを引いておらず、届くのは `floor + 1 + lat` でした。
 
-    **新しい覆る条件**: 狙い先を `floor` にしたあと、周から周の中央値が **3周 続けて**
-    床を下回ったら、そのときこそ大きさの側（25% 点）を疑うこと。
+    ~~**新しい覆る条件**: 狙い先を `floor` にしたあと、周から周の中央値が **3周 続けて**
+    床を下回ったら、そのときこそ大きさの側（25% 点）を疑うこと。~~
     逆に **3周 続けて床を +2分 以上 越えたら**、`aim` に 1分 足す形ではなく
     **遅れの数え方**（`_wake_at` が拾う「その後の最初の `at`」）を疑うこと。
+
+    **【2026-09-10 04:0x・optimizer・Opus】前半が引かれ、直し方は 25% 点ではありませんでした
+    ——「27本 の中央値」の 27本 は、17本 が同じ届きを数え直した物でした。**
+
+    実測（この回・`data/parent_wakes.jsonl`）: 引かれた側の数は
+
+        16:59 GO  34.6分 / 床 41.13  **-6.5**  ← ただし `target_min` 31.25 ＜ 床 の**丸めの枝**（§7 (d)）
+        17:40 GO  40.8分 / 床 41.22  **-0.42**
+        18:20 GO  40.3分 / 床 41.43  **-1.13**   ＝ **3周 続けて床の下**
+
+    **原因は大きさではなく、標本の重なり**でした。親は同じ届き先に**起こしを2本 置くことがあり**
+    （実測 17:58:39 と 17:59:27 の 2行 が、どちらも 18:19 を狙って `send_later` を置いた）、
+    上の輪は**行ごとに 1本 数える**ので、**同じ 1回の届きが 2〜3回 分母に入ります**:
+
+        いま（重なりを含む）  n=**27** → 指した届きは **18回**・**17本 が重なり**   中央値 **2.815**
+        届きごとに1本に畳む   n=**18**                                        中央値 **2.363**
+
+    ＝ **0.45分 だけ膨らんでいます。** 膨らんだぶん起こしを手前へ置きすぎるので、
+    **周は床の下へ落ちます** —— 上の -0.42 / -1.13 は、その大きさです。
+    **25% 点へ落とすと逆に外れます**（重なりを畳むと 25% 点は 1.50 → **1.63** と上がり、
+    それを引くと今度は床の +1.3分 側へ行き過ぎる）。**畳むのが直しで、大きさの側ではない。**
+
+    **畳み方**: 同じ届き（`later`）を指す遅れは、**いちばん早く置いた起こしの1本だけ**を残す。
+    「いつ頼んだら、いつ届いたか」を訊いているので、2本目は同じ答えの言い直しです（§5 の
+    「必ず一致する2つ目の意見に、確かめる力は無い」の、**分母の側での形**）。
+
+    **新しい覆る条件**: (1) 畳んだあとも 周から周 が **3周 続けて** 床を下回ったら、
+    そのときこそ大きさの側（25% 点 ＝ いま 1.63分）を疑うこと。
+    (2) 重なり（`27 → 18`）が **0 になったら**、親が同じ届きに 2本 置くのをやめた印なので、
+    畳みは効かなくなる（害も無い ——`dup_dropped` が毎回 印字する）。
+    (3) 逆に重なりが **半分を越えたら**（いま 17/27 ＝ 63%・**既に越えています**）、
+    畳んでも n が足りない ＝ そちらは**親が起こしを2本 置くこと自体**を見ること
+    （`decide()` が同じ周に 2度 呼ばれている ——実測 17:58:39 と 17:59:27 の 48秒 差）。
     """
     got = rows if rows is not None else wake_rows()
     owner = [r for r in got if r.get("who") == "owner"]
@@ -490,15 +523,29 @@ def wake_latency_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
         want = t + timedelta(minutes=asked)
         for later, _ in at[i + 1:]:
             if later >= want - timedelta(seconds=5):
-                lags.append((later - want).total_seconds() / 60.0)
+                lags.append(((later - want).total_seconds() / 60.0, later))
                 break
     # 起こしが届かず、心拍が拾った回（遅れが刻みの大きさに化ける）は分母から外す。
-    lags = [g for g in lags if 0.0 <= g <= WAKE_LATENCY_CAP_MIN * 2]
+    lags = [(g, later) for g, later in lags
+            if 0.0 <= g <= WAKE_LATENCY_CAP_MIN * 2]
+    # **同じ届きを指す遅れは1本に畳む**（2026-09-10 04:0x・上の註）。
+    # `at` は置いた刻の順なので、先に来た＝いちばん早く置いた起こしが残る。
+    seen: set = set()
+    deduped: list[float] = []
+    for g, later in lags:
+        if later in seen:
+            continue
+        seen.add(later)
+        deduped.append(g)
+    dropped = len(lags) - len(deduped)
+    lags = deduped
     if len(lags) < WAKE_LATENCY_MIN_N:
         return WAKE_LATENCY_FALLBACK_MIN, (
             f"写し（届いた起こし {len(lags)}本 < {WAKE_LATENCY_MIN_N}本）")
     got_med = min(WAKE_LATENCY_CAP_MIN, max(0.0, median(lags)))
-    return got_med, f"`data/parent_wakes.jsonl` の実測（届いた起こし {len(lags)}本 の中央値）"
+    return got_med, (f"`data/parent_wakes.jsonl` の実測（届き {len(lags)}回 の中央値"
+                     + (f"・同じ届きの言い直し {dropped}本 を畳んだ" if dropped else "")
+                     + "）")
 
 
 #: **親が置いた起こし**の台帳（`decide()` が WAIT を印字したときに書く）。

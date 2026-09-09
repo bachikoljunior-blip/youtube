@@ -78,7 +78,7 @@ def test_届いた起こしの遅れを中央値で取る(tmp_path, monkeypatch)
     _wakes(tmp_path, monkeypatch, rows)
     got, src = next_round.wake_latency_minutes()
     assert got == pytest.approx(3.0)
-    assert "5本" in src
+    assert "5回" in src
 
 
 def test_本数が足りなければ写しを使う(tmp_path, monkeypatch):
@@ -99,7 +99,7 @@ def test_心拍が拾った回は分母から外す(tmp_path, monkeypatch):
     _wakes(tmp_path, monkeypatch, rows)
     got, src = next_round.wake_latency_minutes()
     assert got == pytest.approx(2.0)
-    assert "5本" in src   # 6本 のうち 120分 の1本を外して 5本
+    assert "5回" in src   # 6本 のうち 120分 の1本を外して 5回
 
 
 def test_引きすぎない歯止め(tmp_path, monkeypatch):
@@ -216,3 +216,71 @@ def test_台帳から起こしの算数が読めること(rounds, monkeypatch):
     assert d["wait_min"] == pytest.approx(51.0 - 10.0)        # 境目 51.0 まで
     assert d["wake_wait_min"] == pytest.approx(53.0 - 10.0)   # 狙い先 53.0 まで
     assert d["wake_min"] == pytest.approx(d["wake_wait_min"] - 4.0, abs=1.0)
+
+
+# ---- 同じ届きを指す遅れを畳む（2026-09-10 04:0x・optimizer・Opus） ----------
+#
+# 親は**同じ届き先に起こしを2本 置くことがあります**（実測 09/09 17:58:39 と 17:59:27 が、
+# どちらも 18:19 を狙って `send_later` を置いた）。行ごとに 1本 数えると、
+# **同じ 1回の届きが 2〜3回 分母に入ります**（実測 27本 → 届きは 18回・17本 が重なり）。
+# 効き目は中央値が **2.363 → 2.815分** に膨らむことで、
+# 膨らんだぶん起こしを手前へ置きすぎ、**周が床の下へ落ちます**（実測 -0.42 / -1.13分）。
+
+
+def _distinct(rows, lags=(5.0, 5.5, 6.0, 6.5, 7.0)):
+    """重なりの無い届きを `lags` の数だけ足す（畳んだあとも n を `MIN_N` の上に保つ）。"""
+    for i, lag in enumerate(lags):
+        base = 100.0 * (i + 1)
+        rows.append(_row(base, wake_min=10))
+        rows.append(_row(base + 10.0 + lag))
+    return rows
+
+
+def test_陽性対照_同じ届きを指す起こしは1本に畳む(tmp_path, monkeypatch):
+    """**畳む側を外すと落ちる。**
+
+    同じ届き（30分）を 5本 の起こしが指す並び（遅れ 1.0/0.8/0.6/0.4/0.2）に、
+    重なりの無い届き 5回（5.0〜7.0分）を混ぜる:
+
+      畳まない  0.2 0.4 0.6 0.8 1.0 5.0 5.5 6.0 6.5 7.0 → 中央値 **3.0**
+      畳む      1.0（いちばん早く置いた1本） 5.0 5.5 6.0 6.5 7.0 → 中央値 **5.75**
+    """
+    rows = [_row(m, wake_min=10) for m in (19.0, 19.2, 19.4, 19.6, 19.8)]
+    rows.append(_row(30.0))
+    _wakes(tmp_path, monkeypatch, _distinct(rows))
+    got, src = next_round.wake_latency_minutes()
+    assert got == pytest.approx(5.75), (
+        f"{got:.2f} —— 同じ届きの 5本 を畳んでいない（畳まなければ中央値 3.0）")
+    assert "6回" in src and "言い直し 4本 を畳んだ" in src, src
+
+
+def test_畳んだ本数が台帳の言い分に出る(tmp_path, monkeypatch):
+    rows = [_row(m, wake_min=10) for m in (19.0, 19.2)]
+    rows.append(_row(30.0))
+    _wakes(tmp_path, monkeypatch, _distinct(rows))
+    _, src = next_round.wake_latency_minutes()
+    assert "言い直し 1本 を畳んだ" in src, src
+
+
+def test_重なりが無ければ言い分は変わらない(tmp_path, monkeypatch):
+    """**畳みは、重なりが 0 の台帳では何もしない**（`wake_latency_minutes` の覆る条件 (2)）。"""
+    rows = []
+    for i, lag in enumerate((1.0, 2.0, 3.0, 4.0, 6.0)):
+        base = i * 100.0
+        rows.append(_row(base, wake_min=10))
+        rows.append(_row(base + 10.0 + lag))
+    _wakes(tmp_path, monkeypatch, rows)
+    got, src = next_round.wake_latency_minutes()
+    assert got == pytest.approx(3.0)
+    assert "畳んだ" not in src, src
+
+
+def test_本物の台帳で重なりが半分を越えている(tmp_path, monkeypatch):
+    """**越えたら、直すのは畳みではなく「親が起こしを2本 置くこと」の側**（覆る条件 (3)）。
+
+    いま 17/27 ＝ 63%。**0 になったら**この検査が落ちて、畳みが要らなくなったと教える。
+    """
+    _, src = next_round.wake_latency_minutes()
+    assert "畳んだ" in src, (
+        "本物の台帳から重なりが消えた ＝ 親が同じ届きに 2本 置くのをやめた印。"
+        "`wake_latency_minutes` の覆る条件 (2) を読んで、畳みを外してよい")
