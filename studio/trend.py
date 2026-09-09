@@ -453,12 +453,25 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         if (now - pub).total_seconds() / 3600 > within_h:
             continue
         waiting_days.setdefault(pub.strftime("%m/%d"), []).append((pub, vid, title))
+    # **日の見出しの本数は、窓で切らずに台帳ぜんぶから数える**（2026-09-09 10:4x に直した。下の註）。
+    all_day_count: dict[str, int] = {}
+    for vid, pts in ser.items():
+        if vid in gone:
+            continue
+        all_day_count[published_at(pts).strftime("%m/%d")] = \
+            all_day_count.get(published_at(pts).strftime("%m/%d"), 0) + 1
     out: list[str] = []
     for day in sorted(set(days) | set(waiting_days) | set(back_days), reverse=True):
         cohort = sorted(days.get(day, []))
         waiting = sorted(waiting_days.get(day, []))
         back = sorted(back_days.get(day, []))
-        out.append(f"{day}（{len(cohort)}本" + (f"＋予約 {len(waiting)}本" if waiting else "") + "）")
+        whole = all_day_count.get(day, len(cohort))
+        head = f"{day}（{len(cohort)}本" + (f"＋予約 {len(waiting)}本" if waiting else "") + "）"
+        if whole > len(cohort):
+            head = (f"{day}（この日は {whole}本・**この窓に出るのは {len(cohort)}本**"
+                    + (f"＋予約 {len(waiting)}本" if waiting else "")
+                    + "。窓の縁で切れている ——`--days` を伸ばすこと）")
+        out.append(head)
         for pub, vid, pts in cohort:
             mark = "新" if vid in mine else "旧"
             trail = " → ".join(f"{p['age_h']:.1f}h {p['views']}" for p in pts[-6:])
@@ -479,6 +492,21 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         f"帯 {DEAD_START:02d}:00〜{DEAD_END:02d}:00 JST の2点組 **{nm}/{nt}** が伸びた"
         f"（それ以外は {om}/{ot}）。**{MIN_PAIR_MIN:.0f}分 未満の2点組は数えていません**"
         "（長さの違う組を同じ分母に入れないため —— studio/trend.py の `MIN_PAIR_MIN` の註）。")
+    # **§7 の覆る条件 (2) の物差し（`informative`）も、帯の外の回に印字する**
+    # （2026-09-09 10:4x・optimizer・Opus が足した。この回に踏んだ ——
+    #  measure が 10:36 JST ＝ 帯の外に落ち、下の帯の中の段落が出なかったので、
+    #  条件 (2) の「検出できた組」を **手で数え直した**。§7 が 7周 踏んだ「分母を手で数える」形そのもの。
+    #  生の分母（上の行）は 04:4x に「帯の外でも毎回 印字する」に直っているのに、
+    #  **判定に使う分母のほうが帯の中でしか出ていなかった**）。
+    _inf = informative(rows)
+    _bg, _bn = _inf["band"]
+    _og, _on = _inf["out"]
+    out.append(
+        f"うち**伸びを検出できた組**は 帯 **{_bg}/{_bn}** 対 外 **{_og}/{_on}**"
+        f"（同じ本が齢±{_inf['window_h']:.0f}h の逆側でも伸びていた組だけ。`informative` の註）。"
+        f"**§7 の覆る条件 (2) はこの分母で読むこと** —— 20組 を越えるまでは「まだ測れていない」。"
+        f"**この分母は帯の中で measure を撃った回にしか増えません**（帯の組は "
+        f"{_inf['occasions']}回 の測りから）。")
     np_, nd, worst, where = drops(rows)
     out.append(
         f"同じ {np_}組 のうち、再生が**減った**組 **{nd}**"

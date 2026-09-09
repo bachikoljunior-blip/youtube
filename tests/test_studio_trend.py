@@ -249,3 +249,50 @@ def test_1回の減りも数える():
     ]
     n, dec, worst, _ = trend.drops(rows)
     assert dec == 1 and worst == -1, (dec, worst)
+
+
+# ---- 窓の縁で切れた日の本数（2026-09-09 10:4x・optimizer・Opus） --------------
+#
+# 実測: `trend`（既定 3日）が **「09/06（4本）」** と印字していたが、09/06 は **8本** の日だった。
+# 見出しの本数は `within_h` で絞ったあとの `cohort` を数えており、**窓の縁の日は必ず半端に出る**。
+# §7 はこの見出しを「その日に何本 出したか」＝ §1 の「量は毒」の軸として読む
+# （15:0x/16:0x の覆る条件・`by_day_count`）ので、**8本 の日が 4本 の日として比べられていた**。
+# 予約の本（`pending` の註）と private へ戻した本（`returned_private` の註）で
+# 同じ形を2回 塞いであるのに、**窓の縁だけ残っていた**。
+# 覆る条件: 日の本数を台帳の外（YouTube 側）から取るようになったら、この数え直しは要らない。
+
+
+def test_窓の縁で切れた日は_本数を切らずに出す():
+    rows = ROWS + [
+        # 09/05 に 2本。窓（NOW から 2日）に入るのは 18:00 の 1本 だけ。
+        _m("D1", "2026-09-07T18:30:00+09:00", 24.5, 10),   # 09/06 18:00 公開
+        _m("D2", "2026-09-07T18:30:00+09:00", 48.5, 20),   # 09/05 18:00 公開
+        _m("D2", "2026-09-07T18:40:00+09:00", 48.7, 20),
+        _m("D3", "2026-09-07T18:30:00+09:00", 56.5, 30),   # 09/05 10:00 公開 ＝ 窓の外
+    ]
+    got = "\n".join(trend.lines(rows, now=NOW, within_h=50))
+    assert "D3" not in got, "窓の外の本は行に出さない"
+    assert "09/05（この日は 2本" in got, got
+    assert "この窓に出るのは 1本" in got, got
+    assert "`--days` を伸ばすこと" in got, got
+
+
+def test_窓で切れていない日は_今までどおり出す():
+    got = trend.lines(ROWS, now=NOW)
+    assert got[0] == "09/07（2本）", got   # 半端でない日に註を足さない
+
+
+def test_検出できた組は帯の外の回でも印字される():
+    """**§7 の覆る条件 (2) の物差し。帯の中でしか出ないと、その回は手で数え直すことになる**
+    （2026-09-09 10:4x にそう踏んだ —— measure が 10:36 JST ＝ 帯の外に落ちた回）。"""
+    got = "\n".join(trend.lines(GREW_OUT_OF_BAND, now=LIVE_NOW))
+    assert "伸びたことのない帯" not in got, "帯の中の警告は帯の外では黙ったまま"
+    assert "伸びを検出できた組" in got, got
+    assert "覆る条件 (2) はこの分母で読むこと" in got, got
+
+
+def test_検出できた組の数は台帳から数える_写しを持たない():
+    a = "\n".join(trend.lines(GREW_OUT_OF_BAND, now=LIVE_NOW))
+    inf = trend.informative(GREW_OUT_OF_BAND)
+    assert f"帯 **{inf['band'][0]}/{inf['band'][1]}**" in a, a
+    assert f"外 **{inf['out'][0]}/{inf['out'][1]}**" in a, a
