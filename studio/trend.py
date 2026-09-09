@@ -474,22 +474,63 @@ def informative(rows: list[dict], window_h: float = INFORMATIVE_AGE_H) -> dict:
     by_vid: dict[str, list[dict]] = {}
     for p in pairs:
         by_vid.setdefault(p["vid"], []).append(p)
+    # 同じ本・齢が近い「別の」組が伸びていれば、この組は伸びを検出できた
+    inf = [p for p in pairs
+           if any(q["grew"] for q in by_vid[p["vid"]]
+                  if q is not p and abs(q["age"] - p["age"]) <= window_h)]
     out: dict[str, object] = {"window_h": window_h}
     for key, want_band in (("band", True), ("out", False)):
-        grew = n = 0
-        for p in pairs:
-            if p["band"] is not want_band:
-                continue
-            # 同じ本・齢が近い「別の」組が伸びていれば、この組は伸びを検出できた
-            if any(q["grew"] for q in by_vid[p["vid"]]
-                   if q is not p and abs(q["age"] - p["age"]) <= window_h):
-                n += 1
-                grew += p["grew"]
-        out[key] = (grew, n)
+        side = [p for p in inf if p["band"] is want_band]
+        out[key] = (sum(p["grew"] for p in side), len(side))
     out["band_all"] = sum(1 for p in pairs if p["band"])
     out["out_all"] = sum(1 for p in pairs if not p["band"])
     out["occasions"] = len({p["at"] for p in pairs if p["band"]})
+    out.update(_matched(inf))
     return out
+
+
+def _matched(inf: list[dict]) -> dict:
+    """**齢の束を、帯と外でそろえてから数え直す**
+    （2026-09-10 03:0x JST・optimizer・Opus が足した。**この回に、門がこれで割れた**）。
+
+    上の `informative` は分母を「伸びを検出できた組」に絞りましたが、
+    **齢はそろえていません**。そして **本の公開は全部 10:00 JST に固定**なので、
+    帯（02:00〜10:00）に落ちる齢は **16〜24h・40〜48h・64〜72h…** だけです ——
+    **齢 0〜12h・24〜36h・48〜72h の組は、帯には構造的に 1つも入りません。**
+    そこは伸びのいちばん濃い所（実測 2026-09-10 03:0x: 齢 0〜12h の外は **19/27 が伸びた**）なので、
+    **「帯 4/24 対 外 37/108」の外の側の分子 37 のうち 29 は、帯が持ちえない齢から来ています。**
+
+    実測（2026-09-10 03:0x・API 0単位・台帳から）:
+
+        生のまま        帯 **4/24 (16.7%)** 対 外 **37/108 (34.3%)** ＝ **0.486倍** → **門 0.5 を通る**
+        齢の束をそろえる 帯 **4/24 (16.7%)** 対 外 **8/54 (14.8%)** ＝ **1.125倍** → **門を通らない**
+        両側がいちばん厚い束（齢 12〜24h）  帯 **4/11** 対 外 **4/11** ＝ **同じ**
+
+    ＝ **門 (2) は、この回に「引かれた」ように見えますが、引いたのは帯ではなく齢の交絡です。**
+    §7 の 02:2x が見つけた穴（分子が止まったまま分母だけ増える）と**同じ族の 2つ目**で、
+    あちらは「測った回数」、こちらは「測った齢」がひとりでに門を通します。
+
+    **数え方**: `AGE_BUCKETS` のうち **帯と外の両方に組が在る束**だけを残し、両側をその束に絞る。
+    帯に 1組 も無い束（＝比べる相手が居ない）は `unmatched` に名前で出す。
+
+    **覆る条件**: (1) 公開の刻を変えた本が出たら、帯が持てる齢が増えるので数え直すこと
+    （`band_vs_age` の覆る条件 (2) と同じ刻 —— そのとき `unmatched` が短くなって教える）。
+    (2) そろえた側でも 20組 を越えて 0.5倍 を切ったら、**そのときは齢では説明が付かない**
+    ＝ 門 (2) は本当に引かれた（判定は `hourly`・§5）。
+    (3) `AGE_BUCKETS` を細かくしたら、そろう束が減って n が落ちる ——
+    束を変えるなら、変える前と後の両方を1度 並べてから決めること。
+    """
+    buckets = [b for b in AGE_BUCKETS
+               if any(p["band"] and p["bucket"] == b for p in inf)
+               and any(not p["band"] and p["bucket"] == b for p in inf)]
+    res: dict[str, object] = {"matched_buckets": buckets}
+    for key, want_band in (("band_matched", True), ("out_matched", False)):
+        side = [p for p in inf if p["band"] is want_band and p["bucket"] in buckets]
+        res[key] = (sum(p["grew"] for p in side), len(side))
+    res["unmatched"] = [b for b in AGE_BUCKETS
+                        if b not in buckets
+                        and any(not p["band"] and p["bucket"] == b for p in inf)]
+    return res
 
 
 def band_vs_age(rows: list[dict], iters: int = 2000, seed: int = 20260909) -> dict:
@@ -681,6 +722,18 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         f"**§7 の覆る条件 (2) はこの分母で読むこと** —— 20組 を越えるまでは「まだ測れていない」。"
         f"**この分母は帯の中で measure を撃った回にしか増えません**（帯の組は "
         f"{_inf['occasions']}回 の測りから）。")
+    # **門 (2) は、そろえた側で読むこと**（2026-09-10 03:0x・optimizer・Opus。`_matched` の註）。
+    _bmg, _bmn = _inf["band_matched"]
+    _omg, _omn = _inf["out_matched"]
+    _un = "・".join(f"{lo}〜{hi if hi < 9999 else ''}h" for lo, hi in _inf["unmatched"]) or "無し"
+    _raw = f"{(_bg / _bn) / (_og / _on):.3f}倍" if _bn and _on and _og else "—"
+    _mat = f"{(_bmg / _bmn) / (_omg / _omn):.3f}倍" if _bmn and _omn and _omg else "—"
+    out.append(
+        f"**齢の束をそろえると 帯 {_bmg}/{_bmn} 対 外 {_omg}/{_omn}（{_mat}）**"
+        f" —— そろえない生の側は {_raw}。**§7 の門 (2)（0.5倍）は、そろえた側で読むこと**"
+        f"（`_matched` の註）。**帯に1組も無い齢の束**: {_un}"
+        f" —— 公開が 10:00 JST に固定なので、帯が持てる齢は 16〜24h・40〜48h… だけです。"
+        f"**そこは伸びのいちばん濃い齢を含みません** ＝ そろえない比は、帯ではなく齢を測ります。")
     np_, nd, worst, where = drops(rows)
     out.append(
         f"同じ {np_}組 のうち、再生が**減った**組 **{nd}**"
