@@ -1766,3 +1766,5 @@
 {"views": 5, "likes": 0, "comments": 1, "age_h": 136.5, "title": "【知らないと損】2026年4月 働く年金受給者は年54万円増える", "at": "2026-09-10T01:28:46+09:00", "id": "1huadpEk6HY", "event": "measured"}
 {"views": 59, "likes": 0, "comments": 1, "age_h": 160.5, "title": "小規模企業共済を11か月でやめるといくらか #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "9zkfjEH48PY", "event": "measured"}
 {"publish_at": "2026-09-10T10:00:00+09:00", "title": "夫が亡くなると妻の年金はいくら減るか 遺族厚生年金は4分の3 #Shorts", "at": "2026-09-10T01:28:46+09:00", "id": "2YZ_4FXC-XI", "event": "pending"}
+{"seconds": 84.7, "image": true, "chars": 464, "scenes": [7.4, 8.0, 8.6, 9.8, 7.4, 8.0, 5.9, 9.5, 5.5, 7.4, 7.3], "at": "2026-09-10T01:39:07+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "built"}
+{"mismatched": 2, "model": "small", "mode": "kana", "diffs": [{"i": 4, "d": [["これからまいとしもらうねんきんがおよそにまんえんおおくなります", ""]]}, {"i": 5, "d": [["んえ", "へ"]]}], "escalated": [8], "tail": {"4": true}, "voice": {"4": "音は在る"}, "how": {"8": "small→medium+prompt"}, "at": "2026-09-10T01:44:14+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "heard"}
