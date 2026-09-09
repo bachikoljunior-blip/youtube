@@ -502,11 +502,30 @@ def wake_latency_minutes(rows: list[dict] | None = None) -> tuple[float, str]:
 
     **新しい覆る条件**: (1) 畳んだあとも 周から周 が **3周 続けて** 床を下回ったら、
     そのときこそ大きさの側（25% 点 ＝ いま 1.63分）を疑うこと。
-    (2) 重なり（`27 → 18`）が **0 になったら**、親が同じ届きに 2本 置くのをやめた印なので、
-    畳みは効かなくなる（害も無い ——`dup_dropped` が毎回 印字する）。
-    (3) 逆に重なりが **半分を越えたら**（いま 17/27 ＝ 63%・**既に越えています**）、
-    畳んでも n が足りない ＝ そちらは**親が起こしを2本 置くこと自体**を見ること
-    （`decide()` が同じ周に 2度 呼ばれている ——実測 17:58:39 と 17:59:27 の 48秒 差）。
+    ~~(2) 重なりが **0 になったら**、親が同じ届きに 2本 置くのをやめた印。~~
+    ~~(3) 逆に重なりが **半分を越えたら**、そちらは**親が起こしを2本 置くこと自体**を見ること。~~
+
+    **【2026-09-10 04:5x・optimizer・Opus】(2)(3) は取り消します —— 前提が実測で外れました。**
+    どちらも「**重なり ＝ 親が起こしを2本 置いた**」を前提にしていますが、**置いてはいません。**
+
+        起こしを置いた行 **53** → 指した狙い先 **34**・うち **18** を 2行 以上 が指す
+        **その 18 のどれ 1つ も、2回 届いていない**（狙い先 ±3分 に来た行は 0 か 1）
+        重なった側 **19行 のうち 16行（84%）が :58〜:02** ＝ **毎時の心拍**
+
+    親は**起こしと心拍の両方で起きる**ので、間隔が明けていない回は**必ず 2度 起きます**。
+    2度目は `wake_is_fresh()` の門（`WAKE_SAME_SEC` 120秒）が正しく撃たせていません。
+    ＝ **重なりは「置きすぎ」ではなく「起こされすぎ」で、置く側は正しく動いています。**
+    (3) を追って `decide()` の呼ばれ方を直しにいくと、**壊れていない物を直す**ことになります。
+
+    ＝ この畳みは **こちらの数え方の癖を打ち消す物**で、親の欠陥の印ではありません。
+    **畳みは外さないこと**（重なりは心拍が在るかぎり続くので、`dup_dropped` は 0 になりません）。
+
+    **新しい (2)(3)**: (2) `wake_placed` が **False の行が 0 になったら**（＝ 親が
+    起こしと心拍で二重に起きなくなったら）、そのとき初めて畳みは要らなくなる。
+    (3) `wake_placed` が **True の行だけ**を数えた中央値が、いまの畳みの中央値と
+    **0.5分 以上 割れたら**、畳み（時刻から推す手）のほうを捨てて `wake_placed`（撃ったかどうか
+    そのもの）で数えること —— **2つは違う物を見ています**（§5）。
+    **いまは `wake_placed` の行が 0本 なので、まだ比べられません**（この回に足した列）。
     """
     got = rows if rows is not None else wake_rows()
     owner = [r for r in got if r.get("who") == "owner"]
@@ -608,6 +627,44 @@ def wake_write(wake_at: datetime, now: datetime | None = None) -> dict:
     WAKE.parent.mkdir(parents=True, exist_ok=True)
     WAKE.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
     return row
+
+
+#: 同じ届きと見なす幅（秒）。これより近い起こしが置いてあれば `send_later` は撃たない。
+WAKE_SAME_SEC = 120.0
+
+
+def wake_is_fresh(wake_at: datetime,
+                  now: datetime | None = None) -> tuple[bool, datetime | None]:
+    """**この起こしを本当に置くか**（＝ `send_later` を撃つか）と、いま置いてある起こし。
+
+    **なぜ関数にしたか**（2026-09-10 04:5x・optimizer・Opus）:
+    この判定は `main()` の中に**べた書き**されており、`log_wake()` はその**手前**で
+    行を書いていました。＝ **台帳は「親が起きた」しか残さず、「起こしを置いた」を残していません。**
+    そのせいで `wake_latency_minutes()` の重なりが**2つの別物を1つに見せていました**:
+
+        (a) 親が同じ届きに**起こしを2本 置いた**        ← 直す先が在る
+        (b) 親が**2度 起こされ**、2度目は撃たなかった   ← 正しく動いている
+
+    **実測（2026-09-10 04:5x・`data/parent_wakes.jsonl` 95行）: 全部 (b) でした。**
+    起こしを置いた行 **53** が指した狙い先は **34**・うち **18** を 2行 以上 が指しており、
+    **その 18 のどれ 1つ も、2回 届いていません**（狙い先の ±3分 に来た行は 0 か 1。
+    2 と出る 2件 は、置いた行そのものが同じ分に入っているだけ）。
+    ＝ 下の `WAKE_SAME_SEC` の門は**効いています**。
+    そして重なった側 **19行 のうち 16行（84%）が :58〜:02** ＝ **毎時の心拍**でした
+    （親は起こしと心拍の両方で起きるので、間隔が明けていない回は必ず 2度 起きる）。
+
+    **＝ 重なりは「置きすぎ」ではなく「起こされすぎ」で、置く側は正しい。**
+    この列（`wake_placed`）が在れば、次の回は 2つを**数で**分けられます
+    ——`wake_latency_minutes()` の畳みは**時刻から推す**手なので、
+    こちらは**撃ったかどうかそのもの**を見ます（§5「確かめる手を足すときは、
+    それが元の手と違う物を見ているかを先に撃つ」——この 2つ は違う物を見ています）。
+    """
+    now = now or datetime.now(timezone.utc)
+    pending = wake_read(now)
+    if pending is not None and abs(
+            (pending - wake_at).total_seconds()) <= WAKE_SAME_SEC:
+        return False, pending
+    return True, pending
 
 
 def rows() -> list[dict]:
@@ -1556,6 +1613,13 @@ def main() -> int:
         print("  （0体 なら「間隔が明けていれば GO・途中なら起こしを置いて WAIT」・"
               "1体 以上なら間隔。2026-08-31・09-02 に数を渡さずに2回 叱られています）")
         return 2
+    # **「起こしを置いたか」は、行を書く前に決めておく**（2026-09-10 04:5x・理由は
+    #     `wake_is_fresh` の註）。下の枝で決めると `log_wake` に間に合わず、台帳は
+    #     「2本 置いた」と「2度 起こされた」を同じ形にします。0体 の WAIT の回だけ。
+    _wake_pending = None
+    if not d["go"] and not d.get("live") and d.get("wake_at") is not None:
+        _fresh, _wake_pending = wake_is_fresh(d["wake_at"])
+        d["wake_placed"] = bool(_fresh)
     print(f"  走っているサブ: **{d['live']}体**（{d['live_source']}）")
     log_wake(d)   # **GO も WAIT も1行 残す**（上の註 —— 立たなかった時間を読めるように）
     roles = d["roles"]
@@ -1625,8 +1689,10 @@ def main() -> int:
     except Exception:                                          # noqa: BLE001
         _JST = timezone(timedelta(hours=9))
     hhmm = wake_at.astimezone(_JST).strftime("%H:%M")
-    pending = wake_read(now)
-    if pending is not None and abs((pending - wake_at).total_seconds()) <= 120:
+    # 上で決めた答えをそのまま使う（**同じ問いを2度 訊かない** —— 訊き直すと
+    # 台帳の `wake_placed` と、ここで撃つかどうかが、別々の答えになりえます）。
+    pending = _wake_pending
+    if d.get("wake_placed") is False:
         print(f"  起こしは **{pending.astimezone(_JST):%H:%M} JST** に置いてあります"
               "（`send_later` は撃たない。同じ周で親が何度 起きても 1回）")
     else:
