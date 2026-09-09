@@ -209,6 +209,14 @@ def cmd_hear(a):
                       "**`tail_probe` と食い違うときは、両方を並べて Fable が決める**"
                       if rt["present"] else
                       "      → 秒数の側でも末尾が無い側に付く（TTS を疑う根拠が2つ）")
+            v = r.get("voice")
+            if v:   # 音の側（studio/hear.tail_voice）。**聞き取りを通らない片側**を持つ 3つ目
+                print(f"      音の終わり {v['energy_end']}秒 − 聞き取りが止まった {v['word_end']}秒 "
+                      f"＝ {v['gap']}秒 → {v['verdict']}")
+                if v["verdict"] == "音は在る":
+                    print("      → 切ったのは whisper（この 3つ目だけが音そのものを見ます・hear.tail_voice の註）")
+                elif v["verdict"] == "分けられない":
+                    print("      → 5モーラ 未満の差は、この手では分けません（在るほうへ丸めないこと）")
     print(f"一致 {len(rows) - len(bad)}/{len(rows)}")
     if bad:
         print("差の読み方: TTS の誤読なら yomi か言い換え（yomi は効かない語がある → 直したら hear をやり直す）。"
@@ -217,6 +225,7 @@ def cmd_hear(a):
            diffs=[{"i": r["i"], "d": r["diffs"]} for r in bad],
            escalated=[r["i"] for r in rows if "→" in r["how"]],   # small で差が出て medium が予定どおりに聞いたコマ
            tail={str(r["i"]): r["tail"]["ok"] for r in rows if r.get("tail")},   # 末尾が丸ごと無いコマ → 末尾5秒に在ったか（hear.tail_probe の覆る条件を数えるため）
+           voice={str(r["i"]): r["voice"]["verdict"] for r in rows if r.get("voice")},   # 音の側の答え（hear.tail_voice の覆る条件「3本 続けて当たったら寄せる」を数えるため）
            how=hear.escalations(rows))   # どの段で通ったか（medium／medium+prompt）。§7 の「prompt の段が採られたか」を台帳で数えるため
     return 1 if bad else 0
 
