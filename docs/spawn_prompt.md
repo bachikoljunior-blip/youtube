@@ -1,7 +1,7 @@
 # 子（サブ）に渡すプロンプトの型（2026-09-05 にゼロから書き直した）
 
 `python scripts/spawn_prompt.py --kind <役>` がこの型を組み立てる。**文言はここにだけ持つ。**
-`<<first_move>>`（枝を合わせる1手）と `<<siblings_block>>`（同じ周に走る相手）は道具が埋める。
+`<<first_move>>`（枝を合わせる1手）と `<<siblings_block>>`（同じ周に走る相手）と `<<quota_block>>`（枠の視点・**API 0単位**）は道具が埋める。
 `<<first_move>>` の中の `origin/main` の行は、親の checkout で **数えて** 埋める（`spawn_prompt.main_gap()`。09/06 22:5x まで「進めてある」の決め打ちで、実物は 237 commit 後ろだった —— `docs/JOURNAL.md` 同時刻）。
 
 手順の正本は **`docs/METHOD.md`**。ここには「それを読め」と、役の違いだけを書く。
@@ -23,6 +23,8 @@
 <<lead>>
 
 <<siblings_block>>
+
+<<quota_block>>
 ```
 
 ## block: lead-round
@@ -91,9 +93,11 @@
 道具（`studio/`）の欠陥を見つけて直す —— ただし `hourly` がいま出そうとしている本に要る直しは
 `hourly` に任せる。(d) 画像の注文（`data/image_orders/`）の届き具合。(e) 親の手続きの欠陥。
 (f) **きょうの枠がまだ公開前のときだけ**、あすの台本を書く・磨く（§3・§4 の (1)(2)(3)。画像の注文 `order-image` まで。実測 70分 —— METHOD §5 の表のとおり）。
-持ち場に何も無ければ短く終わってよい。
+持ち場に何も無ければ短く終わってよい —— **ただし、その向きは枠しだいです**（下の【枠】の段。**残した枠はリセットで消えます**。この行は枠を使いすぎていた頃に書かれた）。
 
 <<siblings_block>>
+
+<<quota_block>>
 
 **あなたはサブエージェントです。** `archive_session` / `set_session_title` / `relay.py --next` はやらない。
 節目ごとに commit して push すると、親が畳まれても残る（押していない分は消える）。
@@ -114,6 +118,8 @@ METHOD を書き換える（理由・覆る条件つき）。必要なら本に�
 
 <<siblings_block>>
 
+<<quota_block>>
+
 **あなたはサブエージェントです。** `archive_session` / `set_session_title` / `relay.py --next` はやらない。
 節目ごとに commit して push すると、親が畳まれても残る（押していない分は消える）。
 ```
@@ -129,4 +135,6 @@ METHOD を書き換える（理由・覆る条件つき）。必要なら本に�
 <<first_move>>
 
 <<siblings_block>>
+
+<<quota_block>>
 ```

@@ -1345,6 +1345,61 @@ def reach_at_reset(used_now: float, left_hours: float, per_lap: float,
     return min(100.0, used)
 
 
+def landing(used_now: float, left_hours: float, per_lap: float,
+            fable_used: float | None = None, fable_per_lap: float | None = None,
+            lag_min: float = REACH_LAG_DEFAULT_MIN,
+            floor_min: float = FLOOR_MIN_CLAMP) -> dict:
+    """**床に従って回ったとき、2つの目盛りがどこへ着くか。**
+
+    2026-09-09 22:1x・optimizer・Opus。`hourly`（Fable）が同じ周に置いた数
+    （METHOD §5「親の周の速さ」22:0x）への、道具の側。
+
+    **目盛りは 2つ、絞りは 1つ** —— 間隔（床）は「すべてのモデル」の残りから
+    引かれるので、**Fable のみ の着地はこちらで選べません**。実測 21:13:
+
+        床 41分 で回すと   すべて     リセット時 **99.8%**（届く側）
+                           Fable のみ **リセットの 28時間 前に 100%**
+
+    ＝ **床を縮めると「すべて」は届き、Fable は早く尽きる。伸ばすと逆。**
+    1つの絞りで 2つを着地させることはできません（09/03 07:3x のオーナーの問い
+    「Fableのみは100％到達になって使えなくなるようにならないほうが良くない？」の当のもの）。
+
+    返り: `{"all", "fable", "fable_spent_h_before_reset", "laps"}`。
+    `fable_spent_h_before_reset` は **正なら「リセットより前に尽きる」**（その時間ぶん
+    Fable 抜きで回る）・None なら尽きない。
+
+    **覆る条件**: Fable が尽きた後は `hourly` も opus になる（`ROLE_TIER`）ので
+    1周の重さが変わります。この関数は**変わらない前提**で運んでいるので、
+    尽きたあとの「すべて」は**下振れ**（実際はもっと軽い周になり、床が縮んで届きやすい）。
+    尽きる時刻そのものは、その前の話なので影響を受けません。
+    """
+    if per_lap is None or per_lap <= 0 or left_hours is None or left_hours <= 0:
+        return {"all": None, "fable": None, "fable_spent_h_before_reset": None, "laps": 0}
+    used, left, laps = float(used_now), float(left_hours), 0
+    f_used = None if fable_used is None else float(fable_used)
+    f_lap = float(fable_per_lap or 0.0)
+    spent_at = None                              # Fable が 100% に届いた時点の「残り時間」
+    for _ in range(10000):
+        if used >= 100.0 or left <= 0:
+            break
+        fwd = (100.0 - used) / left
+        if fwd <= 0:
+            break
+        step_h = (max(float(floor_min), per_lap / fwd * 60.0) + float(lag_min)) / 60.0
+        if step_h > left:
+            break
+        left -= step_h
+        used += per_lap
+        laps += 1
+        if f_used is not None and f_lap > 0 and spent_at is None:
+            f_used = min(100.0, f_used + f_lap)
+            if f_used >= FABLE_CAP_PCT:
+                spent_at = left                  # 残り時間 ＝ リセットまでの時間
+    return {"all": min(100.0, used),
+            "fable": None if f_used is None else min(100.0, f_used),
+            "fable_spent_h_before_reset": spent_at, "laps": laps}
+
+
 def pace(now: datetime | None = None) -> dict | None:
     """いまの速さと、持続できる1周の間隔。目盛りが無ければ None。
 

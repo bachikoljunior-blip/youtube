@@ -496,6 +496,100 @@ TOUCHED_CMD = ("git fetch origin && git log origin/%s --since=\"12 hours ago\" "
                "--name-only --pretty=format:'%%h %%ad %%s' --date=format:'%%m/%%d %%H:%%M'")
 
 
+#: 写し（`docs/spawn_prompt.rendered.md`）に入れる側。**数は焼かない**
+#: （焼くと周ごとに写しが変わり、`test_rendered_copy_for_the_parent_is_current` が毎周 赤くなる）。
+QUOTA_BLOCK_STATIC = (
+    "【枠 —— この回に使ってよい速さ】**この段は、サブを立てる瞬間に `spawn_prompt._quota_block()` が"
+    "数で埋めます**（API 0単位）。すべて／Fable のみ の目盛り・床（間隔）・"
+    "**リセット時にどこへ着くか**（床に従えば／いまの間隔のまま）・"
+    "**Fable のみ が尽きるのはリセットの何時間 前か**。"
+    "**写しには数を焼きません** —— 焼くと周ごとに写しが変わります。"
+    "実物は `python scripts/quota.py --pace`。")
+
+
+def _quota_block() -> str:
+    """**枠の視点を、サブ本人に渡す段**（2026-09-09 22:1x・optimizer・Opus。**API 0単位**）。
+
+    オーナー原文（2026-09-09。`CLAUDE.md` 冒頭）:
+    21:13「**全てのモデル100％いきそう？**」／21:1x「**どうすんの？**」／
+    21:5x「**その視点ないんだったら視点だけ与えなよ**」。
+
+    **その視点は、本文のどこにも在りませんでした。** サブに渡っていたのは
+    模型の名前（`hourly`＝Fable・`optimizer`＝Opus）だけで、
+    **枠がいま余る側なのか足りない側なのかは、1文字も書いていません。**
+    そしてサブの側には、それで変わる決めが在ります ——
+    METHOD §5 の「**持ち場に何も無ければ短く終わってよい（Fable の枠を使わない）**」は
+    **枠を使いすぎていた頃**に書かれた行で、**余る側では向きが逆**です。
+    ＝ **サブは、逆向きの既定を、根拠を見ずに引いていました。**
+
+    **親は判断しません**（09/06 14:0x「お前が判断すんじゃなくて、サブが判断すんだよ」）。
+    だからここに置くのは**数だけ**で、「こうしろ」は書きません。
+
+    **目盛りは 2つ、絞りは 1つ**（`quota.landing()` の註・METHOD §5 の 22:0x）——
+    床（間隔）は「すべてのモデル」の残りから引かれるので、
+    **Fable のみ の着地は床では選べません**。実測 21:13 の目盛りで、床 41分 なら
+    「すべて」はリセット時 99.8%・**Fable のみ はリセットの 28時間 前に尽きます**
+    （`hourly` が §5 に置いた数と、この道具が別々に出して一致した）。
+
+    **落ちても段ごと落とすだけ**（親を止めない）。数が読めない回は「読めていない」と書きます
+    —— **空欄を「余裕がある」と読ませないこと**（`CLAUDE.md` の使用量の節）。
+    """
+    try:
+        from scripts.quota import (JST, fable_estimate, fable_rate, landing,  # noqa: PLC0415
+                                   pace)
+    except Exception:                                          # noqa: BLE001
+        try:
+            from quota import (JST, fable_estimate, fable_rate,  # noqa: PLC0415
+                               landing, pace)
+        except Exception:                                      # noqa: BLE001
+            return ""
+    try:
+        p = pace()
+        if not p or not p.get("per_lap") or not p.get("floor_min"):
+            return ("【枠】**読めていません**（目盛りが無いか、周が数えられていない）。"
+                    "**空欄を「余裕がある」と読まないこと** —— `python scripts/quota.py --pace`。")
+        fe = fable_estimate() or {}
+        fr = fable_rate() or {}
+        ratio = ((fr.get("rate") or 0.0) / p["carry_rate"]) if p.get("carry_rate") else 0.0
+        land = landing(p["used_now"], p["left_hours"], p["per_lap"],
+                       fe.get("est"), p["per_lap"] * ratio,
+                       lag_min=p.get("reach_lag_min") or 0.0)
+        lines = [
+            "【枠 —— この回に使ってよい速さ】**API 0単位**。"
+            "オーナー 21:13「全てのモデル100％いきそう？」21:5x「その視点ないんだったら視点だけ与えなよ」",
+            f"    いま      すべて **{p['used_now']:.0f}%**"
+            + (f"・Fable のみ **{fe['est']:.0f}%**" if fe.get("est") is not None else "")
+            + f"（リセット {p['window_reset'].astimezone(JST):%m/%d %H:%M} JST まで"
+              f" {p['left_hours']:.0f}時間）",
+            f"    床        **{p['floor_min']:.0f}分**（周から周。1周 {p['per_lap']:.3f}%）",
+        ]
+        if land.get("all") is not None:
+            lines.append(
+                f"    リセット時  床に従えば **すべて {land['all']:.0f}%**"
+                f"・いまの間隔のまま **{p['reach_carry']:.0f}%**"
+                if p.get("reach_carry") is not None else
+                f"    リセット時  床に従えば **すべて {land['all']:.0f}%**")
+        spent = land.get("fable_spent_h_before_reset")
+        if spent is not None:
+            lines.append(
+                f"    Fable のみ  床に従うと **リセットの {spent:.0f}時間 前に 100%**"
+                f" → そこから `hourly` も opus（`quota.ROLE_TIER`）")
+        elif land.get("fable") is not None:
+            lines.append(f"    Fable のみ  床に従うと リセット時 **{land['fable']:.0f}%**（尽きない）")
+        lines += [
+            "    **目盛りは 2つ・絞り（床）は 1つ** —— 床は「すべて」の残りから引かれるので、"
+            "Fable の着地は床では選べません（`quota.landing()` の註・METHOD §5）。",
+            "    **この数で変わる決めが 1つ あります**: METHOD §5 の"
+            "「持ち場に何も無ければ短く終わってよい（Fable の枠を使わない）」は"
+            "**枠を使いすぎていた頃の行**です。**余る側なら向きが逆**（残した枠はリセットで消えます）。"
+            "**どちらかはあなたが決めること** —— 親は判断しません（09/06 14:0x）。",
+        ]
+        return "\n".join(lines)
+    except Exception:                                          # noqa: BLE001
+        return ("【枠】**読めていません**（`quota` が落ちた）。"
+                "**空欄を「余裕がある」と読まないこと** —— `python scripts/quota.py --pace`。")
+
+
 def _siblings_block(siblings: list[str]) -> str:
     """**同じ枝で走っている相手を名指しする段。**
 
@@ -622,6 +716,11 @@ def build(kind: str, note: str = "", siblings: list[str] | None = None,
         "first_move": FIRST_MOVE.strip().replace(
             "<<main_gap>>", main_gap(root, branch) if live_clock else MAIN_GAP_STATIC),
         "siblings_block": _siblings_block(list(siblings or [])),
+        # 写し（live_clock=False）には数を焼かない: MAIN_GAP_STATIC の註と同じ。
+        # **ただし段ごと落とさないこと** —— 型の側が「下の【枠】の段」を指しているので、
+        # 空にすると写しの中でその指し先が消えます（この repo の「言っている所と
+        # している所が別」の、いちばん小さい形）。静的な1行を置く。
+        "quota_block": _quota_block() if live_clock else QUOTA_BLOCK_STATIC,
         "clock_block": _clock_block(live=live_clock),
         "lead": (tpl["lead-only"].replace("<<only>>", only) if only
                  else tpl["lead-round"]),
