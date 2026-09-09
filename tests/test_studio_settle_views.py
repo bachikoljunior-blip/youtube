@@ -167,3 +167,68 @@ def test_伸びたまま48hを越えた本が読み直される(monkeypatch):
     pub = [_book("GROWING_49H", old_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                  views=534)]
     assert _measure_targets(monkeypatch, pub) == ["GROWING_49H"]
+
+
+def _measure_rows(monkeypatch, pub, settled):
+    """`cmd_measure` が台帳へ書いた `measured` の行を、ID 引きで返す。"""
+    rows = []
+    monkeypatch.setattr(cli, "ledger", lambda ev, i, **kw: rows.append({"event": ev, "id": i, **kw}))
+    monkeypatch.setattr(yt, "published", lambda h: pub)
+    monkeypatch.setattr(yt, "scheduled_all", lambda: [])
+    monkeypatch.setattr(yt, "settle_stats", lambda ids, **kw: {i: settled[i] for i in ids})
+    cli.cmd_measure(None)
+    return {r["id"]: r for r in rows if r["event"] == "measured"}
+
+
+def test_読んで揺れなかった行にも_n_values_を書く(monkeypatch):
+    """**2026-09-10 07:0x（optimizer・Opus）**: 「揺れた回だけ」だと、**読んで揺れなかった行**と
+    **1度も読まれていない行**が台帳の上で見分けられない（どちらも欄が無い）。
+
+    §7 の (h)「48h を越えた本で `n_values > 1` が出るか・**3本 続けて 0件** なら落ち着いている
+    と数えてよい」は、**その 0件 の分母**を台帳から数える必要があります。06:3x が門を齢から束へ
+    移したのは「渡っていない本を『差が無い』と読む形」を外すためで、**分子だけ直して分母が
+    見えないまま**でした（§4 (0-b) の族）。
+
+    **陽性対照**: `extra` を「`n_values > 1` のときだけ」に戻すと、この検査が落ちます。
+    """
+    pub = [_book("A", "2026-09-09T01:00:00Z", views=711),
+           _book("OLD", "2026-09-01T01:00:00Z", views=74)]
+    got = _measure_rows(monkeypatch, pub, {
+        "A": {"views": 823, "views_min": 637, "n_values": 2},
+        "OLD": {"views": 74, "views_min": 74, "n_values": 1}})
+    assert got["OLD"]["n_values"] == 1, "**読んだ上で揺れなかった**ことが、台帳に残ること"
+    assert "views_min" not in got["OLD"], "下限の欄は、揺れた行だけ（19:1x の決めは変えない）"
+    assert got["A"]["n_values"] == 2 and got["A"]["views_min"] == 637
+
+
+def test_読まれていない行には_n_values_の欄が無い(monkeypatch):
+    """**分けられることが、この欄の存在理由**（上の検査の対）。
+
+    束 50件 を越えた回は齢で絞るので、48h 超の本は `settle_stats` に渡りません。
+    その行に `n_values` が付いてしまうと、「読んで揺れなかった」と区別できなくなります。
+    """
+    pub = ([_book(f"N{i}", "2026-09-09T01:00:00Z") for i in range(cli.SETTLE_MAX_IDS)]
+           + [_book("OLD", "2026-09-01T01:00:00Z")])
+    got = _measure_rows(monkeypatch, pub,
+                        {b["id"]: {"views": 1, "views_min": 1, "n_values": 1} for b in pub})
+    assert "n_values" not in got["OLD"], "**渡っていない本**に欄を作らないこと（＝ 0件 の分母から外れる）"
+    assert got["N0"]["n_values"] == 1
+
+
+def test_measure_は48h超を何本読んだかを印字する(monkeypatch, capsys):
+    """**次の回が撃つだけで §7 (h) を読めること**（`wake_placed` を毎周 書き写したのと同じ形・§7 (d)）。
+
+    印字が無いと、(h) を読む回は毎回 台帳を自分で数え直すことになります（この回がそうした）。
+    """
+    old_at = cli.now_jst() - timedelta(hours=cli.SETTLE_WITHIN_H + 1)
+    old_iso = old_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pub = [_book("YOUNG", "2026-09-09T01:00:00Z"), _book("OLD1", old_iso), _book("OLD2", old_iso)]
+    monkeypatch.setattr(cli.trend, "pair_gap_line", lambda rows: "")
+    _measure_rows(monkeypatch, pub, {
+        "YOUNG": {"views": 1, "views_min": 1, "n_values": 2},
+        "OLD1": {"views": 1, "views_min": 1, "n_values": 1},
+        "OLD2": {"views": 1, "views_min": 1, "n_values": 1}})
+    out = capsys.readouterr().out
+    assert "落ち着かせた: 3本" in out
+    assert f"齢 {cli.SETTLE_WITHIN_H}h 超 **2本**" in out, "**分母**（(h) が数える側）を出すこと"
+    assert "揺れた **1本**（YOUNG）" in out, "**分子**を、ID つきで出すこと"

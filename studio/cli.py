@@ -409,16 +409,30 @@ def cmd_measure(a):
         young = [v["id"] for v in pub
                  if (now_jst() - yt.when(v)).total_seconds() / 3600 <= SETTLE_WITHIN_H]
     settled = yt.settle_stats(young) if young else {}
+    ages = {v["id"]: (now_jst() - yt.when(v)).total_seconds() / 3600 for v in pub}
     for v in pub:
-        age = (now_jst() - yt.when(v)).total_seconds() / 3600
+        age = ages[v["id"]]
         s = settled.get(v["id"])
         extra = {}
         if s:
             # 遅れている複製を読んだ回に「減った」と書かせないため、**最大**を採る。
-            # 揺れた回だけ `views_min`（その時刻の本物の下限）と `n_values` を残す
+            # 揺れた回だけ `views_min`（その時刻の本物の下限）を残す
             # —— §7 が「下限」で比べるときに使う数はこちら。
+            #
+            # **`n_values` は、読んだ行に必ず書く**（2026-09-10 07:0x・optimizer・Opus）。
+            # もとは「揺れた回だけ」で、**読んで揺れなかった行と、1度も読まれていない行が
+            # 台帳の上で同じ形**でした（どちらも欄が無い）。§7 の (h)
+            # 「48h を越えた本で `n_values > 1` の行が出るか・3本 続けて 0件 なら
+            # 落ち着いていると数えてよい」は、**その 0件 の分母を台帳から数えられません**
+            # ——06:3x が門を齢から束へ移したのは、まさに「渡っていない本を『差が無い』と
+            # 読む形」を外すためで、**分子だけ直して分母を見えないままにしていました**。
+            # `n_values: 1` が在る行 ＝ **読んだ上で揺れなかった**。欄が無い行 ＝ **読んでいない**
+            # （束 50件 を越えて齢で絞られた回・`published` の窓の外）。
+            # **覆る条件**: 台帳の1行が重くて困る回が来たら、`n_values: 1` は落として
+            # 代わりに `measured` とは別の1行（その回に読んだ ID の数）にすること。
+            extra = {"n_values": s["n_values"]}
             if s["n_values"] > 1:
-                extra = {"views_min": s["views_min"], "n_values": s["n_values"]}
+                extra["views_min"] = s["views_min"]
             v = {**v, "views": max(v["views"], s["views"])}
         ledger("measured", v["id"], views=v["views"], likes=v["likes"],
                comments=v.get("comments", 0), age_h=round(age, 1), title=v["title"][:40], **extra)
@@ -431,6 +445,15 @@ def cmd_measure(a):
         ledger("pending", v["id"], publish_at=yt.when(v).isoformat(), title=v["title"][:40])
     print("記した:", len(pub), f"本（公開から {MEASURE_WITHIN_H / 24:.0f}日 以内）"
           + (f"・予約 {len(sch)}本" if sch else "・予約 0本"))
+    # **読み直した本数を、その回に言う**（2026-09-10 07:0x・optimizer・Opus。上の `n_values` の註）。
+    # §7 の (h) を読む回が、**撃つだけで分母と分子を読めるようにする**ため
+    # （`wake_placed` を毎周 台帳へ書き写したのと同じ形・§7 (d)）。
+    if settled:
+        over = [i for i in settled if ages.get(i, 0) > SETTLE_WITHIN_H]
+        shook = sorted(i for i, s in settled.items() if s["n_values"] > 1)
+        print(f"落ち着かせた: {len(settled)}本（うち齢 {SETTLE_WITHIN_H}h 超 **{len(over)}本**）"
+              f"・揺れた **{len(shook)}本**" + (f"（{'・'.join(shook)}）" if shook else "")
+              + "　＝ §7 (h) の分母と分子")
     return 0
 
 
