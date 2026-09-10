@@ -384,3 +384,27 @@ def test_positive_control_over_でなければ元の読みが出る():
     assert g["flat_laps"] >= trend.CHANNEL_FLAT_LAPS and g["over"] is False
     line = trend.channel_line(rows)
     assert "チャンネルの側が止まっていないかを外すこと" in line
+
+
+def test_総再生が動かない窓で登録だけ動いたら応答が丸ごと古いのではないと言う():
+    """2026-09-10 21:1x —— 実測（`viewCount` 84,781 のまま・`subscriberCount` 27→28）。
+
+    陽性対照: `channel_line` の `if g["d_views"] == 0 and g["d_subs"]:` を外すと落ちる。
+    """
+    rows = [_row("2026-09-10T15:24:00+09:00", 27, 84781),
+            _row("2026-09-10T18:38:00+09:00", 28, 84781),
+            _row("2026-09-10T20:27:00+09:00", 28, 84781)]
+    g = trend.channel_growth(rows)
+    assert g["d_views"] == 0 and g["d_subs"] == 1
+    line = trend.channel_line(rows)
+    assert "同じ窓で登録は +1 動いています" in line
+    assert "丸ごと古いのではありません" in line
+    assert "証拠になりません" in line, "外せるのは『総再生の数がこの窓で読めない』まで"
+
+
+def test_登録も総再生も動かない窓では言わない():
+    """覆る条件 (4) の側 —— 両方 動かない窓は、この文を出さないこと。"""
+    rows = [_row("2026-09-10T15:24:00+09:00", 28, 84781),
+            _row("2026-09-10T18:38:00+09:00", 28, 84781),
+            _row("2026-09-10T20:27:00+09:00", 28, 84781)]
+    assert "同じ窓で登録は" not in trend.channel_line(rows)
