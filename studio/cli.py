@@ -216,6 +216,23 @@ def over_ledger(vid: str, live: int, rows: list[dict] | None = None) -> int | No
     return live - top if live > top else None
 
 
+def record_over(vid: str, live: int, over: int, age_h: float) -> None:
+    """`over_ledger` の印を**台帳に1行 残す**（2026-09-10 13:2x・optimizer・Opus。**追加 0単位**）。
+
+    12:4x は印字だけを足しました。その註の覆る条件は **3つ とも周をまたいで数える**もの
+    （(1) 次の measure が 3周 届かない・(2) 1度も出ないまま 7本・(3) 毎周 出る）なのに、
+    **印が出たことを残す口が どこにもなく**、次の回は前の回の端末の出力を覚えているしか
+    ありませんでした ＝ `trend.flats` の「その 3本 を数える所が、どこにもなかった」と同じ族。
+    数えるのは `trend.over_lag`（毎周 `trend` が印字する ＝ **次の回は覚えていなくてよい**）。
+
+    **`measured` では書きません** —— 帯の2点組の分母は `measured` の刻を数えており
+    （`trend.informative`/`gate_span`）、そこへ入れると**測っている物差しを測っている最中に
+    取り替える**ことになります。別の event 名で残し、読むだけにしてあります。
+    """
+    ledger("views_over", vid, views_live=live, views_ledger=live - over,
+           over=over, age_h=round(age_h, 1))
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
@@ -243,6 +260,8 @@ def cmd_status(a):
         age = (now_jst() - yt.when(v)).total_seconds() / 3600
         # 2026-09-10 12:4x: **台帳より高い読みを捨てない**（`over_ledger` の註。追加 0単位）。
         over = over_ledger(v["id"], v["views"], lrows)
+        if over:
+            record_over(v["id"], v["views"], over, age)
         mark = f"  ** 台帳の最大より +{over}回 ＝ まだ台帳に無い（次の measure で拾うこと）" if over else ""
         print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['views']:5d}回 いいね{v['likes']:3d} 齢{age:5.0f}h {v['title'][:36]}{mark}")
     # 視聴者のコメントは 2026-09-07 20:4x まで1度も見ていなかった（`yt.viewer_comments()` の註）。

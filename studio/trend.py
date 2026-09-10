@@ -261,6 +261,63 @@ FLAT_STOP_H = 24.0
 SETTLED_ROUNDS = 3
 
 
+def _lag_evidence(pts: list[dict], k: int, low: int) -> dict:
+    """`pts[k]` の割れた読みの**低いほう**が、**遅れた複製で説明が付くか**。
+
+    返すのは 3つ: `floor`（窓の先頭でその本が持っていた値）・`explained`（`low >= floor` か）・
+    `held_h`（その値を台帳が**そのまま持っていた**なら何時間 前か。無ければ None）。
+
+    **判定に使うのは `explained`**（範囲）で、`held_h` は**証拠として並べるだけ**です ——
+    再生は減らないので、遅れた複製が返せるのは**その本がこの窓で通った値**、つまり
+    「窓の先頭の値 以上・いまの値 以下」。台帳が 41分ごとにしか見ていない以上、
+    **複製が座っている値を台帳が1度も書いていないことはあり得ます**（点と点のあいだ）ので、
+    完全一致だけを条件にすると、そこを第3の口に化かします。
+
+    **なぜこれが分ける物差しか**（2026-09-10 13:4x JST・optimizer・Opus）:
+    10:2x は「落ち着いたかは齢ではなく**推定が動かなかった周の数**」で分けました。
+    **その周の数は代理で、直接の問いは同じ回の中に既に書かれています** ——
+    この関数の呼び手（`shakes`）の覆る条件 (2)「`lag` の行の低いほうが、その本について
+    **台帳が前に書いた値のどれとも一致しない**回が出たら、低い側は遅れた複製ではない」。
+    **10:2x が手で撃った検算そのもの**（「低いほう 141 は 41分 前の台帳の行の値そのもの」・
+    19:1x の「低いほうの 637 は 2時間 前の台帳の行の値そのもの」）が、道具に入っていませんでした。
+
+    **代理が外れた実測**（この回に踏んだ・`1huadpEk6HY` 齢 148.1h・**5 対 6**）:
+    この本は **5 が 11周 続き、12:04 に 6 へ伸びた**。13:07 の 3回 読みが 5 と 6 に割れ、
+    高いほうの読みは 12:04・12:32・13:07 の **3周 とも 6** ＝ 周の数の門は
+    「推定が動いていない」と読み、**`still`（第3の口）と札を貼りました**。
+    **ところが低い 5 は、83分 前（11:44）の台帳の行の値そのもの**です ＝ 遅れの側。
+    **周の数は本の速さで意味が変わります** —— 3周 は 1本/日 の速い本では 1.7時間 ですが、
+    6日で 1回 しか伸びない本では、複製が古い値に座っている窓のほうがずっと長い。
+    **遅れは周ではなく時間で起きるので、周で数えると遅い本ほど第3の口に化けます。**
+
+    窓は `ENVELOPE_LAG_H`（6時間）——`recounts` が「遅れでは説明できない」と決めている
+    のと**同じ数を同じ向きに**使います（複製の遅れの実測は 最大 2.8時間・§6）。
+
+    **覆る条件**: (1) `still` が出た行の低い値が、窓を 12時間 に広げれば台帳に在る、
+    という回が出たら、窓は 6時間 では足りない（`ENVELOPE_LAG_H` ごと見直すこと ——
+    `recounts` と同じ数なので、片方だけ動かさない）。
+    (2) 低い値が台帳に在っても、その値が**その本の初回の測りより前**しか無いなら、
+    それは遅れではなく別の口（いまは 1本も無い）。
+    (3) 周の数（`rounds`）は返り値に残してあります —— 2つが割れた行を次の回が
+    列挙で比べられるように。3本 続けて同じ答えなら、片方を落としてよい。
+    """
+    out: dict = {"floor": None, "explained": False, "held_h": None}
+    if not pts[k].get("at"):
+        return out
+    now = _at(pts[k])
+    win = [q for q in pts[:k]
+           if q.get("at") and (now - _at(q)).total_seconds() / 3600.0 <= ENVELOPE_LAG_H]
+    if not win:
+        return out
+    out["floor"] = int(win[0]["views"])
+    out["explained"] = low >= out["floor"]
+    for q in reversed(win):
+        if int(q["views"]) == low:
+            out["held_h"] = (now - _at(q)).total_seconds() / 3600.0
+            break
+    return out
+
+
 def shakes(rows: list[dict]) -> list[dict]:
     """同じ周の 3回 読みで**値が割れた行**（`n_values > 1`）を並べ、
     **遅れている複製**か **第3の口**かを分ける。API 0単位。
@@ -287,12 +344,24 @@ def shakes(rows: list[dict]) -> list[dict]:
     `gv1u7n_pCAQ`（637 対 829・**192回**）は 3回 読みの並び次第で中央値が 637 に落ちます
     ＝ **`max` が直した当の -74回 の誤りへ戻ります。**
 
-    **分ける物差し（この回に決めた）: 「落ち着いた」は齢ではなく、推定が動かなかった周の数。**
-    この行を含めて直近 `SETTLED_ROUNDS` 周のあいだ、その本の**高いほうの読み**（＝ 推定）が
-    1度も動いていないのに読みが割れたら、それは遅れでは説明が付きません（遅れる先が無い）:
+    **分ける物差し（2026-09-10 13:4x に、周の数から移した ——`_lag_evidence` の註）:
+    低い読みが、その本が この窓（`ENVELOPE_LAG_H` 6時間）で通った値か。**
+    再生は減らないので、遅れた複製が返せるのは「窓の先頭の値 以上・いまの値 以下」だけ:
 
-        推定がこの周に動いた、または直近 3周 で動いていた   → **遅れ**（`lag`）
-        推定が 3周 とも同じなのに割れた                     → **第3の口**（`still`）
+        低い読み ≧ 窓の先頭の値   → **遅れ**（`lag`）
+        低い読み < 窓の先頭の値   → **第3の口**（`still`。遅れでは説明が付かない）
+
+    **10:2x はここに「推定が動かなかった周の数」を置きました。それは代理で、
+    13:4x に実物で外れました** —— `1huadpEk6HY`（齢 148.1h・**5 対 6**）は 5 が 11周 続いて
+    12:04 に 6 へ伸び、13:07 に割れた。高い読みは 3周 とも 6 ＝ 周の門は `still` と貼りますが、
+    **低い 5 は 83分 前の台帳の行の値そのもの**でした。**遅れは周ではなく時間で起きるので、
+    周で数えると「伸びるのが遅い本」ほど第3の口に化けます**（3周 は速い本で 1.7時間・
+    6日に1回しか伸びない本では複製が古い値に座る窓のほうが長い）。
+    `rounds` は返り値に残してあるので、2つが割れた行は次の回が列挙で比べられます。
+
+    **実物 15行 の列挙（13:4x に撃ち直した）: 15行 とも `lag`**（低い読みは 窓の先頭 から
+    0.09〜2.55時間 前に台帳がそのまま持っていた値 ＝ §6 の「複製の遅れの実測 最大 2.8時間」の中）。
+    **周の門と範囲の門は 14/15 で一致し、割れたのは `1huadpEk6HY` の 1行 だけ**でした。
 
     **実物 10行 の列挙（この回に撃った・§5 の教訓の形 4つ目「直した門が実物のどの形を通るかを
     台帳から列挙して確かめる」）**: 台帳の `n_values > 1` は **10行** で、**10行 とも `lag`**。
@@ -320,7 +389,9 @@ def shakes(rows: list[dict]) -> list[dict]:
             lo = int(p["views_min"]) if "views_min" in p else int(p["views"])
             hi = int(p["views"])
             window = [int(q["views"]) for q in pts[max(0, k + 1 - SETTLED_ROUNDS):k + 1]]
-            still = len(window) >= SETTLED_ROUNDS and len(set(window)) == 1
+            # **分けるのは「低い値を、台帳が前に持っていたか」**（2026-09-10 13:4x に
+            # 周の数から移した。`held_before` の註・この関数の覆る条件 (2) が正本だった）。
+            ev = _lag_evidence(pts, k, lo)
             out.append({
                 "id": vid,
                 "age_h": float(p["age_h"]),
@@ -329,7 +400,9 @@ def shakes(rows: list[dict]) -> list[dict]:
                 "high": hi,
                 "span": hi - lo,
                 "rounds": window,
-                "verdict": "still" if still else "lag",
+                "floor": ev["floor"],
+                "held_h": ev["held_h"],
+                "verdict": "lag" if ev["explained"] else "still",
             })
     return out
 
@@ -341,20 +414,20 @@ def shakes_line(rows: list[dict]) -> str:
     still = [s for s in sh if s["verdict"] == "still"]
     if not sh:
         return ("**同じ周に割れた読み（`n_values > 1`）: 0行** ＝ §7 (h) の覆る条件 (3) の分子は **0**"
-                "（`trend.shakes` の註。分けるのは齢ではなく**推定が動かなかった周の数**）。")
+                "（`trend.shakes` の註。分けるのは齢でも周の数でもなく、**低い読みを台帳がこの窓で通ったか**）。")
     worst = max(sh, key=lambda s: s["span"])
     old = [s for s in sh if s["age_h"] > 48]
     return (f"**同じ周に割れた読み（`n_values > 1`）: {len(sh)}行**（うち齢 48h 超 **{len(old)}行**）"
             f" —— **遅れ {len(sh) - len(still)}行 / 第3の口 {len(still)}行**"
-            f"（`trend.shakes`。**分けるのは齢ではなく、推定が動かなかった周の数**）。"
+            f"（`trend.shakes`。**分けるのは齢でも周の数でもなく、「低い読みを台帳がこの窓で通ったか」**）。"
             f"いちばん大きい割れは {worst['id']} 齢 {worst['age_h']:.1f}h の **{worst['span']}回**"
             f"（{worst['low']} 対 {worst['high']}）。"
             + (f"**第3の口が出ています** ＝ §7 (h) の覆る条件 (3) が本当に引かれました: "
-               + "・".join(f"{s['id']} 齢 {s['age_h']:.1f}h（{s['rounds']} と動かないまま {s['low']} 対 {s['high']}）"
+               + "・".join(f"{s['id']} 齢 {s['age_h']:.1f}h（低い {s['low']} は窓の先頭 {s['floor']} より下 ＝ 遅れでは説明が付かない・{s['low']} 対 {s['high']}）"
                            for s in still)
                + "。**`recounts()` が同じ本を挙げているかを先に見ること**（`trend.shakes` の覆る条件 (1)）。"
                if still else
-               "**齢 48h 超の行が割れても、その周に推定が動いていれば遅れの側です** ——"
+               "**齢 48h 超の行が割れても、低いほうがこの窓で本が通った値なら遅れの側です** ——"
                f"この道の分子は **0** のまま（`trend.shakes` の覆る条件 (1)）。"))
 
 def flats(rows: list[dict]) -> dict:
@@ -1396,6 +1469,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # §7 (h) の覆る条件 (3) を、撃つだけで分母と分子まで読めるように（2026-09-10 10:2x・optimizer・Opus）。
     # **齢では分けません** —— 引いた当の行（齢 96.3h）が遅れの側だった（`trend.shakes` の註）。
     out.append(shakes_line(rows))
+    # `cli.over_ledger` の 3つ の覆る条件は周をまたいで数える物で、印を残す口が無かった
+    # （2026-09-10 13:2x・optimizer・Opus。`trend.over_lag` の註）。
+    out.append(over_lag_line(rows))
     # **この一文は最後に置くこと**（`tests/test_studio_trend.py` が末尾で止めている）。
     out.append(
         "並びの再生は **それまでの最大（単調な包絡・数え直しの峰は落とす）** です（`trend.envelope` の註・2026-09-09 20:0x／2026-09-10 08:0x）"
@@ -1612,6 +1688,103 @@ def pair_gap(rows: list[dict], at: dt.datetime | None = None) -> dict:
     return {"last": last, "gap_min": gap,
             "pairs": gap is None or gap >= MIN_PAIR_MIN,
             "band": DEAD_START <= at.hour < DEAD_END}
+
+
+#: `over_ledger` の印が出てから、台帳がその数に追いつくまでに要った `measure` の回数の門。
+#: **3周**（`over_ledger` の覆る条件 (1)「次の measure が 3周 続けてその数に届かなければ、
+#: 高い側は複製ではなく別の口」）。定数はそちらの註が正本で、ここは写しではなく同じ数を持つ口。
+OVER_CATCH_ROUNDS = 3
+
+
+def over_lag(rows: list[dict]) -> dict:
+    """`status` が印字した「台帳より高い読み」を、**次の `measure` が拾ったか**を数える。API 0単位。
+
+    **なぜ（2026-09-10 13:2x JST・optimizer・Opus）**: `cli.over_ledger` は 12:4x に
+    印字だけを足しました（追加 0単位）。その註には覆る条件が **3つ** 在り、
+    **3つ とも「周をまたいで数える」もの**です:
+
+        (1) 印の次の `measure` が **3周 続けて**その数に届かない → 高い側は複製ではなく別の口
+        (2) 印が **1度も出ないまま 7本** 過ぎた           → 12:25 の 658 は一度きりの揺れ ＝ 口を外す
+        (3) 印が **毎周 出る**                            → 拾う側（`settle_stats` の `reads`）を上げる
+
+    **ところが、印が出たことを残す口が どこにもありませんでした** ——
+    `status` は印字して捨て、台帳には 1行 も入らない。
+    ＝ 次の回は**前の回の端末の出力を覚えている**しかなく、3つ とも構造として引けません。
+    **`flats` の「その 3本 を数える所が、どこにもなかった」（08:4x）と同じ族**で、
+    §5 の言う repo でいちばん多い壊れ方（**言っている所と、している所が別**）です。
+
+    → `cmd_status` が印字と同時に `views_over` を1行 書き、ここが数えます（どちらも **追加 0単位**）。
+
+    **数え方**: 印 1件 ＝ 「その刻に、その本の生の読みが `views_live` だった」。
+    そのあとの `measured`（同じ本）を順に見て、**`views_live` 以上**を書いた最初の行が「追いついた」。
+    追いつくまでの **分** と **measure の回数** を返す。まだなら `catch=None`。
+
+    **返り値の `marks` は判定した実物そのもの**（§5 の教訓の形 4つ目 —— 次の回が列挙で確かめられる）。
+
+    **この数は envelope を動かしません。** 高い読みを `measured` として台帳に入れると、
+    **帯の2点組の分母が変わります**（`informative`/`gate_span` は `measured` の刻を数えており、
+    その註は「この分母は帯の中で measure を撃った回にしか増えません」と書いている）＝
+    **測っている物差しを、測っている最中に取り替えることになります。**
+    だから別の event 名で残し、**読むだけ**にしてあります。
+
+    **覆る条件**: (1) `late`（追いつかないまま measure が `OVER_CATCH_ROUNDS` 回 過ぎた印）が
+    1件でも出たら、`over_ledger` の (1) が引かれた ＝ そのときは高い読みが**どの順番の読みか**を数えること。
+    (2) 印 1件あたりの追いつきが 1回（＝ 次の measure）で 5件 続いたら、遅れは 1周 以内 ＝
+    §7 (a) の「平らが読みの側か」は 1周 前の行を見るだけで足り、この口は数えるのをやめてよい。
+    (3) 印が 1周 に 1件 以上 出る周が 3周 続いたら `over_ledger` の (3) ＝ `settle_stats` の `reads` を上げる側へ。
+    (4) `views_over` に `views_ledger` が入っているのは、印の時点の台帳の最大を**後から数え直さない**ため
+    （`recounts` が峰を落とすと、後から数え直した最大は印の時点と違う値になります）。
+    """
+    marks = [r for r in rows if r.get("event") == "views_over" and r.get("at")]
+    ms: list[dict] = []
+    for m in marks:
+        t = _at(m)
+        vid = m.get("id")
+        target = m.get("views_live")
+        later = [r for r in rows
+                 if r.get("event") == "measured" and r.get("id") == vid
+                 and r.get("at") and _at(r) > t and isinstance(r.get("views"), int)]
+        later.sort(key=_at)
+        hit = next((i for i, r in enumerate(later)
+                    if isinstance(target, int) and r["views"] >= target), None)
+        ms.append({
+            "at": m["at"], "id": vid, "views_live": target,
+            "views_ledger": m.get("views_ledger"), "over": m.get("over"),
+            "age_h": m.get("age_h"),
+            "catch_rounds": None if hit is None else hit + 1,
+            "catch_min": None if hit is None else
+            (_at(later[hit]) - t).total_seconds() / 60.0,
+            "measures_since": len(later),
+        })
+    caught = [m for m in ms if m["catch_rounds"] is not None]
+    late = [m for m in ms
+            if m["catch_rounds"] is None and m["measures_since"] >= OVER_CATCH_ROUNDS]
+    return {"marks": ms, "n": len(ms), "caught": caught, "late": late,
+            "gate_rounds": OVER_CATCH_ROUNDS}
+
+
+def over_lag_line(rows: list[dict]) -> str:
+    """`over_lag` を1行にする（`trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
+    o = over_lag(rows)
+    if o["n"] == 0:
+        return ("**台帳より高い読みの印（`status` の `views_over`）: 0件** —— "
+                "`cli.over_ledger` の覆る条件 (2)（1度も出ないまま 7本 過ぎたら口を外す）の分子は "
+                "**まだ 0** です。**この 0 は「起きていない」ではなく「印字だけで捨てていた回は数えていない」** ——"
+                "口を足したのは 2026-09-10 13:2x で、それより前の印（12:25 の 658回）は台帳に在りません。")
+    cs = [m["catch_rounds"] for m in o["caught"]]
+    mins = [m["catch_min"] for m in o["caught"]]
+    body = (f"**台帳より高い読みの印: {o['n']}件**（`views_over`）—— "
+            f"次の `measure` が拾えた **{len(o['caught'])}件**")
+    if cs:
+        body += (f"（measure **{min(cs):.0f}〜{max(cs):.0f}回**・"
+                 f"**{min(mins):.0f}〜{max(mins):.0f}分**）")
+    body += (f"・**{o['gate_rounds']}回 過ぎても届かない {len(o['late'])}件**"
+             f"（1件でも出たら `cli.over_ledger` の覆る条件 (1) ＝ 高い側は複製ではなく別の口）。")
+    if o["late"]:
+        body += "  届かない印: " + "・".join(
+            f"{m['id']} 齢{m['age_h']}h 生{m['views_live']} 対 台帳{m['views_ledger']}"
+            for m in o["late"])
+    return body
 
 
 def pair_gap_line(rows: list[dict], at: dt.datetime | None = None) -> str:
