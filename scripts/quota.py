@@ -97,10 +97,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from statistics import median
 
 JST = timezone(timedelta(hours=9))
 ROOT = Path(__file__).resolve().parent.parent
@@ -1318,17 +1320,87 @@ def margin_series(n: int = 8) -> list[tuple[str, float]]:
     return sorted(seen.items())[-n:]
 
 
+#: 余裕の列を**何桁で印字するか**（2026-09-11 08:4x・optimizer・Opus）。
+#: **2桁 では 1周ぶんの動きが印字に出ません** —— 実測の 1周は **-0.007**
+#: （3.022 → 3.015・09/11 07:34→08:12）で、2桁 に丸めると **「3.02 → 3.02」** ＝
+#: **下がっているのに、読む側には平らに見えます**。`margin_step()` の註。
+MARGIN_DIGITS = 3
+
+
+def margin_step(xs: list[tuple[str, float]] | None = None) -> dict | None:
+    """**余裕の列の「1周ぶんの動き」と、門までの残り周**（2026-09-11 08:4x・optimizer・Opus）。
+
+    返すもの: `step`（1周あたり・負なら下がっている）・`laps_to_gate`（門を切るまでの周・
+    下がっていなければ `None`）・`gap_min`（列の刻の中央値）・`eta_min`。API 0単位。
+
+    **なぜ足したか —— この回に踏んだ。** 07:5x（この列を台帳から読む形にした回）は
+    §7「いまの数」に **「余裕は残り時間が減るぶん単調に下がります（3.09 → 3.05 → 3.02）
+    ＝ 門 3.0倍 は次の周に切ります」** と書きました。**2周 たっても切っていません。**
+
+    **向きは合っていて、速さが 9倍 ちがいました。** 掃いて確かめた（床に従う軌跡・
+    `per_lap` 0.552・遅れ 1.74分・床 36分 ＝ 実際の速さ 0.878 %/時 ＜ 要る 0.916 %/時):
+
+        t=0h 3.078 → 2h 3.066 → 6h 3.032 → 10h 2.979 → 16h 2.796 → 22h 1.321
+
+    ＝ **1周（0.63時間）で -0.004**。台帳の実測は **-0.007**（3.022 → 3.015）。
+    **「単調に下がる」は正しい**（床に従う速さが、要る速さより少しだけ遅いから）——
+    **「次の周」が外れたのは、07:5x が見た 3.09 → 3.05 → 3.02（1周 -0.035）が
+    手で送られた列で、`per_lap` と遅れの引き直しがそこに混ざっていたからです**
+    （`margin_series` の註が、その混ざりを止めた当のもの）。
+    ＝ **その列で速さを読んではいけません。速さは、台帳が積んだ点でしか読めません。**
+
+    **覆る条件**: (1) 実測の 1周 が **3周 続けて 0.000**（＝ 桁の下）なら、
+    下がりは残り時間ではなく `per_lap` の引き直しだけで動いている ＝
+    この関数ごと外し、門は `--pace` の 1点で読むこと。
+    (2) `laps_to_gate` が **2度 続けて外れたら**（言った周を過ぎても切らない）、
+    直近2点ではなく列の傾き（最小二乗）へ移すこと。
+    (3) 床（`pace()` の間隔）を変えた周は、その前後の点をまたいで速さを読まないこと
+    —— 実際の速さが変わるので、傾きもそこで折れます。
+    """
+    xs = margin_series() if xs is None else xs
+    if not xs or len(xs) < 2:
+        return None
+    (a0, v0), (a1, v1) = xs[-2], xs[-1]
+    step = v1 - v0
+    gaps = []
+    for (p_at, _), (n_at, _) in zip(xs, xs[1:]):
+        p, n = _parse_iso(p_at), _parse_iso(n_at)
+        if p and n and n > p:
+            gaps.append((n - p).total_seconds() / 60)
+    gap_min = median(gaps) if gaps else None
+    laps = eta = None
+    if step < 0 and v1 > CEILING_MARGIN_GATE:
+        laps = int(math.ceil((v1 - CEILING_MARGIN_GATE) / (-step)))
+        eta = laps * gap_min if gap_min else None
+    return {"step": step, "laps_to_gate": laps, "gap_min": gap_min, "eta_min": eta,
+            "last": v1, "at": a1}
+
+
 def margin_line(n: int = 8) -> str:
-    """`margin_series` を1行にする（`--pace` が印字する。**手で並べないこと**）。"""
+    """`margin_series` を1行にする（`--pace` が印字する。**手で並べないこと**）。
+
+    桁は `MARGIN_DIGITS`（**2桁 では 1周ぶんの動きが消えます** —— その註）。
+    """
     xs = margin_series(n)
     if not xs:
         return ("      余裕の列: **まだ 1点も積まれていません**（`record_model_choice` が "
                 "`reach_ceiling_margin` を書き始めた回より前 ＝ 次の周から埋まります）")
-    body = " → ".join(f"{v:.2f}" for _, v in xs)
-    hit = [f"{a[5:16]} {v:.2f}" for a, v in xs if v < CEILING_MARGIN_GATE]
+    d = MARGIN_DIGITS
+    body = " → ".join(f"{v:.{d}f}" for _, v in xs)
+    hit = [f"{a[5:16]} {v:.{d}f}" for a, v in xs if v < CEILING_MARGIN_GATE]
+    st = margin_step(xs)
+    words = ""
+    if st is not None:
+        words = f" —— 1周 **{st['step']:+.{d}f}**"
+        if st["laps_to_gate"] is not None:
+            eta = f"・約 {st['eta_min']:.0f}分 後" if st["eta_min"] else ""
+            words += f" ＝ 門まで **あと {st['laps_to_gate']}周**{eta}"
+        elif st["step"] >= 0:
+            words += "（下がっていません ＝ 門は当分 切りません）"
     return (f"      余裕の列（周ごと・その周が見た数・`quota.margin_series`）: **{body}**"
             f"（{len(xs)}周・門 {CEILING_MARGIN_GATE:.1f}倍）"
-            + (f" —— **切った周: {'・'.join(hit)}** ＝ 掃き直すこと" if hit else " ＝ **門の上**"))
+            + (f" —— **切った周: {'・'.join(hit)}** ＝ 掃き直すこと" if hit else " ＝ **門の上**")
+            + words)
 
 
 def sub_model(now: datetime | None = None, role: str | None = None) -> tuple[str, str]:
