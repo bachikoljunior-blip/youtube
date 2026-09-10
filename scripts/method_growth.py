@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -152,6 +153,73 @@ def measure7_split(text: str) -> dict:
     return {n: _count(lines[a:b]) for n, (a, b) in zip(SPAN7_NAMES, section7_spans(lines))}
 
 
+#: §9 以降の「1本の節」の見出し（`## <番号>. <N>本目（<日付>・`<id>`）…`）。
+#: **id で挟みます** —— 節の番号は本が増えるたびに動くので、窓の両端で同じ節を指せません。
+BOOK_HEAD = re.compile(r"^## (\d+)\. .*?`(\d{4}-\d{2}-\d{2}-[^`]+)`")
+
+#: **毎周 読むのは「直近の1本」だけ**（冒頭「この文書の読み方」）。どちらの節かは枠の状態で変わる
+#: （きょうの枠が公開前なら `hourly` は 1つ 手前を読む）ので、**いちばん新しい 2つ**を見ます。
+BOOK_READ = 2
+
+
+def book_sections(lines: list[str]) -> list[dict]:
+    """**§9 以降の「1本の節」**の 番号・id・行の範囲（古い順）。
+
+    **なぜ足したか**（2026-09-11 06:5x JST・optimizer・Opus。**この回に数えて踏んだ**）:
+    冒頭「この文書の読み方」が毎周 読ませているのは 4つ で、**4つ目が「§9 以降のうち 直近の1本」**です。
+    12:1x（§0〜§6・§8）と 23:5x（§7 の 3塊）の物差しは、**その 4つ目を 1字も見ていませんでした。**
+
+    **見ていない側がいちばん大きくなっていました**（この回の実測・本文の字）:
+
+        §14（09/11 の本・`hourly` が読む側）  **24,292字**   ← 引用 0行
+        §4                                   12,969字
+        §5 本文                              11,958字
+        §13（5本目）                          6,002字   §15（7本目）  3,791字
+
+    ＝ **§14 だけが 兄弟の 4倍 で、毎周 読む物のどれよりも大きい。**
+    節の頭は「**この節は『いまの状態』を上書きする 1塊**（§13 と同じ形）」と書いており、
+    §13・§15 はそのとおりに小さいまま ＝ **形が悪いのではなく、§14 でだけ守られていません。**
+
+    **なぜ守られなかったか**: §14 が自分に置いた門は **行の門**でした
+    （「この節の伸びを 1周 +5行 以内に」）。行は守られています —— 直近 20周 は
+    10:2x の塊へ **1周 1行**ずつ畳み込んでおり、その 1行 が
+    **204〜1,043字**（中央 約 550字）です。
+    ＝ 冒頭「この文書の読み方」が 11:0x に名指しした形そのもの
+    （**「表と長い行に対して、行の門は構造として盲です」**）が、
+    **行の門しか置いていない唯一の節**に残っていました。
+
+    **この道具は数えるだけです** —— §14 は**きょうの枠の本 ＝ `hourly` の持ち場**（§5）なので、
+    畳むかどうかは hourly が決めること（§7 (i) が §4 についてそう書いたのと同じ形）。
+
+    **覆る条件**: (1) 本の節の見出しから id（バッククォートの中の `YYYY-MM-DD-…`）が消えたら、
+    挟みは黙って外れます —— **`ValueError` で止めます**（黙って 0 を返さないこと）。
+    (2) 「直近の1本」が 2つ で足りなくなったら（1周に 3本 の節を読む形に変わったら）`BOOK_READ` を上げること。
+    (3) 本の節を別ファイルへ割る判断が出たら、この物差しは作り直し（点は 1点目から取り直す）。
+    """
+    heads = [(int(m.group(1)), m.group(2), i)
+             for i, l in enumerate(lines) if (m := BOOK_HEAD.match(l)) and int(m.group(1)) >= 9]
+    if not heads:
+        raise ValueError("§9 以降に本の節が 1つも在りません —— 挟みが外れています（註の覆る条件 (1)）")
+    out = []
+    for k, (num, sid, i) in enumerate(heads):
+        end = (heads[k + 1][2] if k + 1 < len(heads)
+               else next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines)))
+        out.append({"num": num, "id": sid, "a": i, "b": end})
+    return out
+
+
+def books_all(text: str) -> dict[str, dict]:
+    """**§9 以降の本の節を全部**、id ごとに数える（窓の頭で同じ id を引くため）。"""
+    lines = text.split("\n")
+    return {b["id"]: _count(lines[b["a"]:b["b"]]) for b in book_sections(lines)}
+
+
+def measure_books(text: str) -> dict[str, dict]:
+    """**毎周 読む「直近の1本」の候補**（いちばん新しい `BOOK_READ` 個）を id ごとに数える。"""
+    lines = text.split("\n")
+    return {b["id"]: _count(lines[b["a"]:b["b"]]) for b in book_sections(lines)[-BOOK_READ:]}
+
+
 def rounds() -> list[datetime]:
     """周の刻（`round` で畳む ＝ 1周に 2行 入るので）。古い順。"""
     seen: set[str] = set()
@@ -210,7 +278,17 @@ def points(laps: int = 6, n: int = 3, after: datetime | None = None) -> list[dic
             s7a, s7b = measure7(a), measure7(b)
         except (KeyError, ValueError):
             s7a = s7b = None
+        # **本の節**（毎周 読む 4つ目・2026-09-11 06:5x）。**id で挟む** —— 節の番号は本が増えると動く。
+        try:
+            bk_a, bk_b = books_all(a), measure_books(b)
+            books = {sid: {"now": cb["body_chars"],
+                           "d": None if sid not in bk_a else cb["body_chars"] - bk_a[sid]["body_chars"],
+                           "per_lap": None if sid not in bk_a else (cb["body_chars"] - bk_a[sid]["body_chars"]) / laps}
+                     for sid, cb in bk_b.items()}
+        except (KeyError, ValueError):
+            books = None
         out.append({
+            "books": books,
             "from": head, "to": tail, "laps": laps,
             "d_lines": mb["body_lines"] - ma["body_lines"],
             "d_body": mb["body_chars"] - ma["body_chars"],
@@ -298,7 +376,46 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
             "**`--split` で どの塊が吸ったかを名指ししてから、§5／§6 の形を当てること**"
             if len(s7[-2:]) == 2 and len(over) == 2 else
             f"引かれません（直近 2窓 で越えたのは {len(over)} つ）"))
+    out += book_report(ps)
     return "\n".join(out)
+
+
+def book_report(ps: list[dict]) -> list[str]:
+    """**毎周 読む 4つ目（§9 以降のうち 直近の1本）**の水準と伸び（2026-09-11 06:5x に足した）。
+
+    上の 2つ の物差しは「伸び」を見ますが、**ここは水準も印字します** ——
+    この節は 1本 出るたびに作り直される（＝ 新しい節は 0 から始まる）ので、
+    伸びだけでは「兄弟の 4倍 の節が居る」ことが 1度も鳴りません。
+    """
+    bs = [p for p in ps if p.get("books")]
+    if not bs:
+        return []
+    out = ["**毎周 読むのに、上の 2つ が見ていない 4つ目**（§9 以降のうち **直近の1本**"
+           "・冒頭「この文書の読み方」の 4つ目・2026-09-11 06:5x に足した）"]
+    last = bs[-1]["books"]
+    for sid, c in last.items():
+        out.append(f"  {sid}  いま 本文 **{c['now']:,}字**")
+    for p in bs:
+        for sid, c in p["books"].items():
+            if c["per_lap"] is None:
+                out.append(f"  {p['from'].astimezone(JST):%m/%d %H:%M} → {p['to'].astimezone(JST):%m/%d %H:%M} JST"
+                           f"   {sid}  **この窓の頭には無い節**（＝ 伸びではなく、書き下ろし {c['now']:,}字）")
+            else:
+                out.append(f"  {p['from'].astimezone(JST):%m/%d %H:%M} → {p['to'].astimezone(JST):%m/%d %H:%M} JST"
+                           f"   {sid}  本文 {c['d']:+,d}字  ＝ 1周 **{c['per_lap']:+.0f}字**")
+    # 門は上の 2つ と同じ（1周 +300字・2窓 続いたら）。**節ごとに引きます。**
+    drawn = []
+    for sid in last:
+        tail2 = [p["books"].get(sid) for p in bs[-2:]]
+        vals = [c["per_lap"] for c in tail2 if c and c["per_lap"] is not None]
+        if len(vals) == 2 and all(v > CHAR_GATE for v in vals):
+            drawn.append(f"{sid}（{vals[0]:+.0f} / {vals[1]:+.0f}）")
+    out.append(f"  字の門 1周 +{CHAR_GATE}字: " + (
+        "**引かれました** —— " + "・".join(drawn) +
+        "。**この節は `hourly` の持ち場**（きょうの枠の本・§5）なので、"
+        "畳むかは hourly が決めること —— optimizer は数を並べるまで"
+        if drawn else "引かれません（直近 2窓 とも越えた節は 0 つ）"))
+    return out
 
 
 def main() -> int:

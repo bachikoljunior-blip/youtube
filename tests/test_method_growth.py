@@ -225,3 +225,98 @@ def test_positive_control_作業ツリーを差し替えると_いま_だけが�
     bw = [l for l in before.split("\n") if "JST   本文" in l]
     aw = [l for l in after.split("\n") if "JST   本文" in l]
     assert bw == aw
+
+
+# ---- 4つ目の塊: §9 以降のうち「直近の1本」（2026-09-11 06:5x・optimizer・Opus）----
+#
+# 冒頭「この文書の読み方」が毎周 読ませているのは 4つ で、4つ目が「§9 以降のうち 直近の1本」。
+# 12:1x（§0〜§6・§8）と 23:5x（§7 の 3塊）の物差しは、**その 4つ目を 1字も見ていなかった**。
+# 実測（この回）: §14 は **24,292字**（§13 6,002・§15 3,791 の 4倍）で、
+# 毎周 読む物のどれよりも大きい。**§14 が自分に置いた門は行の門だけ**で、
+# 冒頭が 11:0x に名指しした「行の門は表と長い行に対して構造として盲」に、そのまま当たっている。
+# 覆る条件は `method_growth.book_sections` の註。
+
+def test_本の節を_id_で挟めること():
+    """節の**番号は本が増えると動く**ので、窓の両端で同じ節を指すには id で挟むこと。"""
+    bs = M.book_sections(M.worktree_text().split("\n"))
+    assert [b["num"] for b in bs] == sorted(b["num"] for b in bs)
+    assert all(b["num"] >= 9 for b in bs)
+    assert all(b["a"] < b["b"] for b in bs)
+    ids = [b["id"] for b in bs]
+    assert len(ids) == len(set(ids))                  # id は 1本 1つ
+    assert all(i.startswith("2026-") for i in ids)
+
+
+def test_毎周読む候補は_いちばん新しい_2つ():
+    """きょうの枠が公開前なら `hourly` は 1つ 手前を読む ＝ 候補は 2つ（`BOOK_READ`）。"""
+    text = M.worktree_text()
+    allb = M.books_all(text)
+    live = M.measure_books(text)
+    assert len(live) == M.BOOK_READ == 2
+    tail = [b["id"] for b in M.book_sections(text.split("\n"))][-2:]
+    assert list(live) == tail
+    assert all(live[k] == allb[k] for k in live)      # 同じ挟みで数えていること
+
+
+def test_本の節は_毎回読む側にも_3塊_にも入らないこと():
+    """**別の数**（足さないこと）—— §9 以降は `measure`／`measure7` の外に在る。"""
+    text = M.worktree_text()
+    lines = text.split("\n")
+    head9 = M._section_bounds(lines, "## 9.")
+    for a, b in M.section7_spans(lines):
+        assert b <= head9
+    for b in M.book_sections(lines):
+        assert b["a"] >= head9
+
+
+def test_positive_control_本の節の伸びは他の_2つ_に出ないこと():
+    """**壊したら落ちるまで撃つ** —— 本の節に 800字 足しても `measure`／`measure7` は動かない。
+
+    ＝ 12:1x と 23:5x の物差しが 4つ目を **1字も見ていない**ことの、道具の側の証拠。
+    """
+    text = M.worktree_text()
+    sid = list(M.measure_books(text))[-1]
+    lines = text.split("\n")
+    b = [x for x in M.book_sections(lines) if x["id"] == sid][0]
+    fat = "\n".join(lines[:b["b"]] + ["Y" * 800] + lines[b["b"]:])
+    assert M.measure(fat) == M.measure(text)
+    assert M.measure7(fat) == M.measure7(text)
+    assert M.measure_books(fat)[sid]["body_chars"] == M.measure_books(text)[sid]["body_chars"] + 800
+
+
+def test_本の節の挟みが外れたら黙って_0_を返さずに止まること():
+    """見出しから id（バッククォートの中の日付）が消えたら止まること（註の覆る条件 (1)）。"""
+    with pytest.raises(ValueError):
+        M.book_sections(["## 9. 最初の1本", "A"])          # id が無い
+
+
+def _p(head, per_lap):
+    return {"from": _at("2026-09-10 00:00"), "to": _at("2026-09-10 06:00"),
+            "books": {head: {"now": 9999, "d": int(per_lap * 6), "per_lap": per_lap}}}
+
+
+def test_本の節の門は_2窓_続いたときだけ引く():
+    """上の 2つ と同じ門（1周 +300字・2窓 続いたら）を、**節ごとに**引くこと。"""
+    one = M.book_report([_p("x", 400), _p("x", 10)])
+    assert "引かれません" in one[-1]
+    two = M.book_report([_p("x", 400), _p("x", 400)])
+    assert "**引かれました**" in two[-1] and "x（+400 / +400）" in two[-1]
+    # **判定は hourly**（§5・きょうの枠の本）—— optimizer は数を並べるまで
+    assert "hourly" in two[-1]
+
+
+def test_新しい節は伸びではなく書き下ろしと言うこと():
+    """1本 出るたびに節は 0 から始まるので、**その窓を「伸び」と呼ばないこと**。"""
+    out = M.book_report([{"from": _at("2026-09-10 00:00"), "to": _at("2026-09-10 06:00"),
+                          "books": {"new-one": {"now": 3791, "d": None, "per_lap": None}}}])
+    assert "この窓の頭には無い節" in "\n".join(out)
+    assert "書き下ろし 3,791字" in "\n".join(out)
+
+
+def test_報告に_4つ目_の水準が出ること():
+    """**水準も印字する** —— 伸びだけでは「兄弟の 4倍 の節が居る」が 1度も鳴らない。"""
+    out = M.report()
+    live = M.measure_books(M.worktree_text())
+    assert "毎周 読むのに、上の 2つ が見ていない 4つ目" in out
+    for sid, c in live.items():
+        assert f"{sid}  いま 本文 **{c['body_chars']:,}字**" in out
