@@ -318,6 +318,54 @@ def _lag_evidence(pts: list[dict], k: int, low: int) -> dict:
     return out
 
 
+def _settled_after(pts: list[dict], k: int, low: int, high: int) -> str | None:
+    """割れた読みの**あとの点**が、どちらの側に落ち着いたか。API 0単位。
+
+    返すのは `"low"`（低い側が水準になった ＝ **数え直しが本当だった**）・
+    `"high"`（高い側が続いた ＝ 低い読みは複製の揺れ）・`"between"`・
+    `None`（**まだ点が無い ＝ 言えない**）。
+
+    **なぜ足したか**（2026-09-10 17:3x JST・optimizer・Opus）:
+    `shakes` の覆る条件 (1) は「`still` が出たら、その本を `recounts()` も挙げているかを
+    **先に見ること**」と書いていますが、**その手は道具に入っておらず、次の回が手で見る形**でした
+    （METHOD が repo でいちばん多い壊れ方と呼ぶもの ——「言っている所と、している所が別」）。
+    いまは `shakes` が join して `recount` の札を貼ります。
+    **ただし札だけでは、どちらが本当かは決まりません** —— 数え直しなら**低いほうが新しい値**で、
+    複製の遅れなら**高いほうが新しい値**です。**この関数は、その決着を台帳が自分で付けるようにします**
+    （次の回は覚えていなくてよい・撃てば出る）。
+
+    **この回に踏んだ実物**（`lywTMXD6WDM` 齢 103.4h・**213 対 214**）: 台帳の 73点 は
+    **216（初点・齢 30.6h）→ 214（齢 32.6h）→ 214 が 71点 続く**で、**213 は 1度も無い**。
+    窓（6時間）の先頭は 214 なので `_lag_evidence` は「遅れでは説明が付かない」＝ `still` と貼りました。
+    **ところが同じ本は `recounts()` が挙げている 5本 の 1つ**（216→214）です ＝
+    **この本の再生は、実測で 1度 下がっています。**
+    `_lag_evidence` の「再生は減らない」という前提は、**数え直しの本では成り立ちません** ——
+    2度目の数え直し（214→213）なら、**低い 213 が新しい値で、高い 214 が遅れた複製**です。
+    ＝ **同じ形が「第3の口」と「2度目の数え直し」の両方で出るので、割れた瞬間には分けられません。**
+    分けられるのは**あと**です: 213 が水準になれば数え直し・214 に戻れば揺れ。
+
+    **`settle_stats` は最大を採る**ので、数え直しの側だったときは
+    **6時間（`ENVELOPE_LAG_H`）のあいだ古い高い値に座ります** ——
+    そこは `recounts()`／`ceiling()` が包絡を落として拾う所で、二重には直さないこと。
+
+    **覆る条件**: (1) `after == "low"` の行が出たら、その本の `still`／`recount` は
+    **数え直しの側で決着**（＝ 第3の口の分子には数えない）。
+    (2) `after == "high"` の行が出たら、低い読みは台帳の窓に無い値を返した複製 ＝
+    **そこで初めて第3の口**（`settle_stats` の覆る条件へ）。
+    (3) `recount` の札が付いた行が 3行 続けて `after == "high"` なら、
+    `recounts()` との join は効いていない ＝ 札を外して `still` に戻すこと。
+    """
+    later = [int(q["views"]) for q in pts[k + 1:]]
+    if not later:
+        return None
+    top = max(later)
+    if top >= high:
+        return "high"
+    if top <= low:
+        return "low"
+    return "between"
+
+
 def shakes(rows: list[dict]) -> list[dict]:
     """同じ周の 3回 読みで**値が割れた行**（`n_values > 1`）を並べ、
     **遅れている複製**か **第3の口**かを分ける。API 0単位。
@@ -382,6 +430,7 @@ def shakes(rows: list[dict]) -> list[dict]:
     3周 では「落ち着いた」を捉えきれない ＝ 周の数を `flats` の境目（いま 60.4時間）に合わせること。
     """
     out: list[dict] = []
+    recounted = {r["id"] for r in recounts(rows)}
     for vid, pts in series(rows).items():
         for k, p in enumerate(pts):
             if int(p.get("n_values", 1)) <= 1:
@@ -392,6 +441,14 @@ def shakes(rows: list[dict]) -> list[dict]:
             # **分けるのは「低い値を、台帳が前に持っていたか」**（2026-09-10 13:4x に
             # 周の数から移した。`held_before` の註・この関数の覆る条件 (2) が正本だった）。
             ev = _lag_evidence(pts, k, lo)
+            # **覆る条件 (1)（「その行の本を `recounts()` も挙げているかを先に見ること」）を、
+            # 次の回が手で見なくてよいように、ここで当てる**（2026-09-10 17:3x・`_settled_after` の註）。
+            if ev["explained"]:
+                verdict = "lag"
+            elif vid in recounted:
+                verdict = "recount"
+            else:
+                verdict = "still"
             out.append({
                 "id": vid,
                 "age_h": float(p["age_h"]),
@@ -402,7 +459,9 @@ def shakes(rows: list[dict]) -> list[dict]:
                 "rounds": window,
                 "floor": ev["floor"],
                 "held_h": ev["held_h"],
-                "verdict": "lag" if ev["explained"] else "still",
+                "recounted": vid in recounted,
+                "after": _settled_after(pts, k, lo, hi),
+                "verdict": verdict,
             })
     return out
 
@@ -412,23 +471,42 @@ def shakes_line(rows: list[dict]) -> str:
     撃つだけで分母と分子まで読めるように。次の回は覚えていなくてよい）。"""
     sh = shakes(rows)
     still = [s for s in sh if s["verdict"] == "still"]
+    rec = [s for s in sh if s["verdict"] == "recount"]
     if not sh:
         return ("**同じ周に割れた読み（`n_values > 1`）: 0行** ＝ §7 (h) の覆る条件 (3) の分子は **0**"
                 "（`trend.shakes` の註。分けるのは齢でも周の数でもなく、**低い読みを台帳がこの窓で通ったか**）。")
     worst = max(sh, key=lambda s: s["span"])
     old = [s for s in sh if s["age_h"] > 48]
+    lag_n = len(sh) - len(still) - len(rec)
+    after_txt = {"low": "低い側が水準になった ＝ **数え直しで決着**",
+                 "high": "高い側が続いた ＝ **第3の口の側**",
+                 "between": "あいだに落ちた ＝ まだ言えない",
+                 None: "**あとの点がまだ無い ＝ この回では言えない**"}
+    tail = ""
+    if rec:
+        tail += ("**数え直しの本で割れています**（`recounts()` が同じ本を挙げている ＝ "
+                 "`trend.shakes` の覆る条件 (1) を道具が当てた側。**第3の口には数えません**）: "
+                 + "・".join(
+                     f"{s['id']} 齢 {s['age_h']:.1f}h（低い {s['low']} は窓の先頭 {s['floor']} より下・"
+                     f"{s['low']} 対 {s['high']}。あとの点: {after_txt[s['after']]}）" for s in rec)
+                 + "。**この本の再生は実測で1度 下がっているので、「再生は減らない」を前提にした窓の門は当たりません** ——"
+                 "2度目の数え直しなら**低いほうが新しい値**です（`trend._settled_after` の註）。")
+    if still:
+        tail += ("**第3の口が出ています** ＝ §7 (h) の覆る条件 (3) が本当に引かれました: "
+                 + "・".join(
+                     f"{s['id']} 齢 {s['age_h']:.1f}h（低い {s['low']} は窓の先頭 {s['floor']} より下 ＝ "
+                     f"遅れでは説明が付かない・{s['low']} 対 {s['high']}。あとの点: {after_txt[s['after']]}）"
+                     for s in still)
+                 + "。**`recounts()` はこの本を挙げていません**（挙げていれば数え直しの側 ＝ 上の行）。")
+    if not rec and not still:
+        tail += ("**齢 48h 超の行が割れても、低いほうがこの窓で本が通った値なら遅れの側です** ——"
+                 "この道の分子は **0** のまま（`trend.shakes` の覆る条件 (1)）。")
     return (f"**同じ周に割れた読み（`n_values > 1`）: {len(sh)}行**（うち齢 48h 超 **{len(old)}行**）"
-            f" —— **遅れ {len(sh) - len(still)}行 / 第3の口 {len(still)}行**"
-            f"（`trend.shakes`。**分けるのは齢でも周の数でもなく、「低い読みを台帳がこの窓で通ったか」**）。"
+            f" —— **遅れ {lag_n}行 / 数え直しの本 {len(rec)}行 / 第3の口 {len(still)}行**"
+            f"（`trend.shakes`。**分けるのは齢でも周の数でもなく、「低い読みを台帳がこの窓で通ったか」**"
+            "・**その本を `recounts()` が挙げていれば数え直しの側**）。"
             f"いちばん大きい割れは {worst['id']} 齢 {worst['age_h']:.1f}h の **{worst['span']}回**"
-            f"（{worst['low']} 対 {worst['high']}）。"
-            + (f"**第3の口が出ています** ＝ §7 (h) の覆る条件 (3) が本当に引かれました: "
-               + "・".join(f"{s['id']} 齢 {s['age_h']:.1f}h（低い {s['low']} は窓の先頭 {s['floor']} より下 ＝ 遅れでは説明が付かない・{s['low']} 対 {s['high']}）"
-                           for s in still)
-               + "。**`recounts()` が同じ本を挙げているかを先に見ること**（`trend.shakes` の覆る条件 (1)）。"
-               if still else
-               "**齢 48h 超の行が割れても、低いほうがこの窓で本が通った値なら遅れの側です** ——"
-               f"この道の分子は **0** のまま（`trend.shakes` の覆る条件 (1)）。"))
+            f"（{worst['low']} 対 {worst['high']}）。" + tail)
 
 def flats(rows: list[dict]) -> dict:
     """**齢 48h 前の「平らな区間」が、そのあと伸びを取り戻したか**を数える。API 0単位。
@@ -2208,11 +2286,19 @@ def channel_line(rows: list[dict]) -> str:
     # **周で言うこと**（§7 (m) の門は「3周」・行ではない。`_flat_laps` の註）
     # **窓ぜんたいの増えではなく、いちばん新しい側の平らを見ること**（検査が捕まえた:
     # 窓の頭で伸びていても、いま 3周 動いていなければ (m) は引かれます）
+    # **`over` の回は (m) を読まないこと**（2026-09-10 17:3x・optimizer・Opus。
+    # `record_channel` の覆る条件 (1)「食い違ったら、この数でチャンネルが止まったかを読まない」が
+    # 引かれているのに、この行は同じ息で「チャンネルの側が止まっていないかを外すこと」と言っていた
+    # ＝ **言っている所と、している所が別**。門は引けても、読みは引けません）
     flat = ""
     if g["flat_laps"] >= 2:
         flat = (f"**総再生は {g['flat_laps']}周 続けて同じ読み**（門 {CHANNEL_FLAT_LAPS}周）"
-                + ("。**引かれました ＝ 本の題や形を疑う前に、チャンネルの側が止まっていないかを外すこと**"
-                   f"（§7 (m)）" if g["flat_laps"] >= CHANNEL_FLAT_LAPS
+                + (("。**引かれましたが、この窓では「チャンネルが止まった」と読めません** ——"
+                    f"同じ窓で本ごとの合計は {g['vid_sum']:+d}回 動いており（下）、総再生がそれを受け取っていない ＝"
+                    "`record_channel` の覆る条件 (1) の側です（§7 (m)）"
+                    if g["over"] else
+                    "。**引かれました ＝ 本の題や形を疑う前に、チャンネルの側が止まっていないかを外すこと**"
+                    "（§7 (m)）") if g["flat_laps"] >= CHANNEL_FLAT_LAPS
                    else f" ＝ **まだ引かれません**（あと {CHANNEL_FLAT_LAPS - g['flat_laps']}周）")
                 + "。")
     # **覆る条件 (1) を、次の回が手で数えなくてよいように道具が当てる**（`channel_video_delta` の註）
@@ -2228,10 +2314,14 @@ def channel_line(rows: list[dict]) -> str:
     return (f"**チャンネル 登録 {g['subs']}（{g['d_subs']:+d}）・総再生 {g['views']}（{g['d_views']:+d}）**"
             f"（{g['laps']}周・点 {g['n']}件・窓 {g['span_h']:.1f}時間 ＝ **{g['views_per_h']:+.1f}回/時**）。"
             f"{flat}登録率 ＝ {rate}。{cmp_}"
-            "**この数は本ごとの 0回 を読む前に見ること** —— チャンネルの総再生が動いていれば、"
-            "0回 は**その本の配りの側**です（動いていなければ、本ではなくチャンネルの側を疑う）。"
-            "**チャンネルの `viewCount` は本ごとの合計と別の刻みで動きます**"
-            "（覆る条件 (1) は `cli.record_channel` の註）。")
+            + ("**この窓では、総再生が動かないことを「チャンネルが止まった」と読まないこと** ——"
+               "本ごとの合計のほうが動いており、総再生はそれを受け取っていません"
+               "（`cli.record_channel` の覆る条件 (1) が引かれている ＝ 2つは別の刻みで動く）。"
+               if g["over"] else
+               "**この数は本ごとの 0回 を読む前に見ること** —— チャンネルの総再生が動いていれば、"
+               "0回 は**その本の配りの側**です（動いていなければ、本ではなくチャンネルの側を疑う）。")
+            + "**チャンネルの `viewCount` は本ごとの合計と別の刻みで動きます**"
+              "（覆る条件 (1) は `cli.record_channel` の註）。")
 
 
 def ready_checks(rows: list[dict], within_h: float = 48.0,

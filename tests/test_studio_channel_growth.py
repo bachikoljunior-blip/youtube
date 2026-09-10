@@ -277,3 +277,41 @@ def test_positive_control_stale_books_would_look_like_no_growth():
     g = trend.channel_growth(rows)
     assert g["vid_n"] == 2 and g["vid_fresh"] == 0                # 読み直した本は 0本
     assert g["vid_sum"] == 0                                      # 合計 0 は「測っていない」の 0
+
+
+# ---- `over` の回に §7 (m) を読ませない（2026-09-10 17:3x・optimizer・Opus。この回に実物で踏んだ） ----
+# **踏んだ形**: 総再生 84781 が 4周 続けて同じ読み（門 3周 ＝ 引かれる）で、同じ窓の本ごとの合計は
+# **+2回**（3本目 `lQHX9LJ80Sg` 685→687）。`record_channel` の覆る条件 (1) は「食い違ったら、この数で
+# **チャンネルが止まったかを読まないこと**」なのに、行は同じ息で「チャンネルの側が止まっていないかを
+# 外すこと」と言っていた ＝ **門は引けても、読みは引けません。**
+
+def _flat_over_rows() -> list[dict]:
+    """実物の形: 総再生が 3周 動かず・同じ窓で本だけ +2回。"""
+    return [_row("2026-09-10T15:24:00+09:00", 27, 84781),
+            _row("2026-09-10T16:00:00+09:00", 27, 84781),
+            _row("2026-09-10T16:41:00+09:00", 27, 84781),
+            _row("2026-09-10T17:26:00+09:00", 27, 84781),
+            _m("2026-09-10T15:24:00+09:00", "lQHX9LJ80Sg", 685, 53.3),
+            _m("2026-09-10T17:26:00+09:00", "lQHX9LJ80Sg", 687, 55.4)]
+
+
+def test_over_の回は門を引いても止まったとは読ませない():
+    rows = _flat_over_rows()
+    g = trend.channel_growth(rows)
+    assert g["flat_laps"] >= trend.CHANNEL_FLAT_LAPS and g["over"] is True
+    line = trend.channel_line(rows)
+    assert "引かれましたが、この窓では「チャンネルが止まった」と読めません" in line
+    assert "チャンネルの側が止まっていないかを外すこと" not in line
+    assert "動いていなければ、本ではなくチャンネルの側を疑う" not in line
+
+
+def test_positive_control_over_でなければ元の読みが出る():
+    """**陽性対照**: 食い違いが無ければ、同じ 3周 の平らで元の (m) の読みが出ること
+    （消したのではなく、`over` の回にだけ差し替えていること）。"""
+    rows = [r for r in _flat_over_rows() if r["event"] != "measured"]
+    rows += [_m("2026-09-10T15:24:00+09:00", "lQHX9LJ80Sg", 685, 53.3),
+             _m("2026-09-10T17:26:00+09:00", "lQHX9LJ80Sg", 685, 55.4)]
+    g = trend.channel_growth(rows)
+    assert g["flat_laps"] >= trend.CHANNEL_FLAT_LAPS and g["over"] is False
+    line = trend.channel_line(rows)
+    assert "チャンネルの側が止まっていないかを外すこと" in line

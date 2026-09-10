@@ -30,7 +30,9 @@ def _row(vid: str, age: float, views: int, *, n: int = 1, lo: int | None = None)
 
 # ---------- 実物（§5 の教訓の形 4つ目: 直した門が実物のどの形を通るかを列挙する） ----------
 
-def test_本物の台帳では割れた行は全部_遅れの側() -> None:
+def test_本物の台帳に第3の口は無い() -> None:
+    """**2026-09-10 17:3x に名前を直しました** —— 札は `lag` と `recount` の 2つ に増えており、
+    ここが見ているのは「`still`（第3の口）が 0行 か」＝ §7 (h) の覆る条件 (3) の分子です。"""
     sh = trend.shakes(_rows())
     assert sh, "本物の台帳に `n_values > 1` の行が 1つも無い —— measure が n_values を書いていない"
     still = [s for s in sh if s["verdict"] == "still"]
@@ -48,8 +50,15 @@ def test_齢_48h_超で割れた行は_低いほうが窓で通った値() -> No
     """
     sh = [s for s in trend.shakes(_rows()) if s["age_h"] > 48]
     assert sh, "齢 48h 超で割れた行が消えた —— (3) の分子が 0 に戻ったなら、この検査ごと見直すこと"
+    # **2026-09-10 17:3x に 3つ目の札が出ました**（`recount`）——`lywTMXD6WDM` 齢 103.4h・213 対 214。
+    # 低いほうは窓の先頭 214 より下ですが、**この本は `recounts()` が挙げている**（216→214）＝
+    # 「再生は減らない」を前提にした窓の門が当たらない本です（`trend._settled_after` の註）。
+    recounted = {r["id"] for r in trend.recounts(_rows())}
     for s in sh:
-        assert s["verdict"] == "lag"
+        assert s["verdict"] in ("lag", "recount")
+        if s["verdict"] == "recount":
+            assert s["id"] in recounted, f"数え直しの本でないのに `recount` と貼っている: {s}"
+            continue
         assert s["floor"] is not None and s["low"] >= s["floor"], \
             f"低い読みが窓の先頭より下なのに `lag` と呼んでいる: {s}"
 
