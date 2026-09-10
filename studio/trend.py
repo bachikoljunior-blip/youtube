@@ -1581,6 +1581,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # 公開**前**の本の処理の印（`cli.record_ready` の註 ＝ 印字だけにしない族の 4つ目）。
     out.append(ready_line(rows, now=now))
     out.append(analytics_line(rows, now=now))
+    cl = curve_line(rows)
+    if cl:
+        out.append(cl)
     # **この一文は最後に置くこと**（`tests/test_studio_trend.py` が末尾で止めている）。
     out.append(
         "並びの再生は **それまでの最大（単調な包絡・数え直しの峰は落とす）** です（`trend.envelope` の註・2026-09-09 20:0x／2026-09-10 08:0x）"
@@ -1711,6 +1714,44 @@ def analytics_line(rows: list[dict], now: dt.datetime | None = None) -> str:
             f"日ごとの再生 {d}。{_side(a['new'], '新しい作り')} 対 {_side(a['old'], '旧作り')}"
             f"——**%と秒で向きが逆になります**（判定は `hourly`・§5）。"
             f"窓の中の**登録の増え 合計 {a['subs']}**{sp}")
+
+
+
+def curve_state(rows: list[dict]) -> dict:
+    """台帳の `analytics_curve` を新／旧に分けてまとめる（**API 0単位**）。
+
+    **決めに使うのは 10% の刻**（**そこが新旧でいちばん離れている**・この口を足した回の実測）。
+    """
+    latest: dict[str, dict] = {}
+    for r in sorted((r for r in rows if r.get("event") == "analytics_curve"),
+                    key=lambda r: r["at"]):
+        latest[r["id"]] = r
+    def _side(want: bool) -> list[tuple[str, dict]]:
+        return [(r["id"], r["marks"]) for r in latest.values()
+                if bool(r.get("studio")) is want and r.get("marks")]
+    empty = [r["id"] for r in latest.values() if not r.get("marks")]
+    return {"new": _side(True), "old": _side(False), "empty": empty}
+
+
+def curve_line(rows: list[dict]) -> str:
+    """`curve_state` を1行にする（`trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
+    c = curve_state(rows)
+    if not c["new"] and not c["old"]:
+        return ""
+    def _fmt(side, name):
+        if not side:
+            return f"{name} なし"
+        p10 = sorted(m["p10"] for _, m in side)
+        p95 = sorted(m["p95"] for _, m in side)
+        return (f"{name} {len(side)}本 **10% で {p10[0]:.2f}〜{p10[-1]:.2f}**"
+                f"・95% で {p95[0]:.2f}〜{p95[-1]:.2f}")
+    tail = (f"・**空 {len(c['empty'])}本**（`analytics.curve` の覆る条件 (1)）" if c["empty"] else "")
+    return ("**維持率カーブ**（どこで落ちるか・台帳から・**Data API 0単位**）: "
+            + _fmt(c["new"], "新しい作り") + " 対 " + _fmt(c["old"], "旧作り")
+            + "。**1.00 より上は見直しで人が戻った側**。"
+            "**新旧がいちばん離れるのは 10%（＝ 90秒 の本なら最初の 9秒）で、"
+            "そこは §3 の (1)（1文目で誰に向けた何の話かを言う）の当のもの** ——"
+            "**判定は `hourly`・§5**（optimizer は数を並べるまで）" + tail)
 
 
 def report(within_h: float = 24 * 3) -> list[str]:

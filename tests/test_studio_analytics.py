@@ -158,3 +158,63 @@ def test_trend_の毎周の行に入っている():
     import inspect
     src = inspect.getsource(trend.lines)
     assert "analytics_line(" in src
+
+
+# ---------------------------------------------------------------- 維持率カーブ
+
+def test_カーブは刻が1つでも欠けたら空を返す():
+    """**穴を 0 で埋めない**（埋めると「そこで全員 落ちた」に化ける）。"""
+    full = {round(i / 100, 2): 1.0 - i / 200 for i in range(1, 101)}
+    assert analytics.curve_marks(full) is not None
+    holed = dict(full)
+    del holed[0.50]
+    assert analytics.curve_marks(holed) is None
+    assert analytics.curve_marks({}) is None
+
+
+def test_カーブの刻は5つ():
+    full = {round(i / 100, 2): 0.5 for i in range(1, 101)}
+    assert list(analytics.curve_marks(full)) == ["p10", "p25", "p50", "p75", "p95"]
+
+
+def test_カーブは割合と率だけを返す(monkeypatch):
+    monkeypatch.setattr(analytics, "_query", lambda **kw: {
+        "columnHeaders": [{"name": "elapsedVideoTimeRatio"}, {"name": "audienceWatchRatio"}],
+        "rows": [[0.1, 1.0608], [0.25, 0.66]]})
+    assert analytics.curve("v", "2026-08-20", "2026-09-07") == {0.1: 1.0608, 0.25: 0.66}
+
+
+def _curve_rows(items) -> list[dict]:
+    out = []
+    for vid, studio, p10, p95 in items:
+        out.append({"event": "analytics_curve", "id": vid, "studio": studio, "views": 200,
+                    "marks": {"p10": p10, "p25": 0.6, "p50": 0.4, "p75": 0.3, "p95": p95},
+                    "at": _at("2026-09-10 16:40")})
+    return out
+
+
+def test_カーブの行は新旧を10パーセントの刻で分ける():
+    rows = _curve_rows([("n1", True, 0.71, 0.21), ("n2", True, 0.81, 0.21),
+                        ("o1", False, 1.06, 0.14), ("o2", False, 1.21, 0.29)])
+    line = trend.curve_line(rows)
+    assert "新しい作り 2本 **10% で 0.71〜0.81**" in line
+    assert "旧作り 2本 **10% で 1.06〜1.21**" in line
+    assert "判定は `hourly`" in line
+
+
+def test_空のカーブは名指しで数える():
+    """**空を「カーブが無い」と読ませない**（`analytics.curve` の覆る条件 (1)）。"""
+    rows = _curve_rows([("n1", True, 0.71, 0.21)])
+    rows.append({"event": "analytics_curve", "id": "n2", "studio": True, "views": 150,
+                 "marks": None, "at": _at("2026-09-10 16:40")})
+    assert "**空 1本**" in trend.curve_line(rows)
+    assert trend.curve_state(rows)["empty"] == ["n2"]
+
+
+def test_カーブが1本も無ければ行を出さない():
+    assert trend.curve_line([]) == ""
+
+
+def test_カーブの行も毎周の並びに入っている():
+    import inspect
+    assert "curve_line(" in inspect.getsource(trend.lines)

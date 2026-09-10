@@ -922,6 +922,7 @@ def cmd_trend(a):
 
 
 ANALYTICS_MIN_H = 20.0   # このAPIは日ごとにしか動かない（遅れ 3日）＝ 1日に1回で足りる
+CURVE_WINDOW_D = 18      # カーブの窓。**狭いと空で返る**（`analytics.curve` の註・実測）
 ANALYTICS_WINDOW_D = 7   # 本ごとに引く窓（日）。**窓の中の数で、本の通算ではありません**
 
 
@@ -1004,6 +1005,28 @@ def cmd_analytics(a):
                subs_gained=int(r["subscribersGained"]), likes=int(r["likes"]))
     ledger("analytics_traffic", last_day, start=start, lag_days=lag,
            sources={r["insightTrafficSourceType"]: int(r["views"]) for r in tr})
+    # **維持率カーブ**（どこで落ちるか。1本 1クエリ・`analytics.curve` の註）。
+    # **窓はここで広く取ること** —— 狭い窓は、データが在っても空で返ります（実測）。
+    cstart = (dt.date.fromisoformat(last_day) - dt.timedelta(days=CURVE_WINDOW_D)).isoformat()
+    # **新しい作りを先に取る** —— 上限で切ると、再生の多い旧作りだけが残り、
+    # 比べたい側（studio の本）が 1本 しか入りませんでした（この回に踏んだ）。
+    ok = [r for r in vids if int(r["views"]) >= analytics.CURVE_MIN_VIEWS]
+    picked = ([r for r in ok if r["video"] in sids]
+              + [r for r in ok if r["video"] not in sids])[:analytics.CURVE_MAX]
+    if picked:
+        print(f"維持率カーブ（窓 {cstart}〜{last_day}・**残っている率**・"
+              f"`audienceWatchRatio`。1.00 より上は見直し）:")
+    for r in picked:
+        mk = analytics.curve_marks(analytics.curve(r["video"], cstart, last_day))
+        mark = "新" if r["video"] in sids else "旧"
+        if mk is None:
+            print(f"  {mark} {r['video']}  **空**（覆る条件 (1)（齢）を見ること・`analytics.curve` の註）")
+            ledger("analytics_curve", r["video"], day=last_day, start=cstart,
+                   studio=r["video"] in sids, views=int(r["views"]), marks=None)
+            continue
+        print(f"  {mark} {r['video']}  " + " ".join(f"{k[1:]}% {v:.2f}" for k, v in mk.items()))
+        ledger("analytics_curve", r["video"], day=last_day, start=cstart,
+               studio=r["video"] in sids, views=int(r["views"]), marks=mk)
     return 0
 
 

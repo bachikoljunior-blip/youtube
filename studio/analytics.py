@@ -131,3 +131,49 @@ def traffic(start: str, end: str) -> list[dict]:
     """
     return _rows(_query(startDate=start, endDate=end, metrics="views",
                         dimensions="insightTrafficSourceType", sort="-views"))
+
+#: 維持率カーブを引く本の、この窓の再生の下限（下で実測）。
+CURVE_MIN_VIEWS = 100
+
+#: 1周に引くカーブの数の上限（1本 1クエリ。Data API の枠とは別）。
+CURVE_MAX = 6
+
+#: カーブを読む刻（動画の長さに対する割合）。
+CURVE_MARKS = (0.10, 0.25, 0.50, 0.75, 0.95)
+
+
+def curve(vid: str, start: str, end: str) -> dict[float, float]:
+    """**維持率カーブ**（`audienceWatchRatio` × `elapsedVideoTimeRatio`・100点）。
+    返りは {割合: 残っている率}。**引けなければ空**。
+
+    **窓が狭いと、データが在っても空で返ります**（2026-09-10 16:4x に実測して踏んだ）:
+    `EkNqtkK49Bw` は 窓 09/06〜09/07 で **0点**・窓 08/25〜09/07 で **100点**。
+    ＝ **空を「カーブが無い」と読まないこと**（§4 (0-b) の族）。**窓は 14日 以上 取ること。**
+
+    **下限の実測**（同じ回・窓 08/25〜09/07）: 再生 **145回 → 100点**・**76回 → 0点**
+    （`PhQ2KvuQASQ`）。＝ 境目は 76〜145回 のあいだ。`CURVE_MIN_VIEWS` はその上側に置いてあります。
+
+    **陽性対照**: `data/retention.json` の 136本（**125本 は #Shorts**）が 100点 で返るので、
+    **ショートにカーブが出ないのではありません**（この回に 3本 撃って確かめた）。
+
+    **覆る条件**: (1) 再生 `CURVE_MIN_VIEWS` を越えた本が 3本 続けて空で返ったら、
+    下限ではなく**齢**の側（上流の作りが追いついていない）＝ 窓ではなく日を待つこと。
+    (2) 500 が返る回がある（`9zkfjEH48PY` で 1度）——**エラーと空を分けること**。
+    """
+    rows = _rows(_query(startDate=start, endDate=end, metrics="audienceWatchRatio",
+                        dimensions="elapsedVideoTimeRatio", filters="video==" + vid))
+    return {round(float(r["elapsedVideoTimeRatio"]), 2): float(r["audienceWatchRatio"])
+            for r in rows}
+
+
+def curve_marks(c: dict[float, float]) -> dict[str, float] | None:
+    """カーブを `CURVE_MARKS` の刻で読む。1つでも欠けたら `None`（**穴を 0 で埋めない**）。"""
+    if not c:
+        return None
+    out = {}
+    for m in CURVE_MARKS:
+        v = c.get(round(m, 2))
+        if v is None:
+            return None
+        out[f"p{int(m * 100)}"] = round(v, 3)
+    return out
