@@ -1,6 +1,12 @@
 """画面。縦 1080x1920。1コマ = 1枚の PNG。
 
-  上 1/3    大きい字（show）と小さい字（sub）—— 数字・見出し
+  上 1/3    大きい字（show）と小さい字（sub）—— 数字・見出し。その上に札（tag: 前提／決まり／計算／結論／見る所）
+  まん中    板（board）—— そのコマまでに出た前提と数の積み上がり（2026-09-10 13:2x・hourly・Fable。
+            オーナー 12:4x「画面を有効活用できてないと思う。今のナレーションの説明だけじゃ見てる人が
+            整理しながら理解していくのむずいと思うよ」・受け取り帳 `52f141fa`）。
+            **板が在るコマだけ** show を上へ寄せて（y 140〜）その下に板を描く。板の無い台本は前の絵のまま
+            （公開ずみの本の見た目を変えない）。実測 09/10 の本: 前の形では上の板が y 465〜975・字幕が 1108〜1450 で、
+            **上 90〜465 の 375px が進み具合の線しか持っていなかった**。
   下        字幕（say をそのまま。1行 16字・3行まで。下から 420px は Shorts の UI と重なるので空ける）
   背景      GPT Image 2.0 の絵（届いていれば）か、単色のグラデーション
 """
@@ -186,18 +192,44 @@ def draw_text_block(d: ImageDraw.ImageDraw, lines: list[str], fnt, top: int, fil
     return y
 
 
+# 札（tag）の色。声の言い回し（「たとえば」＝前提・「決まりでは」＝事実・「計算すると」）と同じ札を画面にも出す
+# （オーナー 12:3x「言い回しで、事実なのか前提なのかとか分かるようにした方が良い」・受け取り帳 `552fadf1`）
+TAG_COLORS = {"前提": (70, 130, 220), "決まり": (60, 160, 90), "計算": (220, 150, 40),
+              "結論": (220, 80, 70), "見る所": (140, 90, 200)}
+TAG_DEFAULT = (110, 110, 110)
+BOARD_TOP_MIN = 600          # 板の上端（show の下）
+BOARD_BOTTOM = 1080          # 板の下端（字幕 4行 の上端 1108 より上）
+BOARD_LEFT = 110
+SHOW_TOP_WITH_BOARD = 150    # 板が在るコマの show の上端
+
+
+def board_layout(n_lines: int, show_bottom: int) -> tuple[int, int, int]:
+    """板の (font px, 行の高さ px, 上端 y)。行が多いほど字を小さくし、字幕の上端より上に収める。
+    返り値を検査で挟む（`tests/test_studio_slides_board.py`）。"""
+    top = max(BOARD_TOP_MIN, show_bottom + 50)
+    room = BOARD_BOTTOM - top - 60
+    for px in (60, 54, 48, 42):
+        lh = int(px * 1.45)
+        if lh * max(n_lines, 1) <= room:
+            return px, lh, top
+    # 最小の字でも収まらない（show が高い × 5行）: 行間を詰めて下端に収める（字は 42px のまま）
+    return 42, max(46, room // max(n_lines, 1)), top
+
+
 def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out: Path,
-          progress: bool = True) -> Path:
+          progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = ()) -> Path:
     im = background(image)
     d = ImageDraw.Draw(im, "RGBA")
     # 進み具合
     if progress and n > 1:
         d.rectangle([60, 70, W - 60, 82], fill=(255, 255, 255, 70))
         d.rectangle([60, 70, 60 + int((W - 120) * i / n), 82], fill=(255, 210, 60, 255))
+    board = [b for b in board if b]
+    show_bottom = 0
     # 大きい字（行は書き手の \n で決まる。幅に収まるまで字を小さくする。語の途中で折らない）
     if show:
         lines = show.split("\n")
-        size = 124
+        size = 124 if not board else 104
         while size > 64:
             fnt = font(FONT_BLACK, size)
             if max(d.textbbox((0, 0), ln, font=fnt)[2] for ln in lines) <= W - 140:
@@ -205,11 +237,31 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
             size -= 8
         fnt = font(FONT_BLACK, size)
         block_h = int(len(lines) * size * 1.25) + (int(56 * 1.25 * len(wrap(sub, 16))) + 20 if sub else 0)
-        top = 700 - block_h // 2
+        top = SHOW_TOP_WITH_BOARD + (90 if tag else 0) if board else 700 - block_h // 2
         d.rounded_rectangle([40, top - 50, W - 40, top + block_h + 40], radius=30, fill=(0, 0, 0, 110))
         y = draw_text_block(d, lines, fnt, top, (255, 255, 255), stroke_w=6)
         if sub:
             y = draw_text_block(d, wrap(sub, 16), font(FONT_BOLD, 56), y + 20, (255, 225, 120), stroke_w=4)
+        show_bottom = top + block_h + 40
+        # 札: show の上に小さい色つきの丸札
+        if tag:
+            tf = font(FONT_BOLD, 44)
+            tw = d.textbbox((0, 0), tag, font=tf)[2]
+            tx, ty = (W - tw) // 2, top - 50 - 84
+            d.rounded_rectangle([tx - 36, ty - 8, tx + tw + 36, ty + 64], radius=32, fill=TAG_COLORS.get(tag, TAG_DEFAULT) + (255,))
+            d.text((tx, ty), tag, font=tf, fill=(255, 255, 255))
+    # 板（まん中）: そのコマまでの前提と数の積み上がり。最後の行がいまのコマの行（黄色）
+    if board:
+        px, lh, top = board_layout(len(board), show_bottom)
+        bf = font(FONT_BOLD, px)
+        box_h = lh * len(board) + 60
+        d.rounded_rectangle([50, top, W - 50, top + box_h], radius=24, fill=(0, 0, 0, 140))
+        y = top + 30
+        for k, ln in enumerate(board):
+            last = k == len(board) - 1
+            fill = (255, 225, 120) if last else (235, 235, 235)
+            d.text((BOARD_LEFT, y), ("▶ " if last else "　 ") + ln, font=bf, fill=fill, stroke_width=3, stroke_fill=(0, 0, 0))
+            y += lh
     # 字幕
     if say:
         # 64字 までは 16字×4行・54px。それ以上は 18字×4行・48px（say の上限 70字 が収まる）

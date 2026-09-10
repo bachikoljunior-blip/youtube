@@ -92,10 +92,19 @@ def uncovered_kanji(say: str, yomi: dict[str, str]) -> list[str]:
     return bad
 
 
+# まん中の板（2026-09-10 13:2x・hourly・Fable。オーナー 12:4x「画面を有効活用できてない」・受け取り帳 `52f141fa`）。
+# 1行 14字 × 5行 まで（`slides.board_layout` が 60px で 5行 を字幕の上に収める実測）。札は `slides.TAG_COLORS` の 5つ。
+MAX_BOARD_LINES = 5
+MAX_BOARD_CHARS = 14
+TAGS = ("前提", "決まり", "計算", "結論", "見る所")
+
+
 class Segment(BaseModel):
     say: str = Field(..., description="声で読む文。ふつうの話し言葉。")
     show: str = Field("", description="画面の大きい字（16字まで）。数字か短い見出し。")
     sub: str = Field("", description="画面の小さい字（任意）。")
+    tag: str = Field("", description="札（前提／決まり／計算／結論／見る所）。声の言い回し（たとえば・決まりでは・計算すると）と同じ札。")
+    board: list[str] = Field([], description="まん中の板。そのコマまでの前提と数の積み上がり（14字×5行まで）。最後の行がいまのコマ。")
 
 
 class Script(BaseModel):
@@ -137,6 +146,15 @@ class Script(BaseModel):
                 m = TEN.search(getattr(s, field))
                 if m:
                     out.append(f"コマ{i} {field} に「{m.group()}」（点・小数）。整数で言い換える")
+            if s.tag and s.tag not in TAGS:
+                out.append(f"コマ{i} tag「{s.tag}」は {'／'.join(TAGS)} のどれかに")
+            if len(s.board) > MAX_BOARD_LINES:
+                out.append(f"コマ{i} board が {len(s.board)}行（{MAX_BOARD_LINES}まで）")
+            for ln in s.board:
+                if len(ln) > MAX_BOARD_CHARS:
+                    out.append(f"コマ{i} board の行「{ln}」が {len(ln)}字（{MAX_BOARD_CHARS}まで）")
+                if TEN.search(ln):
+                    out.append(f"コマ{i} board に「{TEN.search(ln).group()}」（点・小数）。整数で言い換える")
         if self.total_chars() > MAX_TOTAL_CHARS:
             out.append(f"合計 {self.total_chars()}字（{MAX_TOTAL_CHARS}まで。60秒に収まらない）")
         if "#Shorts" not in self.title and "#shorts" not in self.title:

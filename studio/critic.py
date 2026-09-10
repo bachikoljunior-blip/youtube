@@ -58,9 +58,22 @@ def critique(s: Script) -> dict:
          "最後に、全体として一度で理解できるかを 1〜5 で。\n"
          "JSON {\"items\": [{\"where\": \"コマ番号か引用\", \"why\": \"...\", \"fix\": \"直し方の案\", \"severity\": \"real|nitpick\"}], "
          "\"understand\": 1〜5, \"takeaway\": \"1文\"} だけを返してください。\n\n---\n")
-    for i, seg in enumerate(s.segments, 1):
-        p += f"コマ{i} 画面「{seg.show}」{('/' + seg.sub) if seg.sub else ''}\n  声: {seg.say}\n"
+    p += critique_screen(s)
     return _json(ask(p, "sonnet", 300))
+
+
+def critique_screen(s: Script) -> str:
+    """critique に渡す画面と声の写し。**札（tag）と まん中の板（board）も渡す**（2026-09-10 13:2x・hourly・Fable）——
+    §14 の 10:0x は「声の中だけで閉じている数列」を critique が拾わなかった実測。板に数列が出れば、critic はそれを読める。
+    検査 `tests/test_studio_slides_board.py`。"""
+    out = ""
+    for i, seg in enumerate(s.segments, 1):
+        head = f"コマ{i}" + (f" [札: {seg.tag}]" if seg.tag else "")
+        out += f"{head} 画面「{seg.show}」{('/' + seg.sub) if seg.sub else ''}\n"
+        if seg.board:
+            out += "  板（そのコマまでの積み上がり・最後の行がいまのコマ）: " + " ／ ".join(seg.board) + "\n"
+        out += f"  声: {seg.say}\n"
+    return out
 
 
 def loop_done(c: dict) -> bool:
