@@ -2170,3 +2170,10 @@
 {"views": 191, "likes": 0, "comments": 1, "age_h": 122.5, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-10T12:32:22+09:00", "id": "a23e696j0f8", "event": "measured"}
 {"views": 189, "likes": 0, "comments": 1, "age_h": 123.5, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-10T12:32:22+09:00", "id": "kzefG44_APU", "event": "measured"}
 {"views": 6, "likes": 0, "comments": 1, "age_h": 147.5, "title": "【知らないと損】2026年4月 働く年金受給者は年54万円増える", "n_values": 1, "at": "2026-09-10T12:32:22+09:00", "id": "1huadpEk6HY", "event": "measured"}
+{"seconds": 84.0, "image": true, "chars": 465, "scenes": [7.4, 8.0, 8.6, 9.8, 7.5, 6.5, 5.9, 9.5, 5.5, 7.4, 8.1], "at": "2026-09-10T13:12:35+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "built"}
+{"understand": 2, "n_real": 4, "done": false, "at": "2026-09-10T13:16:56+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "critique"}
+{"seconds": 83.2, "image": true, "chars": 460, "scenes": [7.4, 6.7, 9.6, 8.3, 7.5, 6.5, 5.9, 10.4, 5.5, 7.4, 8.1], "at": "2026-09-10T13:17:03+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "built"}
+{"n": 1, "kinds": ["missing_cond"], "at": "2026-09-10T13:18:24+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "crosscheck"}
+{"seconds": 85.3, "image": true, "chars": 471, "scenes": [7.4, 6.7, 11.3, 8.7, 7.5, 6.5, 5.9, 10.4, 5.5, 7.4, 8.1], "at": "2026-09-10T13:19:39+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "built"}
+{"understand": 3, "n_real": 1, "done": false, "at": "2026-09-10T13:20:20+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "critique"}
+{"mismatched": 2, "model": "small", "mode": "kana", "diffs": [{"i": 3, "d": [["しゃ", "さ"]]}, {"i": 5, "d": [["んえ", "ね"]]}], "escalated": [6, 8], "tail": {}, "voice": {}, "how": {"6": "small→medium+prompt", "8": "small→medium"}, "at": "2026-09-10T13:25:22+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "heard"}
