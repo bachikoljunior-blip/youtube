@@ -177,18 +177,27 @@ def test_本物の台帳では門は齢と長さの側で読む():
     **狙いどおり赤になって教えました**。越えたあとも同じ assert を残すと毎周 赤のままなので、
     **見張る先を次の門へ移します** —— いまの見張りは 2つ:
 
-      (a) 読む側が `齢＋長さ` であること（`gate_side`。戻ったら `_matched` の覆る条件 (0-新)）
+      (a) 読む側が `齢＋長さ` であること（**`gate_span` の `side`** ＝ 24時間 の差の上限で読む）
       (b) その側の比が **0.5倍 を切っていない**こと（＝ 門 (2) が本当に引かれる日。判定は `hourly`・§5）
+
+    **【2026-09-10 12:3x に (a) を点から振れ幅へ移しました】** それまでは `informative()` の
+    `gate_side`（**1点**）を見ており、**この回に `measure` を 1回 足しただけで赤くなりました** ——
+    帯の外から 12:04 に 1回 撃つと 差が **0.101 → 0.020倍** に落ちて側が反転します
+    （本の側は 1冊も動いていない）。**見張りは正しく鳴りましたが、鳴った先が刻でした。**
+    ＝ 09:4x が**比**について直したのと同じ病気が、**側**にも在った（`gate_span` の註）。
+    いまは `side_hi`（24時間 の差の上限・両側 20組 以上 の点だけ）で読むので、
+    **鋸の歯のどこで撃っても答えが変わりません。**
     """
     from studio.cli import ledger_rows
-    inf = trend.informative(ledger_rows())
+    rows = ledger_rows()
+    inf = trend.informative(rows)
     if inf["gate_ratio"] is None:
         return
-    d = abs(_ratio(inf["band_gapmatched"], inf["out_gapmatched"])
-            - _ratio(inf["band_matched"], inf["out_matched"]))
-    assert inf["gate_side"] == "齢＋長さ", (
-        f"齢だけ と 齢＋長さ の差が {d:.3f}倍 ＝ 門 {trend.GAP_SPLIT} を下回って戻った。"
-        "`_matched` の覆る条件 (0-新) を読むこと（3周 続いたら読む側を齢だけへ戻す）")
+    g = trend.gate_span(rows)
+    assert g["side"] == "齢＋長さ", (
+        f"齢だけ と 齢＋長さ の差が 24時間 まるごと 門 {trend.GAP_SPLIT} を下回った"
+        f"（上限 {g['side_hi']}・いま {g['side_now']}）＝ 長さはもう効いていない。"
+        "`gate_span` の覆る条件 (5) を読むこと（§7 (2) の見出しを直し、床が伸びていないかを見る）")
     assert not (inf["gate_ratio"] < 0.5 and inf["gate_n"] > 20), (
         f"門 (2) が引かれた: {inf['gate_side']} {inf['gate_ratio']:.3f}倍"
         f"（帯 {inf['band_gapmatched']}・n={inf['gate_n']} > 20組）。"

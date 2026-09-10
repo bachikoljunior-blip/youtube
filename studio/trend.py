@@ -998,6 +998,14 @@ def _matched(inf: list[dict]) -> dict:
 #: `gate_span` が門 (2) の比の振れ幅を見るときに遡る時間。
 GATE_SPAN_H = 24.0
 
+#: **側**（齢だけ／齢＋長さ）の差を数えるとき、**両側の帯の分母に要る組の数**（2026-09-10 12:3x）。
+#: `informative` の註が「**20組 を越えるまでは まだ測れていない**」と書いているのと同じ数を、
+#: 側の側にも当てる —— **届かない点の差は「長さが効いた」ではなく「そろえた側の組が少ない」だけ**です。
+#: 実測（この回・24時間 の点を列挙した）: 12:29〜21:50 は 帯 18 対 **11〜13組** で 差 **0.94〜1.44**、
+#: 23:56 に **18 対 18** へそろった瞬間 差は **0.03** へ落ちました。
+#: ＝ **この門を入れないと、`side_hi` は「そろっていなかった時間帯」を読み続けます。**
+SIDE_MIN_PAIRS = 20
+
 
 def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
     """**門 (2) の比は、本ではなく「いつ測ったか」で上下する。その振れ幅を出す**
@@ -1031,6 +1039,39 @@ def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
     出すもの: `lo`/`hi`（`hours` のあいだの比の最小・最大）・`now`（いまの比）・
     `n`（読み直した測りの回数）・`points`（(刻, 側, 比) の並び。次の回が列挙で確かめられるように残す）。
 
+    ## **側も、点で読まないこと**（2026-09-10 12:3x JST・optimizer・Opus が足した）
+
+    09:4x（上）は**比**を振れ幅で読む形に直しましたが、**「どちらの側の比を読むか」（`gate_side`）は
+    1点のまま**でした。**同じ病気です。** `gate_side` は 齢だけ と 齢＋長さ の**差**が
+    `GAP_SPLIT` 以上 かどうかで決まり、その差も測る刻で動きます。
+
+    **実測（この回に踏んだ・API 0単位）**: 12:04 に `measure` を **1回** 足しただけで —— 帯の外から ——
+
+        全部（12:04 を含む）      差 **0.020倍** → 側 **齢だけ**
+        12:04 の測りを外すと      差 **0.101倍** → 側 **齢＋長さ**
+        11:44 と 12:04 を外すと   差 **0.103倍** → 側 **齢＋長さ**
+
+    ＝ **測り 1回 が差を 0.08 動かし、門 `GAP_SPLIT`（0.1）の側を反転させました**
+    （本の側は 1冊も動いていません。5本目 は 0回 のまま・3本目 4本目 は +0回）。
+    見張り `tests/test_studio_informative_matched.py::test_本物の台帳では門は齢と長さの側で読む` が
+    **その場で赤くなりました** —— 見張りは正しく鳴りましたが、鳴った先が**刻**でした。
+
+    **09:0x が「差 0.103倍 で門を越えた」と書いた 1点も、同じ鋸の歯の上の1点です。**
+    ＝ **点で越えた門は、点で戻ります**（`_matched` の覆る条件 (0-新) の「3周 続いたら」は
+    **周を数える形**ですが、周を数えても、その 3周 がどの刻に立ったかで答えが変わります）。
+
+    **読み方**: 側は **`side_hi`（24時間 の差の上限）**で読む。上限で読むのは比のときと同じ理由
+    —— **長さが 24時間 のどこかで効いているなら、そろえた側で読むほうが安全**
+    （そろえる側は組の中の偏りを1つ減らした推定なので、迷ったらこちら）。
+    出すもの: `side_lo`/`side_hi`/`side_now`（差の最小・最大・いま）と `side`（上限で読んだ側）。
+
+    **覆る条件**: (5) `side_hi` が `GAP_SPLIT` を **24時間 まるごと** 下回ったら、長さはもう効いていない
+    ＝ 読む側は齢だけへ戻る（`side` が勝手に戻るので、そのときは §7 (2) の見出しを直すだけ。
+    **戻りは「直った」ではなく「帯の短い組が減った」印**なので、床（`quota.pace()`）が
+    伸びていないかを一緒に見ること —— `_matched` の (0-新) と同じ向き）。
+    (6) `side_hi` と `side_lo` の差が **`GAP_SPLIT` を下回ったまま 3周** 続いたら、
+    側の鋸の歯は消えている ＝ 側は点で読んでよい（そのとき (5) とこの行を畳む）。
+
     **覆る条件**: (1) `hi` が 0.5 を切ったら、門 (2) は**刻では説明が付かない**
     ＝ そのときは本当に引かれた（判定は `hourly`・§5）。
     (2) `hi` と `lo` の差が **0.2倍 を下回ったまま 3周** 続いたら、鋸の歯は消えている
@@ -1042,7 +1083,8 @@ def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
     """
     occ = sorted({r["at"] for r in rows if r.get("event") == "measured"})
     res: dict[str, object] = {"n": 0, "lo": None, "hi": None, "now": None,
-                              "points": [], "hours": hours}
+                              "points": [], "hours": hours,
+                              "side_lo": None, "side_hi": None, "side_now": None, "side": None}
     if not occ:
         return res
     last = _at({"at": occ[-1]})
@@ -1054,15 +1096,26 @@ def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
             by_at.setdefault(r["at"], []).append(r)
     seen: list[dict] = []
     points: list[tuple[str, str, float]] = []
+    diffs: list[float] = []
     for at in occ:
         seen.extend(by_at[at])
         if _at({"at": at}) < cut:
             continue
         inf = informative(other + seen)
+        # **どちらの側で読むか**も、比とまったく同じ理由で刻に揺れます（下の「側も点で読まない」）。
+        # **ただし両側の分母が 20組 に届くまでは数えない** —— 届かない点の差は
+        # 「長さが効いた」ではなく「そろえた側の組が少ない」だけで、上限を独り占めします（下の実測）。
+        ra, rg = inf.get("ratio_age"), inf.get("ratio_agegap")
+        n_age, n_gap = inf["band_matched"][1], inf["band_gapmatched"][1]  # type: ignore[index]
+        if ra is not None and rg is not None and min(n_age, n_gap) >= SIDE_MIN_PAIRS:
+            diffs.append(abs(float(rg) - float(ra)))
         r = inf.get("gate_ratio")
         if r is None:
             continue
         points.append((at, str(inf.get("gate_side")), float(r)))
+    if diffs:
+        res.update({"side_lo": min(diffs), "side_hi": max(diffs), "side_now": diffs[-1],
+                    "side": "齢＋長さ" if max(diffs) >= GAP_SPLIT else "齢だけ"})
     if not points:
         return res
     vals = [p[2] for p in points]
@@ -1084,7 +1137,21 @@ def _span_line(rows: list[dict]) -> str:
             f"**比は、いま自分が測っている側から逃げる向きに動きます**"
             f"（帯の中の回は 0.5 へ・外の回は上へ。分子が動かないまま分母だけが増えるため）。"
             f"**門 (2) を引くのは、この振れ幅の上限 {hi:.3f} が 0.5 を切った回だけ**"
-            f"（`trend.gate_span` の註・覆る条件 (1)）。")
+            f"（`trend.gate_span` の註・覆る条件 (1)）。"
+            + _side_line(g))
+
+
+def _side_line(g: dict) -> str:
+    """**どちらの側で読むかも、点では読まない**（2026-09-10 12:3x。註は `gate_span`）。"""
+    if g.get("side_hi") is None:
+        return ""
+    lo, hi, now = float(g["side_lo"]), float(g["side_hi"]), float(g["side_now"])  # type: ignore[arg-type]
+    return (f"**側（齢だけ／齢＋長さ）も同じで、点では読みません** —— 差の振れ幅は "
+            f"**{lo:.3f}〜{hi:.3f}倍**（いま {now:.3f}・両側 {SIDE_MIN_PAIRS}組 以上 の点だけ）。"
+            f"**読む側は上限で決めます: {g['side']}**（門 {GAP_SPLIT}倍）。"
+            f"**実測 12:3x: 帯の外から `measure` を 1回 足すだけで 差は 0.101 → 0.020倍 に落ち、"
+            f"点で読むと側が反転しました**（本の側は 1冊も動いていない）。"
+            f"覆る条件は `gate_span` の (5)(6)。")
 
 
 def band_vs_age(rows: list[dict], iters: int = 2000, seed: int = 20260909) -> dict:

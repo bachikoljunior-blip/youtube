@@ -118,3 +118,44 @@ def test_窓を伸ばしても上限は下がらない(hours: float) -> None:
     b = trend.gate_span(rows, hours=hours)
     assert b["hi"] >= a["hi"] - 1e-9
     assert b["n"] >= a["n"]
+
+
+# ---- **側**も点で読まない（2026-09-10 12:3x・optimizer・Opus） ----------------------
+#
+# 09:4x は**比**を振れ幅へ移したが、**どちらの側の比を読むか**（`gate_side`）は 1点のままだった。
+# **この回に踏んだ**: 帯の外から `measure` を 1回 足すだけで 差が 0.101 → 0.020倍 に落ち、側が反転する
+# （本の側は 1冊も動いていない）。derivation は `trend.gate_span` の註と JOURNAL 12:3x。
+
+def test_側は振れ幅の上限で読む() -> None:
+    """`side` は `side_hi` と `GAP_SPLIT` だけで決まること（いまの点では決まらない）。"""
+    rows = _rows()
+    g = trend.gate_span(rows)
+    if g["side_hi"] is None:
+        return
+    assert g["side"] == ("齢＋長さ" if g["side_hi"] >= trend.GAP_SPLIT else "齢だけ")
+
+
+def test_側の振れ幅は上限が下限以上であること() -> None:
+    g = trend.gate_span(_rows())
+    if g["side_hi"] is None:
+        return
+    assert g["side_lo"] <= g["side_now"] <= g["side_hi"] or g["side_lo"] <= g["side_hi"]
+
+
+def test_そろっていない点は側の上限を独り占めしないこと() -> None:
+    """**陽性対照つきの本命。** `SIDE_MIN_PAIRS` を外すと、帯の分母がそろう前の点
+    （実測 帯 18 対 11〜13組・差 0.94〜1.44倍）が上限を独り占めします。
+    いまの上限がそれより**ずっと小さい**ことで、門が効いているのを見る。
+    """
+    g = trend.gate_span(_rows())
+    if g["side_hi"] is None:
+        return
+    assert g["side_hi"] < 0.9, (
+        f"側の差の上限が {g['side_hi']} ＝ そろう前の点（帯 18 対 11〜13組）を読んでいます。"
+        "`SIDE_MIN_PAIRS` が効いているかを見ること")
+
+
+def test_側の門の数は_informative_の_20組_と同じであること() -> None:
+    """**写しを 2つ 持たない** —— `informative` の註が「20組 を越えるまでは まだ測れていない」
+    と書いている数と、側に当てる数は同じもの。片方だけ動いたら教える。"""
+    assert trend.SIDE_MIN_PAIRS == 20
