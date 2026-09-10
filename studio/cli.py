@@ -340,6 +340,35 @@ def record_channel(ch: dict) -> None:
            views=ch.get("viewCount"), videos=ch.get("videoCount"))
 
 
+def record_ready(vid: str, rd: dict, drift) -> None:
+    """公開**前**の本の `readiness` を、印字するだけでなく台帳に残す
+    （2026-09-10 16:2x・optimizer・Opus。**追加 0単位** ＝ `cmd_status` がすでに引いてある 1単位）。
+
+    **穴（同じ族の 4つ目）**: `yt.readiness` は 09/08 02:5x に「10:00 に本当に出る状態か」を
+    見るために足され、`cmd_status` が**予約ずみの本を持つ周は毎周**（実測 1日 約14周）
+    「処理 済／!! 処理 …」と印字してきました。**残す口は無く**、台帳の `ready_checked` は
+    **09/08 02:46 に手の script が書いた 1行 だけ**です。
+    ＝ **「予約から公開までの窓で、この本が 1度でも `ok` でなかったか」に答えられません** ——
+    それは `readiness` が足された、その当の問いです。
+
+    族の 1つ目 `record_over`（12:4x → 13:2x）・2つ目 `zero_probe`（05:3x → 05:4x）・
+    3つ目 `record_channel`（15:5x）と同じ形。
+    **見つけ方**（15:5x に出た）: **「次の回が使う」と書いてある数のうち、`ledger()` を通っていないもの。**
+
+    `meta_drift` の結果も同じ行に入れます（説明欄が台本と違えば古いまま出る ＝ `yt.readiness` の註）。
+    **`drift` は `meta_drift()` の返り**（食い違った欄の名前の並び・`None` は比べる物が無い）。
+
+    **覆る条件**: (1) `ok` でない行が 1度でも出たら、その本の公開の刻を疑う前に**この行を先に見る**
+    （どの周から落ちていたかが分かる）。(2) 7本 過ぎて 1度も `ok` 以外が出なければ、
+    公開**前**の 1単位 は毎周 撃たなくてよい（`zero_probe` の (2) と同じ数え方 ＝
+    そのときは予約の直後と 09:xx の周だけにする）。
+    """
+    ledger("ready_checked", vid, ok=bool(rd.get("ok")), upload=rd.get("upload"),
+           processing=rd.get("processing"),
+           failure=rd.get("failure") or rd.get("rejection"),
+           meta_drift=(None if drift is None else list(drift)))
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
@@ -359,9 +388,12 @@ def cmd_status(a):
             rd = yt.readiness(v["id"])
             mark = "処理 済" if rd["ok"] else f"!! 処理 {rd['upload']}/{rd['processing']} 失敗 {rd['failure'] or rd['rejection']}"
             print(f"           {mark}（upload {rd['upload']}・processing {rd['processing']}）")
-            mm = meta_mark(meta_drift(v["id"], rd))
+            drift = meta_drift(v["id"], rd)
+            mm = meta_mark(drift)
             if mm:
                 print(f"           {mm}")
+            # 印字だけにしないこと（`record_ready` の註 ＝ 同じ族の 4つ目）。**追加 0単位。**
+            record_ready(v["id"], rd, drift)
     print("予約（あす以降）:")
     for v in yt.scheduled_all():
         if yt.when(v).date() > now_jst().date():

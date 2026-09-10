@@ -1578,6 +1578,8 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     out.append(zero_probe_line(rows))
     # チャンネル全体の登録と総再生（`cli.record_channel` の註。**本ごとの 0回 を読む前に見る数**）。
     out.append(channel_line(rows))
+    # 公開**前**の本の処理の印（`cli.record_ready` の註 ＝ 印字だけにしない族の 4つ目）。
+    out.append(ready_line(rows, now=now))
     # **この一文は最後に置くこと**（`tests/test_studio_trend.py` が末尾で止めている）。
     out.append(
         "並びの再生は **それまでの最大（単調な包絡・数え直しの峰は落とす）** です（`trend.envelope` の註・2026-09-09 20:0x／2026-09-10 08:0x）"
@@ -1989,6 +1991,59 @@ def channel_line(rows: list[dict]) -> str:
             "0回 は**その本の配りの側**です（動いていなければ、本ではなくチャンネルの側を疑う）。"
             "**チャンネルの `viewCount` は本ごとの合計と別の刻みで動きます**"
             "（覆る条件 (1) は `cli.record_channel` の註）。")
+
+
+def ready_checks(rows: list[dict], within_h: float = 48.0,
+                 now: dt.datetime | None = None) -> dict:
+    """公開**前**の本の `readiness` の印（台帳 `ready_checked`）を数える
+    （2026-09-10 16:2x・optimizer・Opus。**API 0単位**）。
+
+    数えるのは**窓の中の本ごと**（既定 48時間 ＝ 予約から公開までは 10時間ほどなので、
+    直近の 1〜2本 が入る）。**`ok` でない回が 1度でもあれば、その本を名指しで返します** ——
+    「いま `ok` だから大丈夫」は、**落ちていた周が在ったこと**を打ち消しません
+    （`readiness` が足された当の問いは「10:00 に本当に出るか」です）。
+
+    **覆る条件は `cli.record_ready` の註。**
+    """
+    now = now or now_jst()
+    rs = []
+    for r in rows:
+        if r.get("event") != "ready_checked" or "ok" not in r:
+            continue
+        try:
+            at = dt.datetime.fromisoformat(r["at"])
+        except (KeyError, ValueError):
+            continue
+        if (now - at).total_seconds() / 3600 <= within_h:
+            rs.append(r)
+    bad = [r for r in rs if not r.get("ok")]
+    drift = [r for r in rs if r.get("meta_drift")]
+    return {"n": len(rs), "books": len({r.get("id") for r in rs}),
+            "ok": len(rs) - len(bad), "bad": bad, "drift": drift,
+            "within_h": within_h}
+
+
+def ready_line(rows: list[dict], now: dt.datetime | None = None) -> str:
+    """`ready_checks` を1行にする（`trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
+    q = ready_checks(rows, now=now)
+    if q["n"] == 0:
+        # **この文に「予約」の2字を入れないこと** —— `tests/test_studio_trend_pending.py` が
+        # 「並びのどこにも 予約 が出ない」で `pending` の行の不在を見ています（2026-09-10 16:2x に踏んだ）。
+        return (f"**公開前の本の処理の印: 0件**（直近 {q['within_h']:.0f}時間・台帳 `ready_checked`）—— "
+                "**この 0 は「落ちた本が無い」ではなく「公開前の本がこの窓に無かった」**です"
+                "（`cmd_status` は 10:00 前の本を持つ周にしか撃ちません）。")
+    body = (f"**公開前の本の処理の印: {q['n']}件・{q['books']}本** —— "
+            f"**`ok` {q['ok']}件 / `ok` でない {len(q['bad'])}件**（台帳 `ready_checked`・追加 0単位）。")
+    if q["bad"]:
+        body += ("  !! " + "・".join(f"{r.get('id')} {str(r.get('at'))[:16]} "
+                                     f"upload {r.get('upload')}／processing {r.get('processing')}／"
+                                     f"失敗 {r.get('failure')}" for r in q["bad"][:3])
+                 + " ＝ **公開の刻を疑う前に、この行を先に見ること**（`cli.record_ready` の覆る条件 (1)）。")
+    if q["drift"]:
+        body += (f"  !! **台本と食い違ったまま印が付いた回 {len(q['drift'])}件**"
+                 f"（{'・'.join(sorted({x for r in q['drift'] for x in (r.get('meta_drift') or [])}))}）"
+                 " ＝ `yt.update_meta` を撃たない限り古いまま出ます。")
+    return body
 
 
 def pair_gap_line(rows: list[dict], at: dt.datetime | None = None) -> str:
