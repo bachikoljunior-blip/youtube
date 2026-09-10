@@ -1016,6 +1016,46 @@ def analytics_due(rows: list[dict], now: dt.datetime | None = None) -> bool:
     return ((now or now_jst()) - last).total_seconds() / 3600 >= ANALYTICS_MIN_H
 
 
+def analytics_days_to_log(rows: list[dict], d: list[dict]) -> list[dict]:
+    """**台帳へ足す日だけ**を返す ＝ 台帳に無い日と、**数が動いた日**（2026-09-11 07:1x・optimizer・Opus）。
+
+    **前の形は「1件も通れない門」でした**（§5 の教訓の形4つ目・**台帳から列挙して見つけた**）:
+
+        known = {r.get("day") for r in rows if r.get("event") == "analytics_day"}
+        if r["day"] in known: continue
+
+    行に `day` は在りません —— **日は `id` に入ります**（`common.ledger` が骨を `id` に置く）。
+    ＝ `known` は必ず `{None}` で、**1件も skip しません**。
+    実測: `analytics` を 3回 撃って `analytics_day` が **12 × 3 ＝ 36行**。
+    `trend.analytics_line` は `{r["id"]: r}` で畳むので**印字は正しいまま**でした
+    ＝ **数は壊れず、門だけが死んでいた**（この repo で 3例目 ——
+    06:3x（`n_values`）・08:4x（`flats`）と同じ族）。
+
+    **直す向きは「id で skip する」ではありません** —— Analytics は**遅れて入った日を
+    後から書き直します**（遅れ 3日）。id で skip すると **最初に引いた（まだ埋まっていない）値が凍り**、
+    `trend` は古い数を印字し続けます。
+    **だから同じ数のときだけ落とし、動いた日は足します** ——
+    そうすると **「その日がいつ書き直されたか」が台帳に残り**、次の回が遅れを数えられます。
+
+    **覆る条件**: (1) 同じ日に 3行 以上 積む日が続いたら、Analytics の側が毎回 揺れている ＝
+    `trend` の畳み（新しいほうを採る）が正しいかを、その日の並びで確かめること。
+    (2) 台帳の `analytics_day` が窓（14日）の外まで伸びて重くなったら、**古い日だけ**を畳むこと
+    （新しい 3日 は書き直されるので落とさない）。
+    """
+    last: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") == "analytics_day":
+            last[r.get("id")] = r
+    out = []
+    for r in d:
+        prev = last.get(r["day"])
+        if (prev and prev.get("views") == int(r["views"])
+                and prev.get("minutes") == int(r["estimatedMinutesWatched"])):
+            continue                      # **同じ数** ＝ 足さない（門が本当に通る側）
+        out.append(r)
+    return out
+
+
 def cmd_analytics(a):
     rows = ledger_rows()
     if not a.force and not analytics_due(rows):
@@ -1046,10 +1086,7 @@ def cmd_analytics(a):
     print("流入: " + " / ".join(f"{r['insightTrafficSourceType']} {int(r['views'])}"
                                 f"（{int(r['views']) / tot * 100:.1f}%）" for r in tr if int(r["views"])))
     # **引いた数は台帳へ**（`cli.record_channel` の族 ＝ 印字して捨てない・JOURNAL 09/10 15:5x）。
-    known = {r.get("day") for r in rows if r.get("event") == "analytics_day"}
-    for r in d:
-        if r["day"] in known:
-            continue
+    for r in analytics_days_to_log(rows, d):
         ledger("analytics_day", r["day"], views=int(r["views"]),
                minutes=int(r["estimatedMinutesWatched"]))
     for r in vids:
