@@ -1756,6 +1756,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     out.append(channel_line(rows))
     # 公開**前**の本の処理の印（`cli.record_ready` の註 ＝ 印字だけにしない族の 4つ目）。
     out.append(ready_line(rows, now=now))
+    # 画像の注文の届き具合と、**届いた絵が いちばん新しい build に載っているか**
+    # （`trend.image_orders` の註 ＝ 印字だけにしない族の 5つ目）。
+    out.append(image_line(rows))
     out.append(analytics_line(rows, now=now))
     cl = curve_line(rows)
     if cl:
@@ -2282,6 +2285,71 @@ def views_absent_line(rows: list[dict]) -> str:
             + " ＝ **その本の台帳の 0回 を「配りが来ていない」と読まないこと**"
               "（`yt.views_of` の覆る条件 (1)）。"
               "**`first_view`・`hold`・§7 (c) は、この本の 0 を数から外すこと。**")
+
+
+def image_orders(rows: list[dict], orders: "Path | None" = None,
+                 images: "Path | None" = None) -> dict:
+    """**画像の注文が届いたか**と、**届いた絵が本に載ったか**を数える
+    （2026-09-11 02:0x・optimizer・Opus。**API 0単位**・ファイルを見るだけ）。
+
+    注文は `data/image_orders/<id>-bg.json`、焼き上がりは `assets/images/<id>-bg.{jpg,png}`
+    （約束は `docs/IMAGE_ORDERS.md`）。**届いた数だけでは足りません** ——
+    `cmd_order_image` は注文を置くとき「届いたら build し直す」と印字しますが、
+    **そのあと誰も見ていませんでした**（この回に踏んだ形）。
+
+    **実測 2026-09-11 01:3x（この口を足した回）**: 7本目 `2026-09-12-taishoku-koujo-70man` は
+    **00:32・00:39 の 2回 とも `image=False` で焼かれ**、絵は **01:34 に届いて**います
+    （前の回は 00:5x に終わっており、§15 の (3)「12コマ とも目で見た」は
+    **単色の背景の sheet.png を見た**ことになる ＝ **出る本と違う絵を目視していた**）。
+    台帳の 5本 を並べると、**3本 が同じ形で始まり**（`image=False` の build が先に在る）、
+    どれも**あとの周が別の用で焼き直したから**絵が載っています ＝ **偶然に頼っていました。**
+
+    返り値の `restale` は「**絵は在るのに、いちばん新しい build が `image=False`**」の本
+    （＝ その本の mp4 と sheet.png は単色のまま）。**`work/` は worktree ごとなので、
+    予約する回は必ず焼き直します** —— だから危ないのは mp4 ではなく、
+    **その本について「目で見た」と書かれた記録のほう**です。
+
+    **覆る条件**: (1) `restale` に載った本が、そのあと 3本 続けて「焼き直す前に予約された」
+    ことが台帳から出なければ、この口は印字だけでよい（門にしない）。
+    (2) `slides` が背景を build 時ではなく予約時に貼るようになったら、この数は意味を失う
+    （`cli.image_for` の呼ばれ方が変わったら、ここも書き直すこと）。
+    (3) 注文の置き場が `docs/IMAGE_ORDERS.md` の約束から動いたら、両方の道を直すこと。
+    """
+    from pathlib import Path
+    orders = Path(orders) if orders is not None else ROOT / "data" / "image_orders"
+    images = Path(images) if images is not None else ROOT / "assets" / "images"
+
+    def _has(oid: str) -> bool:
+        return any((images / f"{oid}.{ext}").exists() for ext in ("jpg", "png"))
+
+    oids = sorted(p.stem for p in orders.glob("*.json")) if orders.is_dir() else []
+    missing = [o for o in oids if not _has(o)]
+    last: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") == "built" and r.get("id"):
+            last[r["id"]] = r
+    restale = sorted(vid for vid, r in last.items()
+                     if not r.get("image") and _has(f"{vid}-bg"))
+    return {"n": len(oids), "delivered": len(oids) - len(missing),
+            "missing": missing, "restale": restale,
+            "built_books": len(last)}
+
+
+def image_line(rows: list[dict]) -> str:
+    """`image_orders` を1行にする（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
+    q = image_orders(rows)
+    body = (f"**画像の注文: {q['n']}件・{q['delivered']}/{q['n']} が届いている**"
+            "（`trend.image_orders`・ファイルを見るだけ・追加 0単位）。")
+    if q["missing"]:
+        body += "  未着: " + "・".join(q["missing"][:3]) + "（外の毎時セッションが焼く）。"
+    if q["restale"]:
+        body += ("  !! **絵は在るのに、いちばん新しい build が単色: "
+                 + "・".join(q["restale"][:3])
+                 + "** ＝ その本の mp4 と sheet.png は**出る本と違う絵**です。"
+                 "**`build` し直してから (3) 目で見ること**（`image_orders` の註）。")
+    else:
+        body += "  **焼き直し待ちの本 0本**（届いた絵は、いちばん新しい build に載っています）。"
+    return body
 
 
 CHANNEL_MIN_SPAN_H = 0.5   # これより短い窓では、チャンネルの数の更新の刻みが見えるだけ
