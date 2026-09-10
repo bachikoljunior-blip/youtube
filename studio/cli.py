@@ -13,6 +13,7 @@
     python -m studio.cli trend [--days 3]       # 台帳から「齢 → 再生」の並び（API 0単位・§7 の判定はこれで）
     python -m studio.cli trend --by-day-count   # 「その日に何本 出したか」ごとの 48時間 再生（API 0単位・§7 の覆る条件）
     python -m studio.cli comments               # 視聴者が書いたコメント（自分の自動コメントは除く。API 1単位）
+    python -m studio.cli reporting [--setup]    # 一括レポート（Reporting API・Data API 0単位・Analytics より 2日 早い）
     python -m studio.cli reply <comment_id> --text "…"   # 視聴者のコメント1件に手で書いた返信（50単位・台帳 replied）
 """
 from __future__ import annotations
@@ -23,7 +24,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import analytics, critic, hear, render, script, trend, yt
+from . import analytics, critic, hear, render, reporting, script, trend, yt
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
 IMAGES = ROOT / "assets" / "images"
@@ -1050,6 +1051,54 @@ def cmd_analytics(a):
     return 0
 
 
+def cmd_reporting(a):
+    """**一括レポート（Reporting API・3つ目の枠・Data API 0単位）を取り込む。**
+
+    2026-09-10 18:0x・optimizer・Opus。**Analytics より 2日 早い口**（`studio/reporting.py` の註）。
+    `--setup` はジョブが無いときだけ作る（作ってから最初の CSV まで 24〜48時間・遡りは 30日）。
+
+    **台帳へ残すのは 1回の取り込みにつき 1行**（`event: "reported"`）——
+    行そのものは `data/studio/reporting.jsonl`（数千行 になるので台帳には混ぜない）。
+    """
+    js = reporting.jobs()
+    job = reporting.job_for(reporting.REPORT_TYPE, js)
+    if job is None:
+        if not a.setup:
+            print(f"!! `{reporting.REPORT_TYPE}` のジョブが在りません ——"
+                  " `python -m studio.cli reporting --setup` で作ること（作るのは1回だけ）")
+            return 1
+        job = reporting.create_job(reporting.REPORT_TYPE)
+        print(f"ジョブを作りました: {job['id']}（{job.get('createTime')}）"
+              " —— **最初の CSV は 24〜48時間後**・遡りは 30日")
+    reps = reporting.reports(job["id"])
+    fr = reporting.freshness(reps)
+    if fr is None:
+        print(f"報告 **0本**（ジョブ {job.get('createTime')}）。"
+              " **「数が 0」ではありません** —— まだ置かれていないだけ（次の回で見ること）")
+        ledger("reported", reporting.REPORT_TYPE, reports=0, rows=0, last_day=None, lag_h=None)
+        return 0
+    print(f"報告 {len(reps)}本・最後の期間 {fr['end']:%m/%d %H:%M}Z ＝ **遅れ {fr['lag_h']:.1f}時間**"
+          f"（置かれるまで {fr['made_h']}時間{'・!! 遅い' if fr['late'] else ''}）")
+    todo = reporting.unseen(reps, reporting.seen_ids())
+    rows = []
+    for r in todo:
+        rows += reporting.parse(reporting.download(r), r)
+    n = reporting.append(rows) if rows else 0
+    print(f"未読 {len(todo)}本 → **{n}行** 積んだ（store 累計 {len(reporting.load_rows())}行）")
+    days = sorted({r.get("date", "") for r in reporting.load_rows()})
+    last_day = days[-1] if days else None
+    if last_day:
+        print(f"報告の日 {days[0]}〜{last_day}（**太平洋時間の日** ＝ 10:00 JST の公開は前日の行）")
+        sids = studio_video_ids(ledger_rows())
+        for vid in sids:
+            vd = reporting.views_by_day(reporting.load_rows(), vid)
+            if vd:
+                print(f"  新 {vid}  " + " → ".join(f"{d[4:]} {v}回" for d, v in vd[-5:]))
+    ledger("reported", reporting.REPORT_TYPE, reports=len(reps), rows=n,
+           last_day=last_day, lag_h=fr["lag_h"], made_h=fr["made_h"])
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1065,6 +1114,7 @@ def main(argv=None):
     tr.add_argument("--by-day-count", action="store_true")
     an = sub.add_parser("analytics"); an.add_argument("--force", action="store_true")
     sub.add_parser("comments")
+    rpt = sub.add_parser("reporting"); rpt.add_argument("--setup", action="store_true")
     rp = sub.add_parser("reply"); rp.add_argument("comment_id"); rp.add_argument("--text", required=True)
     rp.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
