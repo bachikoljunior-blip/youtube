@@ -48,11 +48,18 @@
     §1 の「長尺は 1〜25回」で説明が付きます（`SHORT_MAX_S`）。混ぜたまま数えると
     「0回 の本が 3本 も在る ＝ 配りが止まった」と読めます。**下敷きが答えられるのはショートだけ。**
     いまは尺で分けて印字し、ショートだけを下敷きの初点の下端（45.0h）／上端（77.6h）に当てます。
-    **下敷きの側も尺で絞れていません** —— 60本 のうち `duration_s` が在るのは **5本** だけ
-    （中央 27.3秒・最大 303.0秒・180秒 超 1本）＝ **「下敷きはショートだけ」と読まないこと**。
-    **覆る条件**: 旧データの尺が別の口から埋まったら（873本 中 353本 に `duration_s` が在る）、
+    **下敷きの側の尺は測れていません** —— 60本 のうち `duration_s` が在るのは **5本** だけ
+    （中央 27.3秒・最大 303.0秒・180秒 超 1本）。
+    **【2026-09-11 08:3x に 2つ目の口で埋めました】向き**（`data/critique_queue` の `orientation`）は
+    **58/60 に在り、58本 とも `縦`・`横` は 0本**（残り 2本 は控えが無い）＝ **下敷きは縦だけで出来ています**。
+    そして いま 0回 のまま並ぶ旧作りの 2本 は **どちらも `横`** ＝ 尺の側（1580.0秒・314.9秒）と
+    **同じ答えを、別の口が返しました**（§5 の教訓の形1つ目 ＝ 足す前に「違う物を見ているか」を確かめる。
+    尺は 60本 中 5本・向きは 58本 ＝ **別の物を見ています**）。
+    いまは **尺 が上限を越える か 向きが `横`** で「下敷きの外」に落とします（`standing`）。
+    **覆る条件**: (a) 旧データの尺が別の口から埋まったら（873本 中 353本 に `duration_s` が在る）、
     下敷きの側も `SHORT_MAX_S` で絞って取り直すこと ——そのとき B の 3本 が長尺なら、
-    上の「B の初点は 45h 以降」ごと引かれます。
+    上の「B の初点は 45h 以降」ごと引かれます。(b) **studio の本には控えが無い**ので、
+    向きの口は旧作りにしか答えません ——`縦` が無いことを「横だ」と読まないこと。
 """
 from __future__ import annotations
 
@@ -135,7 +142,42 @@ def summary(group: list[dict]) -> dict:
 
 SHORT_MAX_S = 180.0
 """**ショートの上限（秒）。** これを越える本は Shorts フィードに乗らない ＝ §1 の
-「長尺は 1〜25回」の側で、**この下敷きに当てて読めません**（下敷きは 尺 を分けていない）。"""
+「長尺は 1〜25回」の側で、**この下敷きに当てて読めません**。"""
+
+QUEUE = ROOT / "data" / "critique_queue"
+"""旧道具が本ごとに残した控え（**過去のデータ** ＝ §8 の「使わない道具」ではない）。
+`orientation`（縦／横）が **2,714本** に在り、尺が書かれていない本の**向き**を言います。"""
+
+
+def shapes(ids: list[str] | None = None) -> dict[str, str]:
+    """id → 向き（`縦`／`横`）。**分かる本だけ**。API 0単位・ファイルを読むだけ。
+
+    **なぜ2つ目の口が要ったか**（2026-09-11 08:3x・optimizer・Opus）:
+    08:0x は尺（`duration_s`）だけで群を分け、**下敷き 60本 のうち尺が分かるのは 5本**
+    だったので「下敷きはショートだけと読まないこと」としか言えませんでした。
+    向きは **58/60 に在り、58本 とも `縦`・`横` は 0本**（残り 2本 は控えが無い）＝
+    **下敷きは縦だけで出来ています**。そして いま 0回 のまま並ぶ旧作りの 2本
+    （`fMlY_uzHOMw`・`m7BRQs9X6Jc`）は **どちらも `横`** ＝ 尺の側（1580.0秒・314.9秒）と
+    **同じ答え**を、別の口が返しました（§5 の教訓の形1つ目 ＝ 2つ目の口は違う物を見ているか）。
+
+    **覆る条件**: studio の本には控えが無い（この口は旧作りにしか答えません）ので、
+    **`縦` が無いことを「横だ」と読まないこと**。新しい作りの向きは 台帳 `built` の側
+    （1080×1920 固定）で、**尺のほうで分けます**。
+    """
+    if not QUEUE.is_dir():
+        return {}
+    out: dict[str, str] = {}
+    for vid in (ids if ids is not None else [p.stem for p in QUEUE.glob("*.json")]):
+        p = QUEUE / f"{vid}.json"
+        if not p.is_file():
+            continue
+        try:
+            v = json.loads(p.read_text(encoding="utf-8")).get("orientation")
+        except (json.JSONDecodeError, OSError):
+            continue
+        if isinstance(v, str) and v.strip():
+            out[vid] = v.strip()
+    return out
 
 
 def durations(uploaded: list[dict], ledger: list[dict]) -> dict[str, tuple[float, str]]:
@@ -170,14 +212,16 @@ def durations(uploaded: list[dict], ledger: list[dict]) -> dict[str, tuple[float
 
 
 def standing(ledger: list[dict], lo: float = LO,
-             durs: dict[str, tuple[float, str]] | None = None) -> list[dict]:
+             durs: dict[str, tuple[float, str]] | None = None,
+             shape: dict[str, str] | None = None) -> list[dict]:
     """**いまの本の立ち位置** —— 台帳の `measured` の**いちばん新しい行**が 0回 で、齢が `lo` を越えた本。
 
-    **尺も一緒に返すこと**（`durations` の註）—— 下敷き（旧データ）は 尺 を分けていないので、
-    `SHORT_MAX_S` を越える本は「下敷きの外」として読む側に渡します（`long` が True）。
-    尺が分からない本は `seconds` が None ＝ **`long` も None**（「短い」と決めつけない）。
+    **尺と向きも一緒に返すこと**（`durations` / `shapes` の註）—— 下敷き（旧データ）は
+    **縦だけ**で出来ているので、`SHORT_MAX_S` を越える本 **または `横` の本**は
+    「下敷きの外」として読む側に渡します（`long` が True）。
+    **どちらも分からない本は `long` が None**（「短い」と決めつけない）。
     """
-    durs = durs or {}
+    durs, shape = durs or {}, shape or {}
     last: dict[str, dict] = {}
     for r in ledger:
         if r.get("event") == "measured" and r.get("id") and isinstance(r.get("views"), int):
@@ -187,9 +231,13 @@ def standing(ledger: list[dict], lo: float = LO,
         if r["views"] != 0 or not isinstance(r.get("age_h"), (int, float)) or r["age_h"] < lo:
             continue
         sec, src = durs.get(vid, (None, None))
+        ori = shape.get(vid)
+        if sec is not None:
+            long_ = sec > SHORT_MAX_S or ori == "横"
+        else:
+            long_ = True if ori == "横" else None
         out.append({"id": vid, "age_h": r.get("age_h"), "title": r.get("title"),
-                    "seconds": sec, "dur_src": src,
-                    "long": (None if sec is None else sec > SHORT_MAX_S)})
+                    "seconds": sec, "dur_src": src, "orientation": ori, "long": long_})
     return sorted(out, key=lambda d: d["age_h"] or 0)
 
 
@@ -222,26 +270,42 @@ def report(lo: float = LO, hi: float = HI, band: tuple[int, int] | None = BAND) 
         out.append("  **逆向きは言えます**: 窓で再生が付いていた本に、最後まで 0回 だった本は **1本もありません**")
     up_rows, led_rows = _rows(UPLOADED), _rows(LEDGER)
     durs = durations(up_rows, led_rows)
-    out.extend(_base_length_line(g, durs))
-    out.extend(_standing_lines(standing(led_rows, lo, durs), lo,
+    base_ids = [x["id"] for x in g["A"]] + [x["id"] for x in g["B"]]
+    now0 = standing(led_rows, lo)
+    shape = shapes(base_ids + [x["id"] for x in now0])
+    out.extend(_base_length_line(g, durs, shape))
+    out.extend(_standing_lines(standing(led_rows, lo, durs, shape), lo,
                                [x["first_pos_h"] for x in g["B"] if x["first_pos_h"] is not None]))
     return "\n".join(out)
 
 
-def _base_length_line(g: dict, durs: dict[str, tuple[float, str]]) -> list[str]:
-    """**下敷きの側の尺**を1行で（`durations` の註）。**分かる本の数を必ず出すこと** ——
-    分からない本を「短い」と数えると、下敷きが尺で絞れているように見えます。"""
+def _base_length_line(g: dict, durs: dict[str, tuple[float, str]],
+                      shape: dict[str, str] | None = None) -> list[str]:
+    """**下敷きの側の尺と向き**を出す（`durations` / `shapes` の註）。
+    **分かる本の数を必ず出すこと** —— 分からない本を「短い」と数えると、
+    下敷きが絞れているように見えます。"""
+    shape = shape or {}
     ids = [x["id"] for x in g["A"]] + [x["id"] for x in g["B"]]
-    secs = sorted(durs[i][0] for i in ids if i in durs)
     if not ids:
         return []
+    secs = sorted(durs[i][0] for i in ids if i in durs)
     if not secs:
-        return ["  **この下敷きは 尺 を分けていません** —— "
-                f"{len(ids)}本 のうち 尺 が分かる本は **0本**（`duration_s` が無い）"]
-    return ["  **この下敷きは 尺 を分けていません** —— "
-            f"{len(ids)}本 のうち 尺 が分かるのは **{len(secs)}本** だけ"
-            f"（中央 {st.median(secs):.1f}秒・最大 {max(secs):.1f}秒・"
-            f"{SHORT_MAX_S:g}秒 超 {sum(1 for s in secs if s > SHORT_MAX_S)}本）"]
+        out = ["  **この下敷きの尺は測れていません** —— "
+               f"{len(ids)}本 のうち 尺 が分かる本は **0本**（`duration_s` が無い）"]
+    else:
+        out = ["  **この下敷きの尺は、ほとんど測れていません** —— "
+               f"{len(ids)}本 のうち 尺 が分かるのは **{len(secs)}本** だけ"
+               f"（中央 {st.median(secs):.1f}秒・最大 {max(secs):.1f}秒・"
+               f"{SHORT_MAX_S:g}秒 超 {sum(1 for s in secs if s > SHORT_MAX_S)}本）"]
+    tate = sum(1 for i in ids if shape.get(i) == "縦")
+    yoko = sum(1 for i in ids if shape.get(i) == "横")
+    unknown = len(ids) - tate - yoko
+    if tate or yoko:
+        verdict = ("**＝ この下敷きは縦だけで出来ています**" if yoko == 0
+                   else "**＝ この下敷きは縦と横が混ざっています ＝ 横の本に当てて読まないこと**")
+        out.append(f"  **向きは別の口が言います**（`data/critique_queue` の `orientation`）: "
+                   f"縦 **{tate}本**・横 **{yoko}本**・控えなし {unknown}本 {verdict}")
+    return out
 
 
 def _standing_lines(now: list[dict], lo: float, firsts: list[float]) -> list[str]:
@@ -256,16 +320,21 @@ def _standing_lines(now: list[dict], lo: float, firsts: list[float]) -> list[str
     for x in now:
         sec = ("尺 不明" if x["seconds"] is None
                else f"{x['seconds']:.1f}秒（{x['dur_src']}）")
-        mark = "  ** **下敷きの外**（Shorts フィードに乗らない尺）" if x["long"] else ""
-        out.append(f"    {x['id']}  齢 {x['age_h']:.1f}h  {sec}  {x['title'] or ''}{mark}")
+        ori = f"・{x['orientation']}" if x.get("orientation") else ""
+        mark = "  ** **下敷きの外**（Shorts フィードに乗らない）" if x["long"] else ""
+        out.append(f"    {x['id']}  齢 {x['age_h']:.1f}h  {sec}{ori}  {x['title'] or ''}{mark}")
     if not now:
         return out
     shorts = [x for x in now if x["long"] is False]
     longs = [x for x in now if x["long"] is True]
     if longs:
+        why = "・".join(
+            (("%.1f秒" % x["seconds"]) if x["seconds"] is not None else "尺 不明")
+            + (f"／{x['orientation']}" if x.get("orientation") else "")
+            for x in longs)
         out.append(f"  **この {len(now)}本 を 1つ に数えないこと** —— "
-                   f"{SHORT_MAX_S:g}秒 を越える本が **{len(longs)}本**"
-                   "（" + "・".join("%.1f秒" % x["seconds"] for x in longs) + "）"
+                   f"下敷きの外（{SHORT_MAX_S:g}秒 超 か 横）が **{len(longs)}本**"
+                   f"（{why}）"
                    f" ＝ §1 の「長尺は 1〜25回」の側で、**この下敷きは答えません**。"
                    f" 下敷きが答えられるのは **ショート {len(shorts)}本**"
                    + ("" if shorts else "（＝ いまは 0本 ＝ この下敷きに当たる本が在りません）"))

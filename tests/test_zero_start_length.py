@@ -99,12 +99,58 @@ def test_下敷きの尺のカバレッジを必ず出す():
     assert zs._base_length_line(g, {})[0].endswith("尺 が分かる本は **0本**（`duration_s` が無い）")
 
 
+# --- 2つ目の口（向き・2026-09-11 08:3x。`zero_start.shapes` の註） -----------------
+# 尺は下敷きの 60本 中 5本 にしか無い。向きは 58本 に在り、**58本 とも縦**。
+# ＝ 下敷きが何で絞れているかを、別の口が数で言えます。
+
+
+def test_shapes_は控えの向きだけを返す(tmp_path, monkeypatch):
+    q = tmp_path / "critique_queue"
+    q.mkdir()
+    (q / "tate.json").write_text('{"orientation": "縦"}', encoding="utf-8")
+    (q / "yoko.json").write_text('{"orientation": "横"}', encoding="utf-8")
+    (q / "empty.json").write_text('{"orientation": ""}', encoding="utf-8")
+    (q / "broken.json").write_text("{ not json", encoding="utf-8")
+    monkeypatch.setattr(zs, "QUEUE", q)
+    got = zs.shapes(["tate", "yoko", "empty", "broken", "missing"])
+    assert got == {"tate": "縦", "yoko": "横"}
+
+
+def test_横は尺が分からなくても下敷きの外():
+    """尺の口が空でも、向きが `横` なら下敷きの外（2つ目の口が独立に効くこと）。"""
+    rows = [{"event": "measured", "id": "yoko", "views": 0, "age_h": 100.0},
+            {"event": "measured", "id": "nothing", "views": 0, "age_h": 100.0}]
+    got = {x["id"]: x for x in zs.standing(rows, lo=8.0, durs={}, shape={"yoko": "横"})}
+    assert got["yoko"]["long"] is True and got["yoko"]["seconds"] is None
+    assert got["nothing"]["long"] is None          # どちらの口も答えないなら決めつけない
+
+
+def test_短い尺でも横なら下敷きの外():
+    rows = [{"event": "measured", "id": "v", "views": 0, "age_h": 50.0}]
+    got = zs.standing(rows, lo=8.0, durs={"v": (60.0, "uploaded.jsonl")}, shape={"v": "横"})
+    assert got[0]["long"] is True
+    # 陽性対照: 向きを外すと ショート に戻る（＝ 向きの側が本当に効いている）
+    assert zs.standing(rows, lo=8.0, durs={"v": (60.0, "uploaded.jsonl")}, shape={})[0]["long"] is False
+
+
+def test_下敷きの向きを数で出す_混ざったら名指しする():
+    g = {"A": [{"id": "a"}, {"id": "b"}], "B": [{"id": "c"}]}
+    line = zs._base_length_line(g, {}, {"a": "縦", "b": "縦"})[1]
+    assert "縦 **2本**・横 **0本**・控えなし 1本" in line and "縦だけで出来ています" in line
+    # 陽性対照: 横が 1本でも混ざれば、言うことが変わる
+    mixed = zs._base_length_line(g, {}, {"a": "縦", "b": "横"})[1]
+    assert "縦と横が混ざっています" in mixed
+
+
 def test_実物_長尺2本は下敷きの外_5本目はショート():
-    """実物（2026-09-11 08:0x）: 89.6秒 の 5本目 と、314.9秒・1580.0秒 の旧作り 2本。"""
+    """実物（2026-09-11 08:3x）: 89.6秒 の 5本目 と、314.9秒／横・1580.0秒／横 の旧作り 2本。
+    下敷きは **縦 58本・横 0本・控えなし 2本**。"""
     durs = zs.durations(zs._rows(zs.UPLOADED), zs._rows(zs.LEDGER))
     assert durs["fMlY_uzHOMw"][0] == 1580.0
     assert durs["m7BRQs9X6Jc"][0] == 314.9
     assert durs["2YZ_4FXC-XI"][0] < zs.SHORT_MAX_S
+    sh = zs.shapes(["fMlY_uzHOMw", "m7BRQs9X6Jc"])
+    assert sh == {"fMlY_uzHOMw": "横", "m7BRQs9X6Jc": "横"}   # 尺の側と同じ答えを、別の口が返す
     out = zs.report()
-    assert "この下敷きは 尺 を分けていません" in out
+    assert "縦 **58本**・横 **0本**" in out and "縦だけで出来ています" in out
     assert "下敷きの外" in out
