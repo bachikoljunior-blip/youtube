@@ -712,6 +712,82 @@ def wake_is_fresh(wake_at: datetime,
 WAKE_PLACED_MIN_N = 8
 
 
+#: **起こしが「届かなかった」と数える門**（分）。`decide()` の覆る条件 (2) の 15分 そのもの
+#: （「`wake_at` を 15分 過ぎても `rounds.jsonl` に周が無い」）。
+#: **2026-09-10 22:0x に、その条件が初めて引かれました**（`wake_missed` の註）。
+WAKE_MISS_MIN = 15.0
+
+
+def wake_missed(rows: list[dict] | None = None,
+                starts: list[datetime] | None = None,
+                gate: float = WAKE_MISS_MIN) -> dict:
+    """**置いた起こしが、狙った時刻に周を出したか**（`decide()` の覆る条件 (2) を数える口）。
+
+    返り: `{"placed": 分母, "lags": [分], "median_lag": 分, "missed": [(wake_at, 遅れ)]}`。
+    分母は **`wake_placed` が True で `wake_at` を持つ行だけ**（列を足す前の行は入れない
+    ——`wake_placed_counts` の註と同じ理由）。遅れは **狙った時刻 → その後 最初に立った周**。
+
+    **なぜ足したか（2026-09-10 22:0x・optimizer・Opus。この回に引かれた）**:
+    `decide()` の覆る条件 (2)（「`wake_at` を 15分 過ぎても周が無い」）は
+    **どこも数えていませんでした** ——次の回が `parent_wakes.jsonl` と `rounds.jsonl` を
+    手で突き合わせるしかない形で、§7 (j)・(m) が踏んだのと同じ型です
+    （**言っている所と、している所が別**）。実測はこの回に出ました:
+
+        置いた起こし **25本**・遅れの中央値 **1.76分**
+        5分 超 **2本**（09/10 06:08 の 7.9分・09/10 12:00 の **18.5分**）
+        15分 超（＝ 条件が言う「届かない」）**1本 ＝ 4%**
+
+    その 1本 の中身: 11:45 に **12:00:09** の起こしを置き、11:59:31 の心拍が
+    「あと 1.0分」と見て `wake_placed: False`（`WAKE_SAME_SEC` の門 ＝ 正しい）→
+    **12:00 の起こしは来ず**、次に親が起きたのは **12:18:32**（11:59:31 ＋ 心拍の中央値 18.28分）
+    ＝ **拾ったのは起こしではなく心拍**でした。その区間は **53.2分**（狙い 36.03分）で、
+    `gap_ratios` の **1.481** ＝ §7 (d) の門 1.25 を、12窓 で初めて越えた窓です。
+
+    **`gap_ratios` とは別の物を見ています**（§5「確かめる手を足すときは、それが元の手と
+    違う物を見ているかを先に撃つ」）: `gap_ratios` は「区間が狙いの何倍か」しか言えず、
+    **狙いが悪いのか届きが落ちたのか**を分けません。こちらは狙った**時刻**を分母に置くので、
+    落ちた側だけが立ちます。
+
+    **いまは「口を直す」側ではありません**（同じ回の判定）: 落ちても**心拍が必ず拾う**ので、
+    損は **心拍の間隔ぶん（中央値 18.3分）で頭打ち**です。25本 に 1本・1本あたり 17分 ＝
+    残り 33時間（約 55周）で **2本・35分** ＝ 着地で **0.3 ポイント**。
+    起こしを2本 置く形は 04:5x が「壊れていない物を直すことになる」と閉じた側なので、
+    **数えるだけにして、直す門を下に置きます。**
+
+    **覆る条件**: (1) 15分 超が **置いた起こしの 20% を越えたら**（いま 4%）、
+    起こしの口そのものを見ること（`send_later` の届き ＝ `docs/trigger_parent.md`）。
+    (2) 15分 超の起こしのあとに、**心拍でも周が立たなかった回**が 1度でも出たら、
+    そのときは率に関係なく口を直す（頭打ちの前提 ＝ 心拍が拾う、が外れた印）。
+    (3) 心拍の間隔（`heartbeat_minutes`）が 30分 を越えたら、頭打ちが 2倍 になるので
+    (1) の 20% を下げ直すこと。
+    """
+    got = rows if rows is not None else wake_rows()
+    when = starts if starts is not None else round_starts()
+    lags: list[float] = []
+    missed: list[tuple[datetime, float]] = []
+    placed = 0
+    for row in got:
+        if row.get("who") != "owner" or row.get("wake_placed") is not True:
+            continue
+        try:
+            aim = datetime.fromisoformat(str(row.get("wake_at")))
+        except (TypeError, ValueError):
+            continue
+        if aim.tzinfo is None:
+            aim = aim.replace(tzinfo=timezone.utc)
+        placed += 1
+        # 周は起こしの数秒 前に立つことが在る（記録が先・§5）ので、少しだけ手前も同じ届きに数えます。
+        after = [t for t in when if (t - aim).total_seconds() >= -60.0]
+        if not after:
+            continue                      # まだ来ていない起こし（数えない・分母には居る）
+        lag = (after[0] - aim).total_seconds() / 60.0
+        lags.append(lag)
+        if lag > gate:
+            missed.append((aim, lag))
+    return {"placed": placed, "lags": lags,
+            "median_lag": median(lags) if lags else None, "missed": missed}
+
+
 def wake_placed_counts(rows: list[dict] | None = None) -> tuple[int, int]:
     """**(`wake_placed` が True の行, False の行)**。註は `wake_is_fresh` の (2)(3)。
 
@@ -1219,6 +1295,14 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     # 門は `WAKE_PLACED_MIN_N`。**この 2つ が無いと、次の回は「False が 0」を
     # 手で数えて「引かれた」と読みます**（実測: 列を足した1周あとに 2本 とも True）。
     base["wake_placed_true"], base["wake_placed_false"] = wake_placed_counts()
+    # **置いた起こしが、狙った時刻に周を出したか**（2026-09-10 22:0x・`wake_missed` の註）。
+    # `decide()` の覆る条件 (2) は「15分 過ぎても周が無い」で、**どこも数えていませんでした**
+    # ＝ 次の回が 2つ の台帳を手で突き合わせる形（§7 (j)・(m) と同じ型）。
+    _miss = wake_missed()
+    base["wake_missed"] = len(_miss["missed"])
+    base["wake_missed_n"] = _miss["placed"]
+    base["wake_lag_median_min"] = (None if _miss["median_lag"] is None
+                                   else round(_miss["median_lag"], 2))
     group = current_round(span_min=round_span(floor))
 
     # **0体 は「間隔を見ない」ではなく「起こしを置いて待つ」**（2026-09-03・上の節）。
