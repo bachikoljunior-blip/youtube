@@ -2072,3 +2072,6 @@
 {"views": 189, "likes": 0, "comments": 1, "age_h": 120.6, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-10T09:39:14+09:00", "id": "kzefG44_APU", "event": "measured"}
 {"views": 5, "likes": 0, "comments": 1, "age_h": 144.6, "title": "【知らないと損】2026年4月 働く年金受給者は年54万円増える", "n_values": 1, "at": "2026-09-10T09:39:14+09:00", "id": "1huadpEk6HY", "event": "measured"}
 {"publish_at": "2026-09-10T10:00:00+09:00", "title": "夫が亡くなると妻の年金はいくら減るか 遺族厚生年金は4分の3 #Shorts", "at": "2026-09-10T09:39:14+09:00", "id": "2YZ_4FXC-XI", "event": "pending"}
+{"seconds": 84.0, "image": true, "chars": 465, "scenes": [7.4, 8.0, 8.6, 9.8, 7.5, 6.5, 5.9, 9.5, 5.5, 7.4, 8.1], "at": "2026-09-10T10:03:44+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "built"}
+{"mismatched": 2, "model": "small", "mode": "kana", "diffs": [{"i": 4, "d": [["これからまいとしもらうねんきんがおよそにまんえんおおくなります", ""]]}, {"i": 5, "d": [["んえ", "ね"]]}], "escalated": [6, 8], "tail": {"4": true}, "voice": {"4": "音は在る"}, "how": {"6": "small→medium+prompt", "8": "small→medium+prompt"}, "at": "2026-09-10T10:09:29+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "heard"}
+{"n": 1, "kinds": ["missing_cond"], "at": "2026-09-10T10:13:04+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "crosscheck"}
