@@ -745,7 +745,8 @@ HOLD_BAND = (70.0, 90.0)
 HOLD_EXACT_H = 0.05
 
 
-def hold(rows: list[dict], ages: tuple[float, ...] = HOLD_AGES) -> list[dict]:
+def hold(rows: list[dict], ages: tuple[float, ...] = HOLD_AGES,
+         zero: list[dict] | None = None) -> list[dict]:
     """こちらの作りの本の「齢 Nh までに、**いまの再生の何%**が付いていたか」（包絡・API 0単位）。
 
     **なぜ（2026-09-09 23:2x JST・optimizer・Opus が足した）**: §7 の「90秒の上限」の行は
@@ -823,6 +824,8 @@ def hold(rows: list[dict], ages: tuple[float, ...] = HOLD_AGES) -> list[dict]:
     # **「確定」の門は、直近2点ではなく `flats` の境目**（下の 05:4x の註）。
     thresh = float(flats(rows)["thresh_h"])
     out: list[dict] = []
+    # **いま 0回 の本を入れる所**（渡されなければ捨てる ＝ 呼ぶ側が要るときだけ受け取る）。
+    zero_out: list[dict] = zero if zero is not None else []
     for vid, pts in sorted(series(rows).items(), key=lambda kv: published_at(kv[1])):
         if vid not in mine or not pts:
             continue
@@ -830,6 +833,9 @@ def hold(rows: list[dict], ages: tuple[float, ...] = HOLD_AGES) -> list[dict]:
         last_age = float(pts[-1]["age_h"])
         last = env[-1]
         if not last:
+            # **いま 0回 の本は、割合の分母が作れません**（黙って落とさず、下の行で名指しする）。
+            zero_out.append({"id": vid, "age_h": last_age,
+                             "day": published_at(pts).strftime("%m/%d")})
             continue
         gap = last_rise_gap_h(pts, env)
         row: dict = {
@@ -919,8 +925,16 @@ def hold_verdict(cell: dict | None, growing: bool,
 
 
 def hold_lines(rows: list[dict]) -> list[str]:
-    """`hold()` を印字する。**帯に入った本の数は、写しではなく数から作る**（`hold` の註）。"""
-    got = hold(rows)
+    """`hold()` を印字する。**帯に入った本の数は、写しではなく数から作る**（`hold` の註）。
+
+    **いま 0回 の本は、割合の分母が作れないので `hold` から落ちます**
+    （2026-09-11 06:0x・optimizer・Opus）——**黙って落とすと「数えた N本」が
+    本の数と食い違い**、その本が この行から消えたことが どの印字にも出ません
+    （§4 (0-b) の族・`first_view` の「初点が 6h より遅い本 N本 は外してあります」と同じ形）。
+    **落とした本は末尾で名指しします**（見るのは §7 の (l)/(j) と `first_view` の行）。
+    """
+    zero: list[dict] = []
+    got = hold(rows, zero=zero)
     if not got:
         return []
     out = [f"齢の割合（**いまの再生を 100% としたときに、齢 Nh までに付いていた割合**。"
@@ -956,9 +970,12 @@ def hold_lines(rows: list[dict]) -> list[str]:
         f"**「分けられない」は 6h ちょうどの点が無く、挟みが帯を跨いだ本** ——"
         f"「帯の外」に数えないこと（`trend.hold_verdict` の註・2026-09-10 05:0x に 0/4 から直した）。"
         f"**齢 6h・12h の点で本の当たり外れを読まないこと** ——大きい本ほど尾が長く出ています。"
-        + (f"**「確定」は、最後に伸びてから {got[0]['flat_thresh_h']:.1f}時間"
-           f"（＝ 実測でいちばん長い「戻った平ら」・`trend.flats`）を越えた本だけです** ——"
-           "**直近2点が平らなだけの本を「確定」と読まないこと**（2026-09-11 05:4x に直した）。"
+        + ("**いま 0回 の本 %d本（%s）は分母が作れないので外してあります** ——"
+           "**「数えた %d本」を本の数と読まないこと**（`first_view`・§7 (l)(j) で見ること）。"
+           % (len(zero), "・".join("%s 齢%.1fh" % (z["id"], z["age_h"]) for z in zero), have)
+           if zero else "")
+        + (f"**「確定」＝ 最後の伸びから {got[0]['flat_thresh_h']:.1f}時間 超**"
+           "（`flats` の境目・05:4x）——**直近2点の平らで「止まった」と読まないこと**。"
            if got else ""))
     return out
 
