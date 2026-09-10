@@ -2752,3 +2752,4 @@
 {"mismatched": 1, "model": "small", "mode": "kana", "diffs": [{"i": 8, "d": [["はぴゃく", "ひゃき"]]}], "escalated": [2, 5, 6, 7, 9, 10, 11], "tail": {}, "voice": {}, "how": {"2": "small→medium", "5": "small→medium+prompt", "6": "small→medium+prompt", "7": "small→medium+prompt", "9": "small→medium+prompt", "10": "small→medium", "11": "small→medium"}, "at": "2026-09-11T00:41:56+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "heard"}
 {"n": 0, "kinds": [], "at": "2026-09-11T00:43:15+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
 {"n": 1, "kinds": ["missing_cond"], "at": "2026-09-11T00:45:24+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
+{"n": 2, "kinds": ["missing_cond", "missing_cond"], "at": "2026-09-11T00:47:53+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
