@@ -59,7 +59,7 @@ def test_studio_を_import_する検査は全部_live() -> None:
 #: `PARENT_MODULES` へ入ったが、**この写しの側だけ据え置かれていた**）と `method_growth`。
 #: 写しが片方だけ古いと、**規則C からその名前が落ちても、この見張りは黙ります**
 #: （＝ 借りると死ぬのを避けて別実装にした意味が、名前の側で半分 消えていた）。
-_PARENT_MODULES_HERE = ("next_round", "next_round_owner", "spawn_prompt", "quota", "method_growth")
+_PARENT_MODULES_HERE = ("next_round", "next_round_owner", "spawn_prompt", "quota", "method_growth", "output_growth")
 
 
 def _imports_parent(p: Path) -> bool:
