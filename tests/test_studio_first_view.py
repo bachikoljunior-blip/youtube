@@ -95,3 +95,27 @@ def test_trendの並びに入っている():
     rows = [_m("a", 0.5, 0), _m("a", 1.5, 3)]
     out = "\n".join(trend.lines(rows, now=T0 + dt.timedelta(hours=2)))
     assert "**1回目の再生が付いた齢**" in out
+
+
+def test_いまN回は数え直しを落とした水準で読む():
+    """`recounts()` が落とした峰を、この行も落とすこと（2026-09-10 20:5x）。
+
+    陽性対照: `first_view` の `views` を `ceiling(good)` から点の生の `max` へ戻すと落ちる。
+    実物で踏んだ形（`nQbVxuWpWw8` 68 → 66）と同じ並び —— 峰が
+    `ENVELOPE_LAG_H` より長く下回ったまま戻らない。
+    """
+    rows = [_m("a", 0.5, 0), _m("a", 1.5, 40), _m("a", 3.0, 68)]
+    rows += [_m("a", 3.0 + h, 66) for h in (1.0, 3.0, 6.5, 9.0, 12.0)]
+    b = trend.first_view(rows)["books"][0]
+    assert b["views"] == 66, "生の max（68）ではなく、数え直しを落とした水準"
+    assert [r["id"] for r in trend.recounts(rows)] == ["a"]
+    assert "いま 66回" in "\n".join(trend.first_view_lines(rows))
+
+
+def test_views欄の無い点が混ざっても落ちない():
+    """`series()` は `views` が None の `measured` も返す（§7 (j)）—— `ceiling` に渡さないこと。"""
+    rows = [_m("a", 0.5, 0), {"event": "measured", "id": "a", "age_h": 1.0,
+                              "views": None, "at": T0.isoformat()},
+            _m("a", 2.0, 9)]
+    b = trend.first_view(rows)["books"][0]
+    assert b["views"] == 9 and (b["lo"], b["hi"]) == (0.5, 2.0)

@@ -895,6 +895,15 @@ def first_view(rows: list[dict]) -> dict:
 
     **返り値の `books` は判定した実物そのもの**（§5 の教訓の形 4つ目 —— 次の回が列挙で確かめられる）。
 
+    **「いま N回」は `ceiling()`（数え直しを落とした水準）で読みます**
+    （2026-09-10 20:5x JST・optimizer・Opus が直した）: もとは点の生の `max` で、
+    **同じ `trend` の出力の中で、齢の割合の行と 1本だけ食い違っていました** ——
+    `nQbVxuWpWw8` を この行が **68回**・`hold` の行と `lines()` の並びが **66回**
+    と印字しており、その 2 の差は `recounts()` が既に落とした峰（68 → 66）そのものです。
+    **`recounts()` が挙げた本は、ここでも落ちていなければなりません** ——
+    この行の `views` は §7 (c) の覆る条件 (1)（0回 のまま門を越えた本がそのあと伸びたか）を
+    読む数なので、生の `max` のままだと**数え直しを「伸び」と読む口**が残ります。
+
     **この行は「当たり外れ」を言いません**（判定は `hourly`・§5）。言うのは
     「1回目が付いた齢は、これまで何時間の側だったか」だけです。
 
@@ -914,8 +923,8 @@ def first_view(rows: list[dict]) -> dict:
     for vid, pts in series(rows).items():
         if vid in gone:
             continue
-        vals = [(float(r["age_h"]), r["views"]) for r in pts
-                if isinstance(r.get("views"), int)]
+        good = [r for r in pts if isinstance(r.get("views"), int)]
+        vals = [(float(r["age_h"]), r["views"]) for r in good]
         if not vals:
             continue
         vals.sort()
@@ -931,7 +940,7 @@ def first_view(rows: list[dict]) -> dict:
             "first_age_h": vals[0][0], "first_views": vals[0][1],
             "lo": lo, "hi": hi,
             "zero_through_h": max(zeros) if (zeros and hi is None) else None,
-            "views": max(v for _, v in vals),
+            "views": ceiling(good),
             "day": published_at(pts).strftime("%m/%d"),
         })
     early.sort(key=lambda b: (b["day"], b["id"]))
