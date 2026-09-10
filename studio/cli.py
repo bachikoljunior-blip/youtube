@@ -399,7 +399,10 @@ def cmd_status(a):
         # 「返信 n件」だけでは、その問いに**こちらが答えたか**が読めない ——
         # この回は「30時間 放置」と読み違え、API を別に 1単位 撃って確かめた。
         nun = sum(1 for c in cs if not c.get("answered"))
-        print(f"視聴者コメント: {len(cs)}件（台帳に無い新着 {len(fresh)}件{note}"
+        # **突き合わせのもう1方向**（`gone_comments` の註）。**立たない回は 1字も足さない。**
+        gone = gone_comments(ledger_rows(), cs)
+        gmark = f"・!! **消えた {len(gone)}件**（`comments` を撃つこと）" if gone else ""
+        print(f"視聴者コメント: {len(cs)}件（台帳に無い新着 {len(fresh)}件{note}{gmark}"
               + (f"・うちスレッドの返信 {nrep}件" if nrep else "")
               + f"・**未返信 {nun}件**" + "）")
         # 新着は必ず出す（3件で切って隠さない）。2026-09-09 04:2x: 返信を引くようにしたので、
@@ -723,6 +726,57 @@ def cmd_measure(a):
     return 0
 
 
+def gone_comments(rows: list[dict], live: list[dict]) -> list[dict]:
+    """**台帳に在るのに、いま API から返ってこない視聴者コメント**を挙げる
+    （2026-09-10 16:0x・optimizer・Opus。**追加 0単位** ＝ すでに引いてある `live` と台帳を突き合わせるだけ）。
+
+    **穴**: `status` も `comments` も、突き合わせを **1方向しか** していませんでした ——
+    「**台帳に無い新着**」は数えるのに、その裏（**台帳に在ったのに消えた**）を数える口が無い。
+    ＝ §4 (0-b) の族（**0件 を「大丈夫」と読む**）の 5つ目の型: **「新着 0件・保留/迷惑 0件」は
+    「何も起きていない」と読めますが、消えた側はその 2つ のどちらにも出ません。**
+
+    **引いた実測（この回・0単位）**: `@sakimura5257` の
+    **`Ugy3gdkwxAy5P3Nw_fd4AaABAg`「コメントしたのに消えた」**（`lQHX9LJ80Sg`・09/08 03:39Z 投稿）は
+    **09/08 15:03 と 15:05 の 2回、台帳に `viewer_comment` として記録されている**のに、
+    この回の `comments`（**チャンネル全部・published/heldForReview/likelySpam の 3列**）には
+    **在りません**。同じ人の同じ本への別のコメントは 3件 とも返っています。
+    ＝ **「コメントしたのに消えた」と書いたその人のコメントが、実際に消えました。**
+    こちらの保留にも迷惑にも入っていない（`comments` の最後の行が 0件）ので、
+    **消したのは投稿者自身か YouTube 側**で、**Data API ではどちらかを分けられません**
+    （分けたいなら Studio の側。ここでは**数だけ**残します）。
+
+    **なぜ数えるか**: コメントは likes より先に動く反応（`yt.viewer_comments` の註）で、
+    **消えたコメントは「反応が無かった」と同じ顔をします**。投稿が消える人は次を書きません。
+
+    `live` は `yt.viewer_comments()` の返り（**チャンネル全部を1度に引く**ので、
+    本ごとの窓では落ちません ＝ 返ってこない ＝ 3列 のどこにも無い）。
+    """
+    live_ids = {c["id"] for c in live}
+    out, seen = [], set()
+    for r in rows:
+        if r.get("event") != "viewer_comment":
+            continue
+        cid = r.get("comment_id")
+        if not cid or cid in live_ids or cid in seen:
+            continue
+        seen.add(cid)
+        out.append(r)
+    return out
+
+
+def gone_comments_line(rows: list[dict], live: list[dict]) -> str:
+    """`gone_comments` を1行にする。**0件 でも印字すること**（`comments` の保留/迷惑の行と同じ理由）。"""
+    gone = gone_comments(rows, live)
+    if not gone:
+        return "   消えたコメント **0件**（台帳の `viewer_comment` は全部 いま API から返っています）"
+    body = f"   !! **消えたコメント {len(gone)}件**（台帳に在るのに、いま API の 3列 のどこにも無い）"
+    for r in gone:
+        body += (f"\n      {str(r.get('posted_at'))[:16]} {r.get('id')} {r.get('author')}: "
+                 + comment_line_text(str(r.get("text", "")), 60))
+    return body + ("\n      **「反応が無かった」と読まないこと** —— 消したのは投稿者自身か YouTube 側で、"
+                   "Data API では分けられません（`gone_comments` の註）")
+
+
 def cmd_comments(a):
     """視聴者が書いたコメントを全部 出し、台帳にまだ無いものを `viewer_comment` として1行 足す。
 
@@ -758,6 +812,16 @@ def cmd_comments(a):
     print(f"   保留 heldForReview {sum(1 for c in held if c['status'] == 'heldForReview')}件"
           f"・迷惑 likelySpam {sum(1 for c in held if c['status'] == 'likelySpam')}件"
           + ("（＝ こちらが止めているコメントは無い）" if not held else "（**読むこと**）"))
+    # **突き合わせのもう1方向**（`gone_comments` の註。**追加 0単位**）。
+    rows = ledger_rows()
+    print(gone_comments_line(rows, cs))
+    # 印字だけにしないこと（`cli.record_channel` の註と同じ族）—— 消えた事実を台帳に1度だけ残す。
+    logged = {r.get("comment_id") for r in rows if r.get("event") == "comment_gone"}
+    for r in gone_comments(rows, cs):
+        if r.get("comment_id") not in logged:
+            ledger("comment_gone", r.get("id"), comment_id=r.get("comment_id"),
+                   author=r.get("author"), posted_at=r.get("posted_at"),
+                   text=str(r.get("text", ""))[:200])
     return 0
 
 
