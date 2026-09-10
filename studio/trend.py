@@ -2673,6 +2673,65 @@ def channel_line(rows: list[dict]) -> str:
               "（覆る条件 (1) は `cli.record_channel` の註）。")
 
 
+def channel_line_short(rows: list[dict]) -> str:
+    """`channel_line` の**短い形**（`status` が印字する。2026-09-10 23:2x・optimizer・Opus。**API 0単位**）。
+
+    **穴（この回に撃って見つけた）**: `channel_line`（**1,035字**）を
+    **`status` と `trend` が同じ周に、1字も違わずに 2度** 印字していました
+    （`cmd_status` の 394行 と `trend.report` の 1756行。**同じ関数・同じ引数**）。
+    `optimizer` は毎周 その両方を撃つので、**同じ段落を 2度 読みます**（2,070字）。
+
+    **なぜ 22:5x の物差しに映らなかったか**: `scripts/output_growth.py` は
+    `trend` の出力**だけ**を測ります（`status` は API を撃つので古いコードで走らせられない ——
+    その註の覆る条件 (3)）。＝ **重なりは、片方が測られない側に立っているので、
+    伸びとしても重なりとしても数えられていませんでした。**
+    **これは伸びではなく重複です** —— 門（+300字/周・2窓）が引かれるのを待つ物ではありません
+    （2度目の印字は、1字も新しいことを言いません）。
+
+    **どちらを短くしたか、と理由**: **短くしたのは `status` の側**です。
+    `trend` の側に残したのは、そこが **`output_growth` に映る側**だから ——
+    `trend` から消して `status` に残すと、同じ字が**測れない側へ移る**だけです
+    （§7 (i) が名指ししている「伸びる先が測られない側へ移る」形・METHOD 冒頭の 13:2x と同じ病気）。
+
+    **何を残したか**: **決め（verdict）と数**。落としたのは derivation
+    （なぜその門か・どの註に書いてあるか・過去の実測）＝ §5／§6 に当てた形を、`print` の文に当てたもの。
+    **判定は full と同じ `channel_growth()` の返りから作ります**（2つの口が別々に数えない）。
+
+    **覆る条件**: (1) 短い行だけを見た回が判定を誤ったら（＝ 短い行に無い決めが要った）、
+    その決めを**短い行へ引き上げてから**この行を書き直すこと（§5 の引用の覆る条件 (1) と同じ形）。
+    (2) full と短い行が**違う verdict** を言った回が出たら、2つが別々に数えている ＝ 片方を消すこと
+    （検査 `test_短い行と full は同じ判定を言う`）。
+    (3) `trend` の側でも同じ段落が 2か所から出るようになったら、重なりは `status` だけの病気ではない ＝
+    そのときは「毎周 印字する字」を**行ではなく段落の id** で数える口を足すこと。
+    """
+    g = channel_growth(rows)
+    if g["n"] < 2:
+        return (f"**チャンネルの数の点: {g['n']}件** —— 増えを数えるには 2点 要ります"
+                "（`cli.record_channel`・**API 0単位**）。")
+    if g["span_h"] is None or g["span_h"] < CHANNEL_MIN_SPAN_H:
+        return (f"**チャンネル 登録 {g['subs']}・総再生 {g['views']}**（点 {g['n']}件・"
+                f"窓 {g['span_h']:.2f}時間 ＜ {CHANNEL_MIN_SPAN_H:.1f}時間 ＝ **まだ読まないこと**）。")
+    # **verdict は full と同じ `g` から**（覆る条件 (2)）。
+    if g["over"]:
+        verdict = (f"**§7 (m) の覆る条件 (1) が引かれています**（いま {g['over_streak']}/"
+                   f"{CHANNEL_FLAT_LAPS} 塊）＝ **総再生が動かないことを"
+                   "「チャンネルが止まった」と読まないこと**")
+    elif g["flat_laps"] >= CHANNEL_FLAT_LAPS:
+        verdict = (f"**総再生は {g['flat_laps']}周 続けて同じ読み ＝ 門（{CHANNEL_FLAT_LAPS}周）が"
+                   "引かれました** ＝ 本の題や形を疑う前に、チャンネルの側を外すこと")
+    else:
+        verdict = ("**本ごとの 0回 を読む前に見ること** —— 総再生が動いていれば、"
+                   "0回 は**その本の配りの側**です")
+    subs_note = ("" if not (g["d_views"] == 0 and g["d_subs"])
+                 else f"（同じ窓で登録は {g['d_subs']:+d} ＝ 応答が丸ごと古いのではない）")
+    conf = ("" if g["vid_confirmed"] is None
+            else f"・確かめられた伸び **{g['vid_confirmed']:+d}回**")
+    return (f"**チャンネル 登録 {g['subs']}（{g['d_subs']:+d}）・総再生 {g['views']}"
+            f"（{g['d_views']:+d}）**（{g['laps']}周・窓 {g['span_h']:.1f}時間）{subs_note}"
+            f"・本ごとの合計 {g['vid_sum']:+d}回{conf}。{verdict}。"
+            "**derivation は `trend` の同じ行**（API 0単位・この行には写さない）。")
+
+
 def ready_checks(rows: list[dict], within_h: float = 48.0,
                  now: dt.datetime | None = None) -> dict:
     """公開**前**の本の `readiness` の印（台帳 `ready_checked`）を数える

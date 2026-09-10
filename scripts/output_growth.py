@@ -16,6 +16,11 @@
     09/10 14:27 → 18:35 JST（6周）   4,996 → 6,893字   ＝ 1周 **+316字**
     09/10 18:35 → 22:32 JST（6周）   6,893 → 8,088字   ＝ 1周 **+199字**
 
+**この 4点 を撃ったときの台帳の刻: 2026-09-10 22:55 JST**（2026-09-10 23:2x に足した）。
+**点を書くときは、台帳の刻も一緒に書くこと** —— 台帳は毎周 伸びるので、刻の無い点は
+**次の周には 1字も合いません**（実測 23:1x: 3,836 / 5,178 / 7,256 / 8,107 ＝ コードは 1行も
+触っていない）。刻を渡せば何周 経っても再現します（`output_at(sha, ledger_cut=…)`）。
+
 ＝ **18周（約12時間）で 2.44倍**。**同じ 3窓 の METHOD の本文は -388 / +316 / +32字/周**
 （`method_growth.py`）＝ **いちばん新しい窓では、METHOD の本文（+32）より 6倍 速く伸びています。**
 12:1x が §6 の表に当てた形（**決めは残す・derivation は外へ**）は、
@@ -59,10 +64,16 @@
     出力が 20,000字 を越え続けるなら**、伸びではなく**総量**が問題 ＝ 門を「総量」に置き換えること。
 (3) `status` にも同じ形の伸びが在るのに、この道具はそれを 1字も見ていません。
     `cmd_status` の印字が API を撃たない形（台帳から）に分かれたら、そちらも測ること。
+    **2026-09-10 23:2x に、そこの重なりを 1つ 閉じました** —— `cmd_status` は
+    `trend.channel_line`（1,035字）を `trend` と**同じ周に、1字も違わずに**印字していました
+    （いまは `trend.channel_line_short`・228字）。**この道具はその 807字 を 1字も見ていません。**
+(4) 台帳に `at` の無い行が出たら、`_copy_ledger_until` の「落とさずに残す」を決め直すこと
+    （いまは 2,693/2,693 行に `at` が在る）。
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -88,11 +99,42 @@ def sha_at(when: datetime) -> str | None:
     return _git("log", "-1", f"--before={when.isoformat()}", "--format=%H", "--", "studio/").strip() or None
 
 
-def output_at(sha: str) -> str:
+def _copy_ledger_until(src: Path, dst: Path, cut: datetime) -> None:
+    """台帳を `cut` **以前**の行だけ写す（`at` は全行に在る ＝ 実測 2,693/2,693 行）。
+
+    `at` を読めない行は**落とさずに残します** —— 落とすと「切った」ではなく「間引いた」になり、
+    再現の意味が変わります（そういう行が出たら、註の覆る条件 (4) の側）。
+    """
+    keep = []
+    for line in src.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            at = datetime.fromisoformat(json.loads(line)["at"])
+        except Exception:
+            keep.append(line)
+            continue
+        if at <= cut:
+            keep.append(line)
+    dst.write_text("\n".join(keep) + "\n", encoding="utf-8")
+
+
+def output_at(sha: str, ledger_cut: datetime | None = None) -> str:
     """その commit の `studio/` を、**いまの台帳の写し**に当てて `trend` を走らせ、出力を返す。
 
     台帳は写しなので、古いコードが書いても本物には届きません（`trend` は読むだけですが、
     「届かないこと」を仕組みで担保しておく ＝ 陽性対照が要らない側）。
+
+    **`ledger_cut`**（2026-09-10 23:2x・optimizer・Opus）: 台帳を**その刻までの行に切って**渡す。
+    既定（`None`）はいまの台帳ぜんぶ ＝ 道具の測り方は変わりません
+    （どの点にも同じ台帳を当てる ＝ 台帳の伸びを混ぜない）。
+
+    **なぜ足したか**: 22:5x が書いた 3点（3,310 / 4,996 / 6,893 / 8,088字）は
+    **その回の台帳**の上の数で、台帳は毎周 伸びます。＝ **次の周には、コードを 1行も
+    触っていなくても 1字も合いません**（実測: 23:1x の周で 3,836 / 5,178 / 7,256 / 8,107）。
+    検査 `test_この回が撃った_3点_と_1字も違わないこと` は、**その次の周に必ず赤くなる形**でした。
+    **点を書くときは、その台帳の刻も一緒に書くこと** —— 刻が在れば、あとから何周 経っても再現できます。
+    （§6 の「赤が既定になると、次の回は自分が壊したのかを見分けられません」の族）
     """
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
@@ -107,7 +149,10 @@ def output_at(sha: str) -> str:
                 os.symlink(f, d / "data" / f.name)
         for f in (ROOT / "data" / "studio").iterdir():
             if f.name == "ledger.jsonl":
-                shutil.copy2(f, d / "data" / "studio" / f.name)
+                if ledger_cut is None:
+                    shutil.copy2(f, d / "data" / "studio" / f.name)
+                else:
+                    _copy_ledger_until(f, d / "data" / "studio" / f.name, ledger_cut)
             else:
                 os.symlink(f, d / "data" / "studio" / f.name)
         r = subprocess.run([sys.executable, "-m", "studio.cli", "trend"],

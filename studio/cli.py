@@ -391,7 +391,11 @@ def cmd_status(a):
     print(f"チャンネル: 登録 {ch['subscriberCount']}・総再生 {ch['viewCount']}・本数 {ch['videoCount']}")
     # 毎周 読んでいた数を台帳へ（`record_channel` の註。**追加 0単位** ＝ 上ですでに引いてある）。
     record_channel(ch)
-    cl = trend.channel_line(ledger_rows())
+    # **短い形で印字する**（2026-09-10 23:2x・optimizer・Opus）—— `trend` も同じ周に
+    # `channel_line`（1,035字）を印字しており、`optimizer` は**同じ段落を 2度**読んでいた。
+    # 決めと数はここに残し、derivation は `trend` の側（＝ `output_growth` に映る側）に置く。
+    # **`trend.channel_line` をここへ戻さないこと**（覆る条件は `trend.channel_line_short` の註）。
+    cl = trend.channel_line_short(ledger_rows())
     if cl:
         print("  " + cl)
     print(f"いま {now_jst():%m/%d %H:%M} JST")
