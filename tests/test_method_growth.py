@@ -112,3 +112,64 @@ def test_報告は窓の端を_JST_の刻で出すこと():
     out = M.report(laps=6, n=2)
     assert "周の刻で挟む" in out and "commit ではない" in out
     assert "JST" in out
+
+
+_S7 = ("読み方\n"
+       "## 0.\nA\n"
+       "## 7.\n"
+       "### いまの数\nいまの数の本文\n"
+       "**【2026-09-10 21:4x】日付つきの節\n日付つきの中身\n"
+       "- **【2026-09-09 01:5x・optimizer】もう1つの日付つきの節\n中身\n"
+       "- **形**: 末尾の一覧の1つ目\n"
+       "- **声**: 末尾の一覧の2つ目\n"
+       "## 8.\nC\n## 9.\nD\n")
+
+
+def test_毎周読むのに_measure_が見ていない_3塊_を挟めること():
+    """冒頭「この文書の読み方」・§7 の「いまの数」・§7 末尾の覆る条件の一覧
+    （2026-09-10 23:5x に足した・`section7_spans` の註）。"""
+    lines = _S7.split("\n")
+    spans = M.section7_spans(lines)
+    assert len(spans) == 3
+    got = M.measure7_split(_S7)
+    assert set(got) == set(M.SPAN7_NAMES)
+    assert got["読み方"]["body_lines"] == 1                    # 「読み方」だけ（`## 0.` の手前まで）
+    assert got["いまの数"]["body_lines"] == 2                  # 見出し ＋ 本文1行
+    assert got["末尾の一覧"]["body_lines"] == 2                # `- **形**` と `- **声**`
+
+
+def test_日付つきの節は_3塊_に入らないこと():
+    """**日付つきの節は飛ばす側**なので、いくら太らせても数は1字も動かないこと。"""
+    m = M.measure7(_S7)
+    太らせた = _S7.replace("日付つきの中身", "X" * 9999)
+    assert M.measure7(太らせた) == m
+
+
+def test_positive_control_3塊_は_measure_と別の数であること():
+    """**陽性対照** —— `measure`（§0〜§6・§8）を太らせても 3塊 の数は動かず、
+    逆に 3塊 を太らせても `measure` は動かないこと。
+    **同じ数に足してしまうと、12:1x の 3点 が壊れます**（`points` の註）。
+    """
+    太1 = _S7.replace("\nA\n", "\n" + "A" * 500 + "\n")      # §0〜§6 の側
+    assert M.measure7(太1) == M.measure7(_S7)
+    assert M.measure(太1) != M.measure(_S7)
+    太2 = _S7.replace("いまの数の本文", "Y" * 500)              # 3塊 の側
+    assert M.measure(太2) == M.measure(_S7)
+    assert M.measure7(太2) != M.measure7(_S7)
+
+
+def test_3塊_の挟みが外れたら黙って_0_を返さずに止まること():
+    """**外れた数を配るより、止まるほうが安い**（`section7_spans` の覆る条件 (1)(2)）。"""
+    with pytest.raises(KeyError):
+        M.measure7("## 0.\nA\n## 7.\n## 8.\nC\n## 9.\n")     # `### いまの数` が無い
+    with pytest.raises(ValueError):
+        # 日付つきの節が 1つも無い ＝ 「いまの数」の終わりが取れない
+        M.measure7("読み方\n## 0.\nA\n## 7.\n### いまの数\nB\n- **形**: x\n## 8.\nC\n## 9.\n")
+
+
+def test_門が引かれた回は塊を名指しできること():
+    """`--split` は、どの塊がその窓を吸ったかを出す（門の文がそう指している）。"""
+    out = M.split_report()
+    assert "塊ごとの伸び" in out
+    for name in M.SPAN7_NAMES:
+        assert name in out

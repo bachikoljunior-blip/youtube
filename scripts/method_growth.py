@@ -74,12 +74,7 @@ def _section_bounds(lines: list[str], head: str) -> int:
     raise KeyError(f"{METHOD} に見出しが在りません: {head!r} —— 節の名が変わったなら、この物差しは作り直し（註の覆る条件 (3)）")
 
 
-def measure(text: str) -> dict:
-    """「毎回 読む」側の 本文の行・本文の字・引用の字 を数える。"""
-    lines = text.split("\n")
-    seg: list[str] = []
-    for head, tail in SECTIONS:
-        seg += lines[_section_bounds(lines, head):_section_bounds(lines, tail)]
+def _count(seg: list[str]) -> dict:
     body = [l for l in seg if not l.startswith(">") and l.strip()]
     quote = [l for l in seg if l.startswith(">")]
     return {
@@ -87,6 +82,74 @@ def measure(text: str) -> dict:
         "body_chars": sum(len(l) for l in body),
         "quote_chars": sum(len(l) for l in quote),
     }
+
+
+def measure(text: str) -> dict:
+    """「毎回 読む」側の 本文の行・本文の字・引用の字 を数える。"""
+    lines = text.split("\n")
+    seg: list[str] = []
+    for head, tail in SECTIONS:
+        seg += lines[_section_bounds(lines, head):_section_bounds(lines, tail)]
+    return _count(seg)
+
+
+def section7_spans(lines: list[str]) -> list[tuple[int, int]]:
+    """**毎周 読むのに、上の物差しが 1字も見ていない 3つの塊**の行の範囲。
+
+    冒頭「この文書の読み方」が読ませているのは **§0〜§6・§8 だけではありません** ——
+    §7 も「いまの数」と「末尾の覆る条件の一覧」の 2つ は毎周 読みます
+    （**日付つきの節は飛ばす**）。**12:1x の物差しは、そこを 1字も見ていませんでした。**
+
+    ＝ **伸びる先が測られない側へ移る**（§7 (i) が `status` の写しで名指しした形）が、
+    物差しそのものに在りました。2026-09-10 23:5x・optimizer・Opus に足しています。
+
+    **どこで挟むか**（見出しが無い塊なので、字の形で挟みます）:
+
+        読み方      ファイルの頭から `## 0.` の手前まで（冒頭「この文書の読み方」——
+                    `SECTIONS` は `## 0.` から始まるので、**ここも measure の外**でした）
+        いまの数    `### いまの数` から、その後ろの最初の `**【2026-` の手前まで
+                    （＝ 日付つきの節が始まる所。この塊は**毎周 上書き**される側）
+        末尾の一覧  **最後の** `- **【2026-` の後ろで、最初に来る `- **`（日付つきでない）
+                    から `## 8.` の手前まで
+
+    **覆る条件**: (1) §7 の日付つきの節が `- **【2026-` 以外の書き出しになったら、
+    下の 2つ の挟みは黙って外れます —— **`ValueError` で止めます**（黙って 0 を返さないこと）。
+    (2) 「いまの数」が `###` の見出しを失ったら、同じく止まります。
+    (3) §7 を別ファイルへ割る判断が出たら、この物差しは作り直し（点は 1点目から）。
+    """
+    head = _section_bounds(lines, "## 0.")
+    a0 = _section_bounds(lines, "### いまの数")
+    a1 = next((i for i in range(a0 + 1, len(lines)) if lines[i].startswith("**【2026-")), None)
+    if a1 is None:
+        raise ValueError("§7 に日付つきの節が 1つも在りません —— 挟みが外れています（註の覆る条件 (1)）")
+    end = _section_bounds(lines, "## 8.")
+    dated = [i for i in range(a0, end) if lines[i].startswith("- **【2026-")]
+    if not dated:
+        raise ValueError("§7 に `- **【2026-` の節が 1つも在りません —— 挟みが外れています（註の覆る条件 (1)）")
+    b0 = next((i for i in range(dated[-1] + 1, end)
+               if lines[i].startswith("- **") and not lines[i].startswith("- **【")), None)
+    if b0 is None:
+        raise ValueError("§7 の末尾に覆る条件の一覧が在りません —— 挟みが外れています（註の覆る条件 (1)）")
+    return [(0, head), (a0, a1), (b0, end)]
+
+
+#: `section7_spans` が返す 3塊 の名（並びは同じ）。
+SPAN7_NAMES = ("読み方", "いまの数", "末尾の一覧")
+
+
+def measure7(text: str) -> dict:
+    """**毎周 読むのに measure が見ていない側**だけを数える（日付つきの節は入れない）。"""
+    lines = text.split("\n")
+    seg: list[str] = []
+    for a, b in section7_spans(lines):
+        seg += lines[a:b]
+    return _count(seg)
+
+
+def measure7_split(text: str) -> dict:
+    """同じ 3塊 を**塊ごと**に数える（門が引かれた回に、吸った塊を名指しするため）。"""
+    lines = text.split("\n")
+    return {n: _count(lines[a:b]) for n, (a, b) in zip(SPAN7_NAMES, section7_spans(lines))}
 
 
 def rounds() -> list[datetime]:
@@ -120,6 +183,11 @@ def points(laps: int = 6, n: int = 3, after: datetime | None = None) -> list[dic
         if a is None or b is None:
             continue
         ma, mb = measure(a), measure(b)
+        # §7 の毎周 読む側は**別に**数えます（同じ数に足さない ＝ 12:1x の 3点 を壊さないため）。
+        try:
+            s7a, s7b = measure7(a), measure7(b)
+        except (KeyError, ValueError):
+            s7a = s7b = None
         out.append({
             "from": head, "to": tail, "laps": laps,
             "d_lines": mb["body_lines"] - ma["body_lines"],
@@ -128,6 +196,9 @@ def points(laps: int = 6, n: int = 3, after: datetime | None = None) -> list[dic
             "lines_per_lap": (mb["body_lines"] - ma["body_lines"]) / laps,
             "chars_per_lap": (mb["body_chars"] - ma["body_chars"]) / laps,
             "now": mb,
+            "s7_body": None if s7b is None else s7b["body_chars"] - s7a["body_chars"],
+            "s7_per_lap": None if s7b is None else (s7b["body_chars"] - s7a["body_chars"]) / laps,
+            "s7_now": s7b,
         })
     return out
 
@@ -151,6 +222,28 @@ def verdict(ps: list[dict]) -> list[str]:
     return out
 
 
+def split_report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
+    """**どの塊がその窓を吸ったか**（`--split`）。門が引かれた回に撃つこと。"""
+    rs = [r for r in rounds() if after is None or r >= after]
+    edges = rs[len(rs) - 1 - laps * n:: laps] if len(rs) > laps * n else rs[::laps]
+    out = ["塊ごとの伸び（本文の字・日付つきの節は入れない）"]
+    for head, tail in zip(edges, edges[1:]):
+        a, b = blob_at(head), blob_at(tail)
+        if a is None or b is None:
+            continue
+        try:
+            ba, bb = measure7_split(a), measure7_split(b)
+        except (KeyError, ValueError) as e:
+            out.append(f"  {head.astimezone(JST):%m/%d %H:%M} → 挟みが外れています: {e}")
+            continue
+        out.append(f"  {head.astimezone(JST):%m/%d %H:%M} → {tail.astimezone(JST):%m/%d %H:%M} JST")
+        for name in SPAN7_NAMES:
+            d = bb[name]["body_chars"] - ba[name]["body_chars"]
+            out.append(f"    {name:6s} {ba[name]['body_chars']:6,d} → {bb[name]['body_chars']:6,d}"
+                       f"  ＝ {d:+6,d}字（1周 **{d / laps:+.0f}**）")
+    return "\n".join(out)
+
+
 def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
     ps = points(laps, n, after)
     out = [f"METHOD の「毎回 読む」側（§0〜§6・§8）の伸び —— 窓は {laps}周・**周の刻で挟む**（commit ではない）"]
@@ -165,6 +258,23 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
         out.append(f"  いま 本文 {m['body_lines']}行・{m['body_chars']:,}字 ／ 引用 {m['quote_chars']:,}字"
                    f"（引用は**飛ばしてよい側** ＝ 守れるのはここだけ・§5）")
     out += ["  " + v for v in verdict(ps)]
+    s7 = [p for p in ps if p["s7_per_lap"] is not None]
+    if s7:
+        out.append("**毎周 読むのに、上の物差しが見ていない 3塊**（冒頭「この文書の読み方」＋"
+                   "§7 の「いまの数」＋§7 末尾の覆る条件の一覧。日付つきの節は入れない・"
+                   "2026-09-10 23:5x に足した）")
+        for p in s7:
+            out.append(f"  {p['from'].astimezone(JST):%m/%d %H:%M} → {p['to'].astimezone(JST):%m/%d %H:%M} JST"
+                       f"   本文 {p['s7_body']:+d}字  ＝ 1周 **{p['s7_per_lap']:+.0f}字**")
+        m7 = s7[-1]["s7_now"]
+        out.append(f"  いま 本文 {m7['body_lines']}行・{m7['body_chars']:,}字"
+                   f"（**上の §0〜§6・§8 とは別の数** ＝ 足さないこと）")
+        over = [p for p in s7[-2:] if p["s7_per_lap"] > CHAR_GATE]
+        out.append(f"  字の門 1周 +{CHAR_GATE}字: " + (
+            "**引かれました** —— 直近 2窓 とも越えています。"
+            "**`--split` で どの塊が吸ったかを名指ししてから、§5／§6 の形を当てること**"
+            if len(s7[-2:]) == 2 and len(over) == 2 else
+            f"引かれません（直近 2窓 で越えたのは {len(over)} つ）"))
     return "\n".join(out)
 
 
@@ -173,9 +283,12 @@ def main() -> int:
     ap.add_argument("--laps", type=int, default=6, help="1つの窓の周の数（既定 6）")
     ap.add_argument("--points", type=int, default=3, help="並べる窓の数（既定 3）")
     ap.add_argument("--after", default=None, help='窓の頭をこの JST の刻より後に固定（例 "2026-09-10 10:17"）。削りの回を窓に入れないため')
+    ap.add_argument("--split", action="store_true", help="門が引かれた回に、どの塊が吸ったかを名指しする")
     a = ap.parse_args()
     after = datetime.strptime(a.after, "%Y-%m-%d %H:%M").replace(tzinfo=JST) if a.after else None
     print(report(a.laps, a.points, after))
+    if a.split:
+        print(split_report(a.laps, a.points, after))
     return 0
 
 
