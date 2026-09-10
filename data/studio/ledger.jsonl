@@ -2563,3 +2563,8 @@
 {"views": 191, "likes": 0, "comments": 1, "age_h": 129.9, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-10T19:52:53+09:00", "id": "a23e696j0f8", "event": "measured"}
 {"views": 189, "likes": 0, "comments": 1, "age_h": 130.9, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-10T19:52:53+09:00", "id": "kzefG44_APU", "event": "measured"}
 {"views": 6, "likes": 0, "comments": 1, "age_h": 154.9, "title": "【知らないと損】2026年4月 働く年金受給者は年54万円増える", "n_values": 1, "at": "2026-09-10T19:52:53+09:00", "id": "1huadpEk6HY", "event": "measured"}
+{"subs": 28, "views": 84781, "videos": 269, "at": "2026-09-10T19:50:27+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-10T19:50:27+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"seconds": 87.6, "image": true, "chars": 479, "scenes": [7.2, 6.7, 12.0, 10.8, 7.5, 6.5, 5.9, 10.1, 5.5, 7.4, 8.1], "at": "2026-09-10T19:56:37+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "built"}
+{"mismatched": 1, "model": "small", "mode": "kana", "diffs": [{"i": 5, "d": [["んえ", "ね"]]}], "escalated": [3, 6], "tail": {}, "voice": {}, "how": {"3": "small→medium", "6": "small→medium+prompt"}, "at": "2026-09-10T20:01:09+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "heard"}
+{"n": 0, "kinds": [], "at": "2026-09-10T20:04:44+09:00", "id": "2026-09-11-zaishoku-teiji-kaitei", "event": "crosscheck"}

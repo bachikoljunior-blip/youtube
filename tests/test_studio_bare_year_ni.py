@@ -101,7 +101,7 @@ def test_いま在る台本は全部この門を通る():
     """
     bad = {}
     for f in sorted(sc.SCRIPTS.glob("*.json")):
-        hit = [w for w in sc.load(f.stem).warnings() if "年" in w]
+        hit = [w for w in sc.load(f.stem).warnings() if "「年" in w]  # 門の字面だけ（1文の長さの警告が「20年以上」を含んで鳴った・09/10 19:5x）
         if hit:
             bad[f.stem] = hit
     assert not bad, f"「年」の門で鳴っている台本が在る: {bad}"
