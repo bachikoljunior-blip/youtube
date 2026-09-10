@@ -16,6 +16,14 @@ SCRIPTS = DATA / "scripts"
 
 # 画面の字幕は 1行 16字 × 3行 に収める。声の1コマは 70字 まで（約 12秒）。
 MAX_SAY = 70
+# §3 の 6「1文 40字以内」。2026-09-10 19:5x（hourly・Fable）まで lint はコマの 70字 しか見ておらず、
+# 09/11 の本は 12:3x〜13:2x の言い回しの直し（「決まりでは、」「会社員の年金、」を足した）で
+# 45字・50字 の文が 2つ 入ったまま 10周 の読み直しを抜けた（公開ずみ 5本 は 132文 中 1文 だけ）。
+# 長い 1文 は hear の末尾切れ（§4 (2)）が出る当のもの —— 09/11 の 50字 の文を 38+21 に割ったら
+# コマ4 の末尾切れが消えた（9/11 → 10/11）。止めない（`[?]`）: 割るか残すかは書き手が決める。
+# 覆る条件: `[?]` を残したまま出した本の hear が末尾で鳴らない回が 3本 続いたら、この行は要らない。
+MAX_SENTENCE = 40
+_SENT_END = re.compile(r"(?<=[。？！])")
 MAX_SHOW = 16
 MAX_TOTAL_CHARS = 480   # Chirp3-HD 1.2 で実測 5.16字/秒（09/05・458字→88.8秒）→ 93秒。Neural2-D 1.08 は 450字→93.3秒（09/07・4.82字/秒 ＝ 同じ帯）。
                         # 上限は build が測る秒数（MAX_SECONDS）。455字 が 95秒 に当たる域（METHOD §11）
@@ -194,7 +202,14 @@ class Script(BaseModel):
             m = YOMI_IGNORED.search(s.say)
             if m:
                 out.append(f"コマ{i} 「{m.group()}」は yomi を TTS が無視する語（実測 09/06）。金額・じゅうぶん のように語を変える")
+            for sent in long_sentences(s.say):
+                out.append(f"コマ{i} の 1文 が {len(sent)}字（§3 の 6: {MAX_SENTENCE}字以内。長い文は hear が末尾で鳴る）: {sent[:18]}…")
         return out
+
+
+def long_sentences(say: str) -> list[str]:
+    """say を 。？！ で切り、MAX_SENTENCE を越える文だけ返す（警告の材料。止めない）。"""
+    return [x for x in _SENT_END.split(say) if len(x.strip()) > MAX_SENTENCE]
 
 
 def path_for(vid: str) -> Path:
