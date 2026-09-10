@@ -64,7 +64,10 @@ def test_揺れる本は最大を採る(monkeypatch):
 def test_落ち着いた本は差が出ない(monkeypatch):
     _svc(monkeypatch, {"B": [468]})
     got = yt.settle_stats(["B"], reads=3)
-    assert got["B"] == {"views": 468, "views_min": 468, "n_values": 1}
+    # `views_absent` は 2026-09-10 14:2x に足した欄（`yt.views_of` の註）——
+    # **欄が在って 0回** と **欄が無い** を分ける。落ち着いた本では立たない。
+    assert got["B"] == {"views": 468, "views_min": 468, "n_values": 1,
+                        "views_absent": False}
 
 
 def test_読み直しが1回だと揺れを捕まえられない(monkeypatch):

@@ -34,15 +34,47 @@ def channel() -> dict:
             **{k: int(v) for k, v in ch["statistics"].items() if isinstance(v, str) and v.isdigit()}}
 
 
+def views_of(st: dict) -> tuple[int, bool]:
+    """`statistics.viewCount` を読む。**欄が無いのと 0回 は別**（2026-09-10 14:2x・optimizer・Opus）。
+
+    `videos.list` の `statistics` は、統計を止めた本・処理の終わっていない本・
+    埋め込みだけの本では **欄そのものを返しません**。`.get("viewCount", 0)` はそれを
+    **本当の 0回 と同じ形**にします ＝ 台帳には「0回」と書かれ、`trend` は
+    「配りが来ていない」と読み、§7 は齢の割合と `first_view` をその 0 で数えます。
+    **§4 (0-b) の「0件 を『事実は大丈夫』と読まないこと」の族の 3つ目の型**
+    （1つ目 ＝ 見つけた上で別の札を貼る・2つ目 ＝ 両側がそろってまちがえて食い違いが 0件・
+      **3つ目 ＝ 欄が無いのを 0 と読む**）。
+
+    **この回に測りました**（2026-09-10 14:0x・`videos.list` **1単位**）: 5本目 `2YZ_4FXC-XI` が
+    齢 3.9h で 0回 だったので、「欄が無い」のか「本当に 0」のかを直に見た ——
+    **3本 とも欄は在り、5本目 の値は文字列 `"0"`**
+    （`viewCount`/`likeCount`/`dislikeCount`/`favoriteCount`/`commentCount` がそろっている）。
+    ＝ **いま踏んではいません。踏んだときに黙って通る口だけを塞いであります。**
+
+    **落とさずに印だけ立てます** —— 行を落とすと分母が黙って減り、
+    「読んでいない本」と「0回 の本」がまた同じ形になります（`cmd_measure` の `n_values` の註と同じ形）。
+
+    **覆る条件**: (1) `views_absent` が **1度でも立ったら**、その本の台帳の 0回 を
+    「配りが来ていない」と読まないこと ＝ そのとき `trend.first_view` の `zero` から外し、
+    別の札（「読めていない」）を作る。(2) **7本 過ぎて 1度も立たなければ**この口は外してよい
+    （`cli.over_ledger` の (2) と同じ形 —— 一度きりの心配に道具を残さない）。
+    """
+    return int(st.get("viewCount", 0)), "viewCount" not in st
+
+
 def _row(v: dict) -> dict:
     st = v["status"]
+    stats = v.get("statistics", {})
+    views, absent = views_of(stats)
     return {"id": v["id"], "title": v["snippet"]["title"], "privacy": st["privacyStatus"],
             "publish_at": st.get("publishAt"), "published_at": v["snippet"]["publishedAt"],
             "duration": v.get("contentDetails", {}).get("duration", ""),
-            "views": int(v.get("statistics", {}).get("viewCount", 0)),
-            "likes": int(v.get("statistics", {}).get("likeCount", 0)),
+            "views": views,
+            # **欄が無いのと 0回 は別**（`views_of` の註）。立った回だけ持ち回る。
+            "views_absent": absent,
+            "likes": int(stats.get("likeCount", 0)),
             # コメント数。2026-09-07 20:4x まで、道具はこれを1度も見ていなかった（`viewer_comments()` の註）。
-            "comments": int(v.get("statistics", {}).get("commentCount", 0))}
+            "comments": int(stats.get("commentCount", 0))}
 
 
 _ALL: list[dict] | None = None
@@ -435,11 +467,17 @@ def settle_stats(ids: list[str], reads: int = SETTLE_READS) -> dict[str, dict]:
     3回 とも同じ値しか出ない回が 1週間 続いたら、複製が揃った ＝ この読み直しは外してよい。
     """
     seen: dict[str, list[int]] = {}
+    gone: set[str] = set()
     for _ in range(max(1, reads)):
         for i in range(0, len(ids), 50):
             r = svc().videos().list(part="statistics", id=",".join(ids[i:i + 50])).execute()
             for v in r["items"]:
                 st = v.get("statistics", {})
-                seen.setdefault(v["id"], []).append(int(st.get("viewCount", 0)))
-    return {k: {"views": max(vs), "views_min": min(vs), "n_values": len(set(vs))}
+                views, absent = views_of(st)
+                seen.setdefault(v["id"], []).append(views)
+                if absent:
+                    # 欄が無い読みが 1回 でも在れば印を立てる（`views_of` の註）。
+                    gone.add(v["id"])
+    return {k: {"views": max(vs), "views_min": min(vs), "n_values": len(set(vs)),
+                "views_absent": k in gone}
             for k, vs in seen.items() if vs}

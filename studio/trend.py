@@ -706,6 +706,107 @@ def hold_lines(rows: list[dict]) -> list[str]:
     return out
 
 
+FIRST_VIEW_EARLY_H = 6.0
+"""この問いに答えられる本の門 —— 台帳の**初点**がこの齢より浅い本だけ。"""
+
+
+def first_view(rows: list[dict]) -> dict:
+    """**1回目の再生が付いた齢**を、早い点を持つ本だけで挟む。API 0単位。
+
+    **なぜ（2026-09-10 14:0x JST・optimizer・Opus）**: この回の 5本目 `2YZ_4FXC-XI` が
+    **齢 3.9h で 0回**でした。§7 (c) はそれを「4本目（2.5h で 112〜115回）と違う形」とだけ
+    書いていますが、**比べる相手は 4本目 1本 ではありません** —— 台帳には
+    **早い点を持つ本が 7本** 在り、その全部を並べれば「0回 のまま 3.9h」がどれだけ外れかが数で出ます。
+    前の回の「Shorts の配りは 齢 1.5〜2.5h に来ます」が **n=1** で書かれ、次の回に
+    「n を書かずに引かないこと」と直された所そのものです。**ここが n を持ちます。**
+
+    **挟みで読む理由**: 測りは 42分 間隔（`quota` の床）なので、「1回目が付いた齢」は
+    **点では出ません** —— 出るのは「最後に 0 を読んだ齢」と「初めて >0 を読んだ齢」のあいだ、
+    という**幅**だけです。初点が既に >0 の本は下端が無いので `lo=None`（「初点より前」）。
+
+    **`returned_private` の本は落とします**（`Yy7GmcGoQ6I` ＝ 0.1h で private へ戻した本。
+    その 0回 は「配りが来なかった」ではない ——`returned_private` の註の当のもの）。
+
+    **返り値の `books` は判定した実物そのもの**（§5 の教訓の形 4つ目 —— 次の回が列挙で確かめられる）。
+
+    **この行は「当たり外れ」を言いません**（判定は `hourly`・§5）。言うのは
+    「1回目が付いた齢は、これまで何時間の側だったか」だけです。
+
+    **覆る条件**: (1) **`zero` の本（0回 のまま門を越えた本）が、そのあと伸びた回が
+    1度でも出たら**、この行は「まだ来ていない」以上のことを言えない ＝ 印字だけ残して
+    §7 の判定から外すこと。(2) 早い点を持つ本が **8本** を越えたら、挟みではなく
+    「初めて >0 の齢」の**中央値**で読む（いまは n が小さく、挟みが 2時間 幅で開いている）。
+    (3) 挟みの幅の中央値が **1時間** を切ったら（＝ 測りが密になったら）、幅ではなく上端で読んでよい。
+    (4) `FIRST_VIEW_EARLY_H` を越えた所で初めて測った本ばかりになったら（`late` が
+    `early` より多い周が 3周 続いたら）、この門は測り方の側を測っています ＝ 門ではなく
+    `measure` を撃つ齢のほうを直すこと。
+    """
+    gone = set(returned_private(rows))
+    mine = ours(rows)
+    early: list[dict] = []
+    late = 0
+    for vid, pts in series(rows).items():
+        if vid in gone:
+            continue
+        vals = [(float(r["age_h"]), r["views"]) for r in pts
+                if isinstance(r.get("views"), int)]
+        if not vals:
+            continue
+        vals.sort()
+        if vals[0][0] > FIRST_VIEW_EARLY_H:
+            late += 1
+            continue
+        pos = [a for a, v in vals if v > 0]
+        zeros = [a for a, v in vals if v == 0]
+        hi = min(pos) if pos else None
+        lo = max([a for a in zeros if hi is None or a < hi], default=None)
+        early.append({
+            "id": vid, "new": vid in mine,
+            "first_age_h": vals[0][0], "first_views": vals[0][1],
+            "lo": lo, "hi": hi,
+            "zero_through_h": max(zeros) if (zeros and hi is None) else None,
+            "views": max(v for _, v in vals),
+            "day": published_at(pts).strftime("%m/%d"),
+        })
+    early.sort(key=lambda b: (b["day"], b["id"]))
+    got = [b for b in early if b["hi"] is not None]
+    zero = [b for b in early if b["hi"] is None]
+    spans = [b["hi"] - b["lo"] for b in got if b["lo"] is not None]
+    return {"books": early, "got": got, "zero": zero, "late": late,
+            "gate_h": FIRST_VIEW_EARLY_H,
+            "latest_first": max([b["hi"] for b in got], default=None),
+            "span_median": (sorted(spans)[len(spans) // 2] if spans else None)}
+
+
+def first_view_lines(rows: list[dict]) -> list[str]:
+    """`first_view` を印字する（**次の回は覚えていなくてよい**・`first_view` の註）。"""
+    f = first_view(rows)
+    if not f["books"]:
+        return []
+    out = [f'**1回目の再生が付いた齢**（台帳の**初点が齢 {f["gate_h"]:.0f}h 以内**の本だけ・'
+           f'挟みで読む ＝ 測りは 42分 間隔・`trend.first_view` の註）:']
+    for b in f["books"]:
+        mark = "新" if b["new"] else "旧"
+        if b["hi"] is None:
+            got = f'**0回 のまま {b["zero_through_h"]:.1f}h**'
+        elif b["lo"] is None:
+            got = (f'初点 {b["first_age_h"]:.1f}h で既に {b["first_views"]}回'
+                   f'（**1回目はそれより前** ＝ 下端が無い）')
+        else:
+            got = f'1回目は **{b["lo"]:.1f}h〜{b["hi"]:.1f}h** のあいだ'
+        out.append(f'  {b["day"]} {mark} {b["id"]:14} {got}   いま {b["views"]}回')
+    tail = ""
+    if f["latest_first"] is not None:
+        tail = (f'**1回目が付いた {len(f["got"])}本 は、どれも 齢 {f["latest_first"]:.1f}h までに'
+                f'付いていました**（挟みの上端）。')
+    out.append(
+        f'{tail}**0回 のまま門を越えたのは {len(f["zero"])}本**。'
+        f'**この行は当たり外れを言いません** —— 判定は `hourly`（§5）。'
+        f'n が小さいので**点で読まないこと**（覆る条件は `trend.first_view` の註）。'
+        f'初点が {f["gate_h"]:.0f}h より遅い本 {f["late"]}本 は、この問いに答えられないので外してあります。')
+    return out
+
+
 def _growth(pts: list[dict], vals: list[int] | None = None) -> str:
     """直近の2点の伸び。平らな区間の中で「止まった」と読まないための目印。"""
     if len(pts) < 2:
@@ -1395,6 +1496,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
             f"{head}{more}。**「その日は無かった」ではありません** —— 引くなら `--days` を伸ばすこと。")
     # **帯の数は、帯の中に居る回だけでなく毎回 印字する** —— §7 は毎周この数を書き写しており、
     out.extend(hold_lines(rows))
+    out.extend(first_view_lines(rows))
     # 手で数え直すたびに数え方が揺れていた（2026-09-09 00:2x）。
     nm, nt, om, ot = dead_window(rows)
     out.append(

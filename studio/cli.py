@@ -216,7 +216,8 @@ def over_ledger(vid: str, live: int, rows: list[dict] | None = None) -> int | No
     return live - top if live > top else None
 
 
-def record_over(vid: str, live: int, over: int, age_h: float) -> None:
+def record_over(vid: str, live: int, over: int, age_h: float,
+                src: str = "status") -> None:
     """`over_ledger` の印を**台帳に1行 残す**（2026-09-10 13:2x・optimizer・Opus。**追加 0単位**）。
 
     12:4x は印字だけを足しました。その註の覆る条件は **3つ とも周をまたいで数える**もの
@@ -225,12 +226,19 @@ def record_over(vid: str, live: int, over: int, age_h: float) -> None:
     ありませんでした ＝ `trend.flats` の「その 3本 を数える所が、どこにもなかった」と同じ族。
     数えるのは `trend.over_lag`（毎周 `trend` が印字する ＝ **次の回は覚えていなくてよい**）。
 
+    **`src` は、その読みを誰が見たか**（既定 `status`）。2026-09-10 14:1x に足した ——
+    この回は `status` ではなく `videos.list` を直に撃って高い読み（683 対 台帳 671）を見たので、
+    印の出どころが台帳から分かるようにした。`trend.over_lag` は出どころで分けません
+    （同じ現象 ＝ 生の読みが台帳の最大より高い）が、**覆る条件 (3)「印が毎周 出る」を
+    数えるときは、手で撃った回を分けて見ること**（毎周 出るのが `status` の側かどうかで、
+    `settle_stats` の `reads` を上げる判断が変わります）。
+
     **`measured` では書きません** —— 帯の2点組の分母は `measured` の刻を数えており
     （`trend.informative`/`gate_span`）、そこへ入れると**測っている物差しを測っている最中に
     取り替える**ことになります。別の event 名で残し、読むだけにしてあります。
     """
     ledger("views_over", vid, views_live=live, views_ledger=live - over,
-           over=over, age_h=round(age_h, 1))
+           over=over, age_h=round(age_h, 1), src=src)
 
 
 def cmd_status(a):
@@ -263,6 +271,9 @@ def cmd_status(a):
         if over:
             record_over(v["id"], v["views"], over, age)
         mark = f"  ** 台帳の最大より +{over}回 ＝ まだ台帳に無い（次の measure で拾うこと）" if over else ""
+        # 0回 と「欄が無い」を分ける（`yt.views_of` の註）。立たない回は 1字も足さない。
+        if v.get("views_absent"):
+            mark += "  ** `viewCount` の欄がありません ＝ この 0回 は読めていないだけ（`yt.views_of` の覆る条件 (1)）"
         print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['views']:5d}回 いいね{v['likes']:3d} 齢{age:5.0f}h {v['title'][:36]}{mark}")
     # 視聴者のコメントは 2026-09-07 20:4x まで1度も見ていなかった（`yt.viewer_comments()` の註）。
     # 唯一の批評「ＡＩナレーショングダグダ」は 9日間 読まれていない。**ここに出し続けること。**
@@ -547,7 +558,13 @@ def cmd_measure(a):
             extra = {"n_values": s["n_values"]}
             if s["n_values"] > 1:
                 extra["views_min"] = s["views_min"]
-            v = {**v, "views": max(v["views"], s["views"])}
+            v = {**v, "views": max(v["views"], s["views"]),
+                 "views_absent": v.get("views_absent") or s.get("views_absent")}
+        # **`viewCount` の欄が無い読みは、0回 とは別に印を立てる**（`yt.views_of` の註・
+        # 2026-09-10 14:2x）。行は落としません —— 落とすと分母が黙って減り、
+        # 「読んでいない本」と「0回 の本」がまた同じ形になります。
+        if v.get("views_absent"):
+            extra["views_absent"] = True
         ledger("measured", v["id"], views=v["views"], likes=v["likes"],
                comments=v.get("comments", 0), age_h=round(age, 1), title=v["title"][:40], **extra)
     # **まだ公開前の本も1行 残す**（API は増えない ＝ `all_videos()` は同じ回で1度きり）。
