@@ -2054,6 +2054,92 @@ def zero_probe_line(rows: list[dict]) -> str:
 
 
 CHANNEL_MIN_SPAN_H = 0.5   # これより短い窓では、チャンネルの数の更新の刻みが見えるだけ
+# **同じ周に 2体（`hourly` と `optimizer`）が `status` を撃つので、`channel` の行は周の 2倍 入ります。**
+# 実測 2026-09-10 16:4x: 4行 ＝ 3周（15:24 / 15:58:58・15:59:33 / 16:40）。
+# §7 (m) の門は「**3周** 動かないまま」なので、**行を数えると 1.3倍 速く門に着きます**
+# （`data/rounds.jsonl` の「1周に 2行」と同じ族 —— METHOD §5「0 を落とさずに中央値を取ると 26分」）。
+CHANNEL_SAME_ROUND_MIN = MIN_PAIR_MIN   # これより近い行は同じ周（10分）
+CHANNEL_FLAT_LAPS = 3                   # §7 (m) の門: 読みが 3周 続けて同じなら「チャンネルの側」を先に見る
+CHANNEL_MISMATCH = 0.10                 # `cli.record_channel` の覆る条件 (1) の 10%
+
+
+def _channel_rows(rows: list[dict]) -> list[dict]:
+    """`channel` の行を**刻の順**に並べて返す。
+
+    **並べ直す理由（2026-09-10 16:4x・optimizer・Opus。実物で踏んだ）**: 台帳は追記なので
+    行の順は**書いた順**であって刻の順ではありません —— 同じ周の 2体 が数十秒 差で書くと
+    入れ替わります（実測: `15:59:33` の行が `15:58:58` の行より**前**に在る）。
+    `channel_growth` は両端しか使わないので、**入れ替わりが端に来た周は窓が負になります**
+    （`views_per_h` の符号が反転する）。いまは中ほどで起きただけで、まだ数は狂っていません。
+    """
+    cs = [r for r in rows if r.get("event") == "channel"
+          and isinstance(r.get("views"), int) and isinstance(r.get("subs"), int)]
+    return sorted(cs, key=_at)
+
+
+def _channel_laps(cs: list[dict]) -> list[list[dict]]:
+    """刻の近い行（既定 10分 以内）を **1周** に畳む。返すのは周ごとの行の塊。"""
+    laps: list[list[dict]] = []
+    for r in cs:
+        if laps and (_at(r) - _at(laps[-1][-1])).total_seconds() / 60 <= CHANNEL_SAME_ROUND_MIN:
+            laps[-1].append(r)
+        else:
+            laps.append([r])
+    return laps
+
+
+def _flat_laps(laps: list[list[dict]]) -> int:
+    """**総再生が動かないまま、いま何周 続いているか**（いちばん新しい周を 1 と数える）。
+
+    **数え方をここに固定します**（次の回が読み直さなくてよいように）:
+    `2` は「読みが 2周 続けて同じ ＝ 動かなかった区間が 1つ」。
+    §7 (m) の門 `CHANNEL_FLAT_LAPS = 3` は **読みが 3周 続けて同じ**（区間 2つ）で引かれます。
+    """
+    if not laps:
+        return 0
+    last = max(r["views"] for r in laps[-1])
+    n = 0
+    for lap in reversed(laps):
+        if max(r["views"] for r in lap) != last:
+            break
+        n += 1
+    return n
+
+
+def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> dict:
+    """同じ窓の**本ごとの増えの合計**（包絡で読む・**API 0単位**）。
+
+    `cli.record_channel` の**覆る条件 (1)**（「総再生の増えが、同じ窓の本ごとの増えの合計と
+    10% 以上 食い違ったら、この数でチャンネルが止まったかを読まないこと」）は、
+    2026-09-10 16:4x まで**どこも数えていませんでした** ＝ 次の回が手で数えるしかない条件でした
+    （METHOD が repo でいちばん多い壊れ方と呼ぶもの ——「言っている所と、している所が別」）。
+
+    **この合計は下限です。** `measure` が触るのは**公開から 7日 以内の本**（実測 19本）で、
+    チャンネルは **269本** 持っています。窓の中で古い本が伸びれば、
+    その増えは合計に入らずチャンネルの総再生にだけ入る ＝ **チャンネル ＞ 合計**の側の食い違いは、
+    いつでも「触っていない 250本」で説明が付きます。
+    **説明が付かないのは逆向きだけ** —— **合計 ＞ チャンネル**（触っている本の増えを、
+    チャンネルの総再生が受け取っていない）。だから門はその向きにだけ当てます（`over` の欄）。
+
+    窓の頭に点を持たない本（窓の中で公開された本・測り始めた本）は**外します**（`skipped`）——
+    基準が無いので、その本の再生を丸ごと「増え」と数えると合計が上へ外れます。
+    """
+    out = {"sum": 0, "n": 0, "skipped": 0}
+    for _vid, pts in series(rows).items():
+        env = envelope(pts)
+        a = b = None
+        for p, v in zip(pts, env):
+            t = _at(p)
+            if t <= t0:
+                a = v
+            if t <= t1:
+                b = v
+        if a is None or b is None:
+            out["skipped"] += 1
+            continue
+        out["sum"] += b - a
+        out["n"] += 1
+    return out
 
 
 def channel_growth(rows: list[dict]) -> dict:
@@ -2072,19 +2158,30 @@ def channel_growth(rows: list[dict]) -> dict:
     **覆る条件は `cli.record_channel` の註**（(1) 本ごとの合計と 10% 食い違ったら、この数で
     「チャンネルが止まったか」を読まない・(2) 登録の分子が 0 のまま 7本）。
     """
-    cs = [r for r in rows if r.get("event") == "channel"
-          and isinstance(r.get("views"), int) and isinstance(r.get("subs"), int)]
+    cs = _channel_rows(rows)
+    laps = _channel_laps(cs)
+    base = {"n": len(cs), "laps": len(laps), "flat_laps": _flat_laps(laps),
+            "vid_sum": None, "vid_n": None, "vid_skipped": None,
+            "mismatch": None, "over": False}
     if len(cs) < 2:
-        return {"n": len(cs), "span_h": None, "d_subs": None, "d_views": None,
+        return {**base, "span_h": None, "d_subs": None, "d_views": None,
                 "views_per_h": None, "subs_per_view": None,
                 "subs": cs[-1]["subs"] if cs else None, "views": cs[-1]["views"] if cs else None}
     a, b = cs[0], cs[-1]
-    span_h = (dt.datetime.fromisoformat(b["at"]) - dt.datetime.fromisoformat(a["at"])).total_seconds() / 3600
+    t0, t1 = _at(a), _at(b)
+    span_h = (t1 - t0).total_seconds() / 3600
     d_subs, d_views = b["subs"] - a["subs"], b["views"] - a["views"]
-    return {"n": len(cs), "span_h": span_h, "d_subs": d_subs, "d_views": d_views,
+    vd = channel_video_delta(rows, t0, t1)
+    denom = max(abs(d_views), abs(vd["sum"]))
+    mismatch = None if denom == 0 else abs(d_views - vd["sum"]) / denom
+    return {**base, "span_h": span_h, "d_subs": d_subs, "d_views": d_views,
             "views_per_h": (d_views / span_h) if span_h >= CHANNEL_MIN_SPAN_H else None,
             "subs_per_view": (d_subs / d_views) if d_views > 0 else None,
-            "subs": b["subs"], "views": b["views"]}
+            "subs": b["subs"], "views": b["views"],
+            "vid_sum": vd["sum"], "vid_n": vd["n"], "vid_skipped": vd["skipped"],
+            "mismatch": mismatch,
+            # **門は片側だけ**（`channel_video_delta` の註 —— 逆向きは「触っていない 250本」で説明が付く）
+            "over": mismatch is not None and mismatch >= CHANNEL_MISMATCH and vd["sum"] > d_views}
 
 
 def channel_line(rows: list[dict]) -> str:
@@ -2100,9 +2197,28 @@ def channel_line(rows: list[dict]) -> str:
                 f"窓 {g['span_h']:.2f}時間 ＜ {CHANNEL_MIN_SPAN_H:.1f}時間 ＝ **まだ読まないこと**）。")
     rate = ("測れていません（総再生の増えが 0）" if g["subs_per_view"] is None
             else f"**{g['subs_per_view'] * 100:.3f}%**（門 0.5%・§7 の収益の節の覆る条件 (1)）")
+    # **周で言うこと**（§7 (m) の門は「3周」・行ではない。`_flat_laps` の註）
+    # **窓ぜんたいの増えではなく、いちばん新しい側の平らを見ること**（検査が捕まえた:
+    # 窓の頭で伸びていても、いま 3周 動いていなければ (m) は引かれます）
+    flat = ""
+    if g["flat_laps"] >= 2:
+        flat = (f"**総再生は {g['flat_laps']}周 続けて同じ読み**（門 {CHANNEL_FLAT_LAPS}周）"
+                + ("。**引かれました ＝ 本の題や形を疑う前に、チャンネルの側が止まっていないかを外すこと**"
+                   f"（§7 (m)）" if g["flat_laps"] >= CHANNEL_FLAT_LAPS
+                   else f" ＝ **まだ引かれません**（あと {CHANNEL_FLAT_LAPS - g['flat_laps']}周）")
+                + "。")
+    # **覆る条件 (1) を、次の回が手で数えなくてよいように道具が当てる**（`channel_video_delta` の註）
+    cmp_ = (f"同じ窓の**本ごとの増えの合計 {g['vid_sum']:+d}回**（測っている {g['vid_n']}本・"
+            f"基準の無い {g['vid_skipped']}本 は外した）"
+            + ("・食い違い ＝ 測れていません（両方 0）。" if g["mismatch"] is None
+               else f"・食い違い **{g['mismatch'] * 100:.0f}%**"
+                    + ("。**合計がチャンネルを越えました ＝ `record_channel` の覆る条件 (1) が引かれます**"
+                       "（触っている本の増えを、総再生が受け取っていない）。" if g["over"]
+                       else "（**門は片側だけ** —— チャンネル ＞ 合計 の側は、"
+                            "`measure` が触っていない古い本で説明が付きます）。")))
     return (f"**チャンネル 登録 {g['subs']}（{g['d_subs']:+d}）・総再生 {g['views']}（{g['d_views']:+d}）**"
-            f"（点 {g['n']}件・窓 {g['span_h']:.1f}時間 ＝ **{g['views_per_h']:+.1f}回/時**）。"
-            f"登録率 ＝ {rate}。"
+            f"（{g['laps']}周・点 {g['n']}件・窓 {g['span_h']:.1f}時間 ＝ **{g['views_per_h']:+.1f}回/時**）。"
+            f"{flat}登録率 ＝ {rate}。{cmp_}"
             "**この数は本ごとの 0回 を読む前に見ること** —— チャンネルの総再生が動いていれば、"
             "0回 は**その本の配りの側**です（動いていなければ、本ではなくチャンネルの側を疑う）。"
             "**チャンネルの `viewCount` は本ごとの合計と別の刻みで動きます**"

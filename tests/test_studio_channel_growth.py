@@ -127,3 +127,129 @@ def test_positive_control_zero_denominator():
     g = trend.channel_growth(rows)
     assert g["d_subs"] == 3            # 登録は動いた
     assert g["subs_per_view"] is None  # それでも率は出せない（0 ではない）
+
+
+# ---- 2026-09-10 16:4x（optimizer・Opus）: 行の順・周の数え・覆る条件 (1) の当て ----
+# **なぜ足したか**: (1) 台帳は追記なので行の順は**書いた順**で、同じ周の 2体 が数十秒 差で書くと
+# 入れ替わる（実物で踏んだ: `15:59:33` の行が `15:58:58` の行より前）。両端しか使わないので、
+# 入れ替わりが端に来た周は窓が負になる。(2) §7 (m) の門は「**3周**」だが、
+# 同じ周に 2体 が `status` を撃つので行は周の 2倍 入り、**行を数えると門に速く着く**。
+# (3) `cli.record_channel` の覆る条件 (1)（10% の食い違い）を、どこも数えていなかった。
+
+
+def test_rows_are_sorted_by_time_not_by_file_order():
+    """**実物で踏んだ形**: 同じ周の 2行 が書いた順で入れ替わっている台帳。"""
+    rows = [_row("2026-09-10T15:24:42+09:00", 27, 84781),
+            _row("2026-09-10T15:59:33+09:00", 27, 84781),
+            _row("2026-09-10T15:58:58+09:00", 27, 84781),   # ← 前の行より**古い**
+            _row("2026-09-10T16:40:59+09:00", 27, 84781)]
+    g = trend.channel_growth(rows)
+    assert g["span_h"] > 0
+    assert abs(g["span_h"] - 76.28 / 60) < 0.01
+
+
+def test_positive_control_file_order_would_flip_the_window():
+    """**陽性対照**: 並べ直しを外して**書いた順の両端**で数えると、窓が負になる。"""
+    rows = [_row("2026-09-10T16:40:59+09:00", 27, 84781),   # 書いた順では最初
+            _row("2026-09-10T15:24:42+09:00", 27, 84781)]
+    assert trend.channel_growth(rows)["span_h"] > 0          # 道具は正
+    a, b = rows[0], rows[-1]                                  # 門を外した数え方
+    naive = (dt.datetime.fromisoformat(b["at"]) - dt.datetime.fromisoformat(a["at"])).total_seconds()
+    assert naive < 0                                          # ＝ 外すと負
+
+
+def test_two_rows_in_the_same_round_are_one_lap():
+    """同じ周の 2体（`hourly`／`optimizer`）の行は **1周** に畳む。"""
+    rows = [_row("2026-09-10T15:24:42+09:00", 27, 84781),
+            _row("2026-09-10T15:58:58+09:00", 27, 84781),
+            _row("2026-09-10T15:59:33+09:00", 27, 84781),
+            _row("2026-09-10T16:40:59+09:00", 27, 84781)]
+    g = trend.channel_growth(rows)
+    assert g["n"] == 4 and g["laps"] == 3
+
+
+def test_positive_control_counting_rows_hits_the_gate_early():
+    """**陽性対照**: 行を周として数えると、門（3周）に **1周 早く**着く。"""
+    rows = [_row("2026-09-10T15:24:42+09:00", 27, 84781),
+            _row("2026-09-10T15:58:58+09:00", 27, 84781),
+            _row("2026-09-10T15:59:33+09:00", 27, 84781)]
+    g = trend.channel_growth(rows)
+    assert g["laps"] == 2 and g["flat_laps"] == 2            # ＝ まだ引かれない
+    assert g["n"] == 3                                        # 行を数えると 3 ＝ 引けてしまう
+    assert "まだ引かれません" in trend.channel_line(rows)
+
+
+def test_flat_laps_counts_readings_and_draws_the_gate_at_three():
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T10:00:00+09:00", 27, 84781),
+            _row("2026-09-10T11:00:00+09:00", 27, 84781),
+            _row("2026-09-10T12:00:00+09:00", 27, 84781)]
+    g = trend.channel_growth(rows)
+    assert g["flat_laps"] == 3                                # 84781 が 3周 続いた
+    assert "3周 続けて同じ読み" in trend.channel_line(rows)
+    assert "引かれました" in trend.channel_line(rows)
+
+
+def test_flat_laps_resets_when_the_number_moves():
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84781),
+            _row("2026-09-10T10:00:00+09:00", 27, 84781),
+            _row("2026-09-10T11:00:00+09:00", 27, 84790)]
+    assert trend.channel_growth(rows)["flat_laps"] == 1
+
+
+def _m(at: str, vid: str, views: int, age_h: float) -> dict:
+    return {"at": at, "id": vid, "event": "measured", "views": views, "age_h": age_h}
+
+
+def test_video_delta_is_summed_over_the_same_window():
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T15:00:00+09:00", 27, 84100),
+            _m("2026-09-10T09:00:00+09:00", "aaa", 100, 10.0),
+            _m("2026-09-10T15:00:00+09:00", "aaa", 160, 16.0),
+            _m("2026-09-10T09:00:00+09:00", "bbb", 50, 20.0),
+            _m("2026-09-10T15:00:00+09:00", "bbb", 90, 26.0)]
+    g = trend.channel_growth(rows)
+    assert g["d_views"] == 100 and g["vid_sum"] == 100 and g["vid_n"] == 2
+    assert g["mismatch"] == 0.0 and g["over"] is False
+
+
+def test_books_without_a_base_point_are_skipped():
+    """窓の頭に点を持たない本（窓の中で公開された本）は合計に入れない。"""
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T15:00:00+09:00", 27, 84100),
+            _m("2026-09-10T12:00:00+09:00", "new", 700, 2.0),
+            _m("2026-09-10T15:00:00+09:00", "new", 900, 5.0)]
+    g = trend.channel_growth(rows)
+    assert g["vid_n"] == 0 and g["vid_skipped"] == 1 and g["vid_sum"] == 0
+
+
+def test_gate_is_one_sided_channel_over_sum_does_not_draw_it():
+    """**チャンネル ＞ 合計** は、`measure` が触っていない古い本で説明が付く ＝ 引かない。"""
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T15:00:00+09:00", 27, 85000),   # +1000
+            _m("2026-09-10T09:00:00+09:00", "aaa", 100, 10.0),
+            _m("2026-09-10T15:00:00+09:00", "aaa", 110, 16.0)]  # +10
+    g = trend.channel_growth(rows)
+    assert g["mismatch"] > trend.CHANNEL_MISMATCH and g["over"] is False
+
+
+def test_gate_draws_when_the_sum_exceeds_the_channel():
+    """**合計 ＞ チャンネル** ＝ 触っている本の増えを総再生が受け取っていない側だけ引く。"""
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T15:00:00+09:00", 27, 84010),   # +10
+            _m("2026-09-10T09:00:00+09:00", "aaa", 100, 10.0),
+            _m("2026-09-10T15:00:00+09:00", "aaa", 600, 16.0)]  # +500
+    g = trend.channel_growth(rows)
+    assert g["over"] is True
+    assert "覆る条件 (1) が引かれます" in trend.channel_line(rows)
+
+
+def test_positive_control_two_sided_gate_would_fire_on_the_explainable_side():
+    """**陽性対照**: 門を両側にすると、説明の付く側（チャンネル ＞ 合計）でも鳴る。"""
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T15:00:00+09:00", 27, 85000),
+            _m("2026-09-10T09:00:00+09:00", "aaa", 100, 10.0),
+            _m("2026-09-10T15:00:00+09:00", "aaa", 110, 16.0)]
+    g = trend.channel_growth(rows)
+    two_sided = g["mismatch"] >= trend.CHANNEL_MISMATCH        # 片側の門を外した形
+    assert two_sided is True and g["over"] is False
