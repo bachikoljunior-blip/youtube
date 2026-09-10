@@ -64,6 +64,20 @@ REPORT_TYPE = "channel_basic_a3"
 #: 積む先（`data/studio/ledger.jsonl` とは別。台帳には 1回の取り込みにつき 1行 だけ残す）。
 STORE = Path("data/studio/reporting.jsonl")
 
+#: **サムネの面（インプレッションと CTR）を持つ、もう1つのジョブ。**
+#: 2026-08-14 から回っており、`scripts/reach.py`（旧道具）が 09/02 に止まってから
+#: **置かれた報告を誰も読んでいません**（2026-09-10 23:5x に数えた・下の註）。
+REACH_TYPE = "channel_reach_basic_a1"
+#: その積む先（旧道具が書いた形のまま足す。**報告ID を持たない古い行が在ります** ——`seen_marks` の註）。
+REACH_STORE = Path("data/reach.jsonl")
+
+#: **取り込む型と、その積む先**。`cmd_reporting` はこの並びを回ります。
+#: **1つの型だけを見る形に戻さないこと**（2026-09-10 23:5x・optimizer・Opus。**この回に踏んだ穴**）——
+#: 18:0x は `REPORT_TYPE` 1つ だけを見ており、**同じ口に在る `channel_reach_basic_a1` の
+#: 8日ぶん（09/02〜09/09・すでに置かれていた）が、道具からは 1行 も見えませんでした。**
+#: ＝ §4 (0-b) の族の裏返し（**「報告 0本」は、その型の話でしかない**）。
+JOBS: tuple[tuple[str, Path], ...] = ((REPORT_TYPE, STORE), (REACH_TYPE, REACH_STORE))
+
 #: 期間の終わりから報告が置かれるまでの実測（2026-09-10・25.7時間）。これを越えたら註の (3)。
 LATE_H = 48.0
 
@@ -128,20 +142,44 @@ def freshness(reps: list[dict], now: dt.datetime | None = None) -> dict | None:
             "late": bool(made and (made - end).total_seconds() / 3600 > LATE_H)}
 
 
-def seen_ids(path: Path | None = None) -> set[str]:
-    """もう積んだ報告のID。**追記しかしない store なので、ここで畳まないと同じ日が二重に積まれます。**"""
+def _end_mark(when: str) -> str:
+    """報告の**期間の終わり**を、書き方の違いに依らない鍵に（空なら空）。"""
+    t = _t(when)
+    return "end:" + t.isoformat() if t else ""
+
+
+def seen_marks(path: Path | None = None) -> set[str]:
+    """**もう積んだ報告の見分け** —— 報告ID と、**期間の終わり**の両方。
+    **追記しかしない store なので、ここで畳まないと同じ日が二重に積まれます。**
+
+    **2つ 見るのは、古い store が報告ID を持たないからです**（2026-09-10 23:5x・optimizer・Opus）。
+    `data/reach.jsonl` は旧道具 `scripts/reach.py` が書いたもので、行に在るのは `_report_end` だけ。
+    **ID だけで見分けると、その 2,095行 は「1本も積んでいない」と読めます** ——
+    そのまま `unseen` に渡せば 64本 を全部 落とし直し、**同じ日を二重に積みます**（註の (4) の当のもの）。
+    ＝ **「0件」を「起きていない」と読む形**（§4 (0-b) の族）が、畳む側にも在りました。
+
+    **覆る条件**: 同じ期間の終わりで報告が**置き直された**とき（数の訂正・註の (4)）、
+    期間の終わりを鍵にすると訂正版を落とせません。**ID を持つ store（`STORE`）では
+    ID のほうが先に当たる**ので効きませんが、`REACH_STORE` の古い行だけは訂正を取り込めません
+    —— 訂正を追う必要が出たら、その store を **1度だけ** 作り直すこと（報告は 60日 残ります）。
+    """
     p = path or STORE
     if not p.exists():
         return set()
     out: set[str] = set()
     for line in p.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            try:
-                rid = json.loads(line).get("_report_id")
-            except json.JSONDecodeError:
-                continue
-            if rid:
-                out.add(str(rid))
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("_report_id"):
+            out.add(str(row["_report_id"]))
+        for k in ("_period_end", "_report_end"):
+            if row.get(k):
+                out.add(_end_mark(str(row[k])))
+    out.discard("")
     return out
 
 
@@ -151,8 +189,12 @@ def unseen(reps: list[dict], seen: set[str]) -> list[dict]:
     `scripts/reach.py` は 08/20 まで `reports[-3:]` しか落としておらず、
     **在るのに一度も読んでいない日**が残っていました（ジョブは 30日 遡って埋めます）。
     ここで件数を切らないのは、その穴の裏返しです。
+
+    見分けは **ID と 期間の終わり の両方**（`seen_marks` の註）。
     """
-    return [r for r in reps if str(r.get("id", "")) not in seen]
+    return [r for r in reps
+            if str(r.get("id", "")) not in seen
+            and _end_mark(str(r.get("endTime", ""))) not in seen]
 
 
 def parse(text: str, rep: dict) -> list[dict]:
@@ -217,6 +259,20 @@ def pt_day(when: dt.datetime) -> str:
     """
     u = when.astimezone(dt.timezone.utc) - dt.timedelta(hours=7)
     return u.strftime("%Y%m%d")
+
+
+def reach_by_day(rows: list[dict], video_id: str) -> list[tuple[str, int, float]]:
+    """1本の「報告の日 → サムネのインプレッション・CTR(%)」（`channel_reach_basic_a1`）。
+
+    **これはショートの配りを測りません**（モジュールの註・実測 インプレッション ÷ 再生 11.3%）。
+    使える所は 1つ だけ: **再生 0回 の本に、この面の数が付いているか** ——
+    付いていれば「見せたのに押されない」側の証拠が 1つ、0 なら「この面には出ていない」までです
+    （**「配られていない」ではありません** —— この面は配りの 1/10〜1/20 しか見ていない）。
+    """
+    out = [(r.get("date", ""), int(float(r.get("video_thumbnail_impressions") or 0)),
+            float(r.get("video_thumbnail_impressions_ctr") or 0) * 100)
+           for r in latest_rows(rows) if r.get("video_id") == video_id]
+    return sorted(out)
 
 
 def views_by_day(rows: list[dict], video_id: str) -> list[tuple[str, int]]:

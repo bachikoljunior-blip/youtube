@@ -1100,44 +1100,65 @@ def cmd_reporting(a):
     2026-09-10 18:0x・optimizer・Opus。**Analytics より 2日 早い口**（`studio/reporting.py` の註）。
     `--setup` はジョブが無いときだけ作る（作ってから最初の CSV まで 24〜48時間・遡りは 30日）。
 
-    **台帳へ残すのは 1回の取り込みにつき 1行**（`event: "reported"`）——
-    行そのものは `data/studio/reporting.jsonl`（数千行 になるので台帳には混ぜない）。
+    **台帳へ残すのは 型ごとに 1行**（`event: "reported"`）——
+    行そのものは 型ごとの store（数千行 になるので台帳には混ぜない）。
+
+    **【2026-09-10 23:5x・optimizer・Opus】型を 1つ しか見ていませんでした。**
+    18:0x のこの関数は `reporting.REPORT_TYPE`（`channel_basic_a3`）だけを見ており、
+    同じ口に **2026-08-14 から回っている `channel_reach_basic_a1`** が在ることを知りませんでした。
+    その結果、**すでに置かれていた 8日ぶん（09/02〜09/09）が道具から 1行 も見えず**、
+    「報告 0本」という印字だけが残っていました（**その 0 は a3 の話でしかありません**）。
+    いまは `reporting.JOBS` の並びを回ります。**1つの型へ戻さないこと。**
     """
     js = reporting.jobs()
-    job = reporting.job_for(reporting.REPORT_TYPE, js)
+    rc = 0
+    for rtype, store in reporting.JOBS:
+        rc |= _reporting_one(a, js, rtype, store)
+    return rc
+
+
+def _reporting_one(a, js: list, rtype: str, store) -> int:
+    job = reporting.job_for(rtype, js)
     if job is None:
         if not a.setup:
-            print(f"!! `{reporting.REPORT_TYPE}` のジョブが在りません ——"
+            print(f"!! `{rtype}` のジョブが在りません ——"
                   " `python -m studio.cli reporting --setup` で作ること（作るのは1回だけ）")
             return 1
-        job = reporting.create_job(reporting.REPORT_TYPE)
+        job = reporting.create_job(rtype)
         print(f"ジョブを作りました: {job['id']}（{job.get('createTime')}）"
               " —— **最初の CSV は 24〜48時間後**・遡りは 30日")
     reps = reporting.reports(job["id"])
     fr = reporting.freshness(reps)
     if fr is None:
-        print(f"報告 **0本**（ジョブ {job.get('createTime')}）。"
+        print(f"`{rtype}` 報告 **0本**（ジョブ {job.get('createTime')}）。"
               " **「数が 0」ではありません** —— まだ置かれていないだけ（次の回で見ること）")
-        ledger("reported", reporting.REPORT_TYPE, reports=0, rows=0, last_day=None, lag_h=None)
+        ledger("reported", rtype, reports=0, rows=0, last_day=None, lag_h=None)
         return 0
-    print(f"報告 {len(reps)}本・最後の期間 {fr['end']:%m/%d %H:%M}Z ＝ **遅れ {fr['lag_h']:.1f}時間**"
+    print(f"`{rtype}` 報告 {len(reps)}本・最後の期間 {fr['end']:%m/%d %H:%M}Z"
+          f" ＝ **遅れ {fr['lag_h']:.1f}時間**"
           f"（置かれるまで {fr['made_h']}時間{'・!! 遅い' if fr['late'] else ''}）")
-    todo = reporting.unseen(reps, reporting.seen_ids())
+    todo = reporting.unseen(reps, reporting.seen_marks(store))
     rows = []
     for r in todo:
         rows += reporting.parse(reporting.download(r), r)
-    n = reporting.append(rows) if rows else 0
-    print(f"未読 {len(todo)}本 → **{n}行** 積んだ（store 累計 {len(reporting.load_rows())}行）")
-    days = sorted({r.get("date", "") for r in reporting.load_rows()})
+    n = reporting.append(rows, store) if rows else 0
+    all_rows = reporting.load_rows(store)
+    print(f"  未読 {len(todo)}本 → **{n}行** 積んだ（store 累計 {len(all_rows)}行）")
+    days = sorted({r.get("date", "") for r in all_rows})
     last_day = days[-1] if days else None
     if last_day:
-        print(f"報告の日 {days[0]}〜{last_day}（**太平洋時間の日** ＝ 10:00 JST の公開は前日の行）")
-        sids = studio_video_ids(ledger_rows())
-        for vid in sids:
-            vd = reporting.views_by_day(reporting.load_rows(), vid)
-            if vd:
-                print(f"  新 {vid}  " + " → ".join(f"{d[4:]} {v}回" for d, v in vd[-5:]))
-    ledger("reported", reporting.REPORT_TYPE, reports=len(reps), rows=n,
+        print(f"  報告の日 {days[0]}〜{last_day}（**太平洋時間の日** ＝ 10:00 JST の公開は前日の行）")
+        for vid in studio_video_ids(ledger_rows()):
+            if rtype == reporting.REACH_TYPE:
+                rd = reporting.reach_by_day(all_rows, vid)
+                if rd:
+                    print(f"  新 {vid}  " + " → ".join(
+                        f"{d[4:]} 面{i}回 CTR{c:.1f}%" for d, i, c in rd[-5:]))
+            else:
+                vd = reporting.views_by_day(all_rows, vid)
+                if vd:
+                    print(f"  新 {vid}  " + " → ".join(f"{d[4:]} {v}回" for d, v in vd[-5:]))
+    ledger("reported", rtype, reports=len(reps), rows=n,
            last_day=last_day, lag_h=fr["lag_h"], made_h=fr["made_h"])
     return 0
 
