@@ -155,9 +155,68 @@ def to_kana(text: str) -> str:
     return re.sub(r"[^ぁ-ゖー]", "", kana)
 
 
+_ONE_KANJI = re.compile(r"[一-龥々]")
+
+
+def _apply_one_kanji_yomi(say: str, ones: dict[str, str]) -> str:
+    """**1字の漢字の `yomi` は、janome が1語と見た所にだけ当てる**（2026-09-11 01:3x JST・optimizer・Opus）。
+
+    **穴（09/11 00:4x に踏み、この回に道具へ移した）**: 予定の側の `yomi` は**素の文字列 replace** で、
+    語の境目を見ていませんでした。書き手が裸の「日」のために `日 → ひ` を入れると、
+    同じ 1字 が**助数詞「1日」にも当たり**、予定が **いちひ**（音は いちにち で **TTS は正しい**）になる。
+    ＝ **hear が、正しく読めた本を `!!` で名指しする**（`§15` の 1回目の hear の外れ 1件 は全部これ）。
+
+    **なぜ TTS 側では起きないか**: `customPronunciations` は語で当たるので、TTS は「1日」を割りません。
+    **割れるのは予定の側だけ** ＝ これは本の欠陥ではなく、**測る側の欠陥**です。
+
+    **なぜ lint では塞げないか**: `script.uncovered_kanji` は先に `COUNTER_RUN` で助数詞を消してから
+    yomi を当てるので、**助数詞の側は「読みを固定しなくてよい」と正しく判定します**。
+    ＝ 2つの口が**同じ dict を別の規則で当てていた**（片方は語を見る・片方は見ない）のが本体。
+
+    **当てない所は 2つ**（どちらも実測で割れ、陽性対照で落としてある）:
+
+        数の直後（前の語が `名詞,数`）  1日 → いちひ（正 いちにち）・3人 → さんひと・1分 → いちぶん・
+                                     10月分 → じゅうつきぶん（正 じゅうがつぶん）
+        1語の中に埋まっている          初日 → はつひ（正 しょにち）・半年 → はんねん・6か月 → ろくかがつ
+
+    **3つ目を書いて、消しました**（`名詞,接尾,助数詞` を別に見る枝）。**陽性対照が落ちません** ——
+    外しても検査は 7件 とも通ります。janome に助数詞を出させて数えると、
+    **1日・3人・数年・何人も・十数年・数か月 とも、助数詞の前は必ず `名詞,数`** で、
+    「数の直後」が**先に**当たっていました（＝ 同じ所を 2度 見ていた枝）。
+    **落ちない対照つきの枝は置かないこと**（§5 の教訓の形3つ目・09/10 01:2x の `月分?` の並び順と同じ形）。
+
+    **当てる所は今までどおり**（「その日」→ そのひ）。長い鍵は先に当てるので、
+    `月収 → げっしゅう` のような複合語は 1字 の `月` に触られません（実測: 09/11 の本）。
+
+    **実物で確かめた**: 公開ずみ・予約ずみを含む台本 **6本・77コマ**（1字漢字の yomi 鍵 **39個**・
+    年・月・分・人・回・歳 を含む）に当てて、**予定が変わったコマは 0**。
+    ＝ **いま出ている本を1本も動かさずに、罠だけを閉じます**（教訓の形4つ目・実物から列挙して確かめた）。
+    変わらなかった理由も数で出ました: §3 の 9（声の漢字は全部 `yomi`）が**複合語には長い鍵**を作らせるので、
+    残る穴は「1字の鍵 × 同じ字の助数詞」だけ ——そこは lint が**わざと**覆っていない所です。
+
+    **覆る条件**: (1) 予定が正しいのに、この規則が `yomi` を当てなかったせいで `!!` が出た回が出たら、
+    その形（janome の品詞）を書いて、当てない所から外すこと。
+    (2) janome が 1語 と見ない所で助数詞が割れた回が出たら、規則は品詞ではなく `script.COUNTER_RUN` の側
+    （lint と同じ正規表現）で書き直すこと ——2つの口が同じ規則を読む形にできる。
+    (3) 2字以上の鍵で同じ割れ方をした回が出たら、この関数を長さで分けているのが誤り ＝ 全部を語で当てること。
+    """
+    out: list[str] = []
+    prev_pos: list[str] | None = None
+    for t in _tok.tokenize(say):
+        sf = t.surface
+        pos = t.part_of_speech.split(",")
+        after_num = prev_pos is not None and len(prev_pos) > 1 and prev_pos[1] == "数"
+        out.append(ones[sf] if (sf in ones and not after_num) else sf)
+        prev_pos = pos
+    return "".join(out)
+
+
 def expected_kana(say: str, yomi: dict[str, str]) -> str:
-    for k in sorted(yomi, key=len, reverse=True):
+    ones = {k: v for k, v in yomi.items() if len(k) == 1 and _ONE_KANJI.fullmatch(k)}
+    for k in sorted((k for k in yomi if k not in ones), key=len, reverse=True):
         say = say.replace(k, yomi[k])
+    if ones:
+        say = _apply_one_kanji_yomi(say, ones)   # 1字の漢字だけ、語で当てる（註）
     for a, b in _PRE:
         say = re.sub(a, b, say)
     return to_kana(say)
