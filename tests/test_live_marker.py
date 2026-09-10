@@ -54,7 +54,12 @@ def test_studio_を_import_する検査は全部_live() -> None:
 #: 最初の形は `L.PARENT_MODULES` を借りていて、**陽性対照で通り抜けました**
 #: （名前を壊すと候補も 0件 になり、差が空のまま緑 —— 06:5x に規則A で踏んだのと同じ穴を、
 #:  同じファイルの中でもう一度 踏みました）。**借りると、見張りは規則と一緒に死にます。**
-_PARENT_MODULES_HERE = ("next_round", "next_round_owner", "spawn_prompt")
+#:
+#: **2026-09-10 12:1x（optimizer・Opus）に 2つ 足しました** —— `quota`（22:2x に
+#: `PARENT_MODULES` へ入ったが、**この写しの側だけ据え置かれていた**）と `method_growth`。
+#: 写しが片方だけ古いと、**規則C からその名前が落ちても、この見張りは黙ります**
+#: （＝ 借りると死ぬのを避けて別実装にした意味が、名前の側で半分 消えていた）。
+_PARENT_MODULES_HERE = ("next_round", "next_round_owner", "spawn_prompt", "quota", "method_growth")
 
 
 def _imports_parent(p: Path) -> bool:

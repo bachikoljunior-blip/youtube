@@ -99,7 +99,7 @@ IMPORTS_STUDIO = re.compile(r"^[ \t]*(?:from|import)[ \t]+studio\b", re.M)
 #:
 #: ＝ **親を 6時間×2回 待たせた欠陥の見張りが、`pytest -m live` から落ちていました。**
 #: `quota` を足すと 3件 が明るくなります（本文への言及では引かない ＝ import だけ、は変えない）。
-PARENT_MODULES = ("next_round", "next_round_owner", "spawn_prompt", "quota")
+PARENT_MODULES = ("next_round", "next_round_owner", "spawn_prompt", "quota", "method_growth")
 IMPORTS_PARENT = re.compile(
     r"^[ \t]*(?:from|import)[ \t]+scripts[ \t.].*?\b(?:%s)\b" % "|".join(PARENT_MODULES),
     re.M)
