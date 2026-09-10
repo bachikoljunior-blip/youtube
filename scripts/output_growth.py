@@ -209,6 +209,33 @@ def output_at(sha: str, ledger_cut: datetime | None = None,
         return r.stdout
 
 
+def output_now() -> str:
+    """**いま作業ツリーに在る** `studio/` を、いまの台帳に当てた `trend` の出力。
+
+    **なぜ blob ではないか**（2026-09-11 05:2x JST・optimizer・Opus。`method_growth.worktree_text`
+    と同じ族）: `report()` の「いま **N字**」は `points()` の最後の窓の `b`
+    （＝ **周の刻より前の最後の commit の `studio/`**）から取っていました。
+    **窓の差はそれで正しい**（コードだけを当てて数える ＝ この道具の定義そのもの）——
+    **ですが「いま」は窓の端ではなく、この回が触ったコードが印字する字です。**
+    ＝ `trend.py` の印字を足した／削った回は、**自分がやったことが「いま」に出ません**
+    （足した回ほど小さく、削った回ほど大きく出る ＝ 門を引いた回が自分の直しを確かめられない）。
+
+    **凍らせません**（`ledger_cut` も `STUDIO_FAKE_NOW` も渡さない）——「いま」は
+    **いまの台帳・いまの時計**の数だからです。窓の点とは 1字 単位では比べられません
+    （実時計で「N時間 前」の桁が動く・`output_at` の註 02:3x）。**比べるのは窓の差のほう。**
+
+    **覆る条件**: (1) 作業ツリーの `studio/` が落ちる回が出たら、そのまま止まること
+    （黙って blob の数を配らない ＝ `output_at` の覆る条件 (1) と同じ扱い）。
+    (2) 「いま」と窓の端の差を、**コードの差として読んだ回が 1度でも出たら**、
+    印字を 2行 に分ける（いまは台帳と時計も一緒に動いているので、その引き算は意味を持ちません）。
+    """
+    r = subprocess.run([sys.executable, "-m", "studio.cli", "trend"],
+                       cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("いまの `studio/` が落ちました（註の覆る条件 (1)）:\n" + r.stderr[-400:])
+    return r.stdout
+
+
 def points(laps: int = 6, n: int = 3, after: datetime | None = None) -> list[dict]:
     rs = [r for r in mg.rounds() if after is None or r >= after]
     edges = rs[len(rs) - 1 - laps * n:: laps] if len(rs) > laps * n else rs[::laps]
@@ -254,7 +281,9 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None, lines: bool
         out.append(f"  {p['from'].astimezone(JST):%m/%d %H:%M} → {p['to'].astimezone(JST):%m/%d %H:%M} JST"
                    f"   {p['a']:,} → {p['b']:,}字（{p['d']:+,}）  ＝ 1周 **{p['per_lap']:+.0f}字**")
     if ps:
-        out.append(f"  いま **{ps[-1]['b']:,}字**（`status` は API を撃つので測れません・註）")
+        # **窓の端の blob ではなく、いま作業ツリーに在る `studio/`**（`output_now` の註）。
+        out.append(f"  いま **{len(output_now()):,}字**（`status` は API を撃つので測れません・註。"
+                   "**この行だけは作業ツリー・凍らせていない** ＝ 窓の点と 1字 単位で比べないこと）")
     out += ["  " + v for v in verdict(ps)]
     if lines and ps:
         out.append("  長い行から（吸った所の名指し）:")

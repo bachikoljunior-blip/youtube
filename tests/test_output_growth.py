@@ -160,3 +160,54 @@ def test_positive_control_実時計も凍らせていること():
     b = O.output_at(sha, ledger_cut=cut, now=cut + O.timedelta(hours=12))
     assert len(a) == 8088
     assert a != b, "台帳が同じで時計だけ動かしても 1字も動かない ＝ 凍らせが届いていません"
+
+
+# ---- 「いま」は窓の端の blob ではなく、作業ツリー（2026-09-11 05:2x・optimizer・Opus）----
+#
+# `method_growth.worktree_text` と同じ族。窓の差（コードだけを当てて数える側）は blob のまま。
+# 覆る条件は `output_growth.output_now` の註。
+
+def test_いまは作業ツリーの_studio_を走らせること():
+    """`output_now()` は、いまの `studio/` を いまの台帳・いまの時計 で走らせた出力。"""
+    out = O.output_now()
+    assert out.strip()
+    assert "包絡" in out or "チャンネル" in out          # `trend` の出力であること
+
+
+def test_いまの行は窓の端の_blob_から取らないこと(monkeypatch):
+    """**陽性対照**: `points()` の `b`（blob 側の字数）を壊しても「いま」の数は動かない。"""
+    now_chars = len(O.output_now())
+    real = O.points
+
+    def broken(*a, **k):
+        ps = real(*a, **k)
+        for p in ps:
+            p["b"] = -1
+        return ps
+
+    monkeypatch.setattr(O, "points", broken)
+    assert f"いま **{now_chars:,}字**" in O.report()
+
+
+def test_positive_control_いまの出力を差し替えると_いま_だけが動くこと(monkeypatch):
+    """**壊したら落ちるまで撃つ** —— 「いま」だけが動き、窓の差の行は 1行 も動かない。"""
+    real_out = O.output_now()
+    before = O.report()
+    monkeypatch.setattr(O, "output_now", lambda: real_out + "X" * 500)
+    after = O.report()
+    assert before != after
+    bw = [l for l in before.split("\n") if "JST   " in l]
+    aw = [l for l in after.split("\n") if "JST   " in l]
+    assert bw == aw
+
+
+def test_いまの_studio_が落ちたら黙って_blob_の数を配らないこと(monkeypatch):
+    """**外れた数を配るより、止まるほうが安い**（`output_at` の覆る条件 (1) と同じ扱い）。"""
+    class _R:
+        returncode = 1
+        stdout = ""
+        stderr = "boom"
+
+    monkeypatch.setattr(O.subprocess, "run", lambda *a, **k: _R())
+    with pytest.raises(RuntimeError):
+        O.output_now()
