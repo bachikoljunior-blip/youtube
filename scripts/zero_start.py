@@ -42,6 +42,17 @@
     そのうち **19本 は 14時以降 か 刻が不明**。**帯を混ぜた数を §7 に写さないこと。**
 (4) 新しい作りの本が 7本 たまったら、下敷きを旧データではなく**新しい作りの側**で取り直すこと
     （いまは新しい作りに B が 1本（5本目）しか無い ＝ 下敷きにならない）。
+(5) **尺を混ぜないこと**（2026-09-11 08:0x・optimizer・Opus。**この回に踏んだ**）:
+    20:0x の形は「いま 0回 のまま」の本を**尺を混ぜて 1つの列**に並べており、実物は
+    **91秒・314.9秒・1580.0秒 の 3本**でした。**下 2本 は Shorts フィードに乗らない尺**で、
+    §1 の「長尺は 1〜25回」で説明が付きます（`SHORT_MAX_S`）。混ぜたまま数えると
+    「0回 の本が 3本 も在る ＝ 配りが止まった」と読めます。**下敷きが答えられるのはショートだけ。**
+    いまは尺で分けて印字し、ショートだけを下敷きの初点の下端（45.0h）／上端（77.6h）に当てます。
+    **下敷きの側も尺で絞れていません** —— 60本 のうち `duration_s` が在るのは **5本** だけ
+    （中央 27.3秒・最大 303.0秒・180秒 超 1本）＝ **「下敷きはショートだけ」と読まないこと**。
+    **覆る条件**: 旧データの尺が別の口から埋まったら（873本 中 353本 に `duration_s` が在る）、
+    下敷きの側も `SHORT_MAX_S` で絞って取り直すこと ——そのとき B の 3本 が長尺なら、
+    上の「B の初点は 45h 以降」ごと引かれます。
 """
 from __future__ import annotations
 
@@ -122,16 +133,64 @@ def summary(group: list[dict]) -> dict:
             "over100": sum(1 for v in vs if v >= 100), "zero": sum(1 for v in vs if v == 0)}
 
 
-def standing(ledger: list[dict], lo: float = LO) -> list[dict]:
-    """**いまの本の立ち位置** —— 台帳の `measured` の**いちばん新しい行**が 0回 で、齢が `lo` を越えた本。"""
+SHORT_MAX_S = 180.0
+"""**ショートの上限（秒）。** これを越える本は Shorts フィードに乗らない ＝ §1 の
+「長尺は 1〜25回」の側で、**この下敷きに当てて読めません**（下敷きは 尺 を分けていない）。"""
+
+
+def durations(uploaded: list[dict], ledger: list[dict]) -> dict[str, tuple[float, str]]:
+    """id → （尺の秒, 出どころ）。**分かる本だけ**（分からない本は入れない）。API 0単位。
+
+    2つの口から拾う（どちらも repo の中）:
+      * `data/uploaded.jsonl` の `duration_s`（旧道具が上げたときに書いた秒。873本 中 **353本**）
+      * 台帳 `scheduled`（video_id ↔ 台本の id）→ 台帳 `built` の `seconds`（studio の本）
+
+    **なぜ要るか**（2026-09-11 08:0x・optimizer・Opus。この回に踏んだ）:
+    `standing()` は「いま 0回 のまま」の本を**尺を混ぜて 1つの列**に並べており、
+    実物の 3本 は **91秒（studio の 5本目）・314.9秒・1580.0秒** でした。
+    下 2本 は Shorts フィードに乗らない本で、**§1 の「長尺は 1〜25回」で説明が付きます**。
+    列を混ぜたまま読むと「0回 の本が 3本 も在る」＝ 配りが止まった、と読めてしまいます。
+    """
+    out: dict[str, tuple[float, str]] = {}
+    for r in uploaded:
+        vid, d = r.get("video_id"), r.get("duration_s")
+        if vid and isinstance(d, (int, float)):
+            out[vid] = (float(d), "uploaded.jsonl")
+    built: dict[str, float] = {}
+    sched: dict[str, str] = {}
+    for r in ledger:
+        if r.get("event") == "built" and r.get("id") and isinstance(r.get("seconds"), (int, float)):
+            built[r["id"]] = float(r["seconds"])
+        elif r.get("event") == "scheduled" and r.get("id") and r.get("video_id"):
+            sched[r["video_id"]] = r["id"]
+    for vid, script_id in sched.items():
+        if script_id in built:
+            out[vid] = (built[script_id], "台帳 built")
+    return out
+
+
+def standing(ledger: list[dict], lo: float = LO,
+             durs: dict[str, tuple[float, str]] | None = None) -> list[dict]:
+    """**いまの本の立ち位置** —— 台帳の `measured` の**いちばん新しい行**が 0回 で、齢が `lo` を越えた本。
+
+    **尺も一緒に返すこと**（`durations` の註）—— 下敷き（旧データ）は 尺 を分けていないので、
+    `SHORT_MAX_S` を越える本は「下敷きの外」として読む側に渡します（`long` が True）。
+    尺が分からない本は `seconds` が None ＝ **`long` も None**（「短い」と決めつけない）。
+    """
+    durs = durs or {}
     last: dict[str, dict] = {}
     for r in ledger:
         if r.get("event") == "measured" and r.get("id") and isinstance(r.get("views"), int):
             last[r["id"]] = r
-    return sorted(({"id": vid, "age_h": r.get("age_h"), "title": r.get("title")}
-                   for vid, r in last.items()
-                   if r["views"] == 0 and isinstance(r.get("age_h"), (int, float)) and r["age_h"] >= lo),
-                  key=lambda d: d["age_h"] or 0)
+    out = []
+    for vid, r in last.items():
+        if r["views"] != 0 or not isinstance(r.get("age_h"), (int, float)) or r["age_h"] < lo:
+            continue
+        sec, src = durs.get(vid, (None, None))
+        out.append({"id": vid, "age_h": r.get("age_h"), "title": r.get("title"),
+                    "seconds": sec, "dur_src": src,
+                    "long": (None if sec is None else sec > SHORT_MAX_S)})
+    return sorted(out, key=lambda d: d["age_h"] or 0)
 
 
 def report(lo: float = LO, hi: float = HI, band: tuple[int, int] | None = BAND) -> str:
@@ -161,12 +220,73 @@ def report(lo: float = LO, hi: float = HI, band: tuple[int, int] | None = BAND) 
                        f" B の初点は どれも **{min(firsts):.1f}h より後**です")
     if b["n"] and a["zero"] == 0:
         out.append("  **逆向きは言えます**: 窓で再生が付いていた本に、最後まで 0回 だった本は **1本もありません**")
-    now = standing(_rows(LEDGER), lo)
-    out.append(f"  **いま 0回 のまま 齢 {lo:g}h を越えている本: {len(now)}本**"
-               + ("" if now else "（＝ この行は、次にそういう本が出た周に効きます）"))
-    for x in now:
-        out.append(f"    {x['id']}  齢 {x['age_h']:.1f}h  {x['title'] or ''}")
+    up_rows, led_rows = _rows(UPLOADED), _rows(LEDGER)
+    durs = durations(up_rows, led_rows)
+    out.extend(_base_length_line(g, durs))
+    out.extend(_standing_lines(standing(led_rows, lo, durs), lo,
+                               [x["first_pos_h"] for x in g["B"] if x["first_pos_h"] is not None]))
     return "\n".join(out)
+
+
+def _base_length_line(g: dict, durs: dict[str, tuple[float, str]]) -> list[str]:
+    """**下敷きの側の尺**を1行で（`durations` の註）。**分かる本の数を必ず出すこと** ——
+    分からない本を「短い」と数えると、下敷きが尺で絞れているように見えます。"""
+    ids = [x["id"] for x in g["A"]] + [x["id"] for x in g["B"]]
+    secs = sorted(durs[i][0] for i in ids if i in durs)
+    if not ids:
+        return []
+    if not secs:
+        return ["  **この下敷きは 尺 を分けていません** —— "
+                f"{len(ids)}本 のうち 尺 が分かる本は **0本**（`duration_s` が無い）"]
+    return ["  **この下敷きは 尺 を分けていません** —— "
+            f"{len(ids)}本 のうち 尺 が分かるのは **{len(secs)}本** だけ"
+            f"（中央 {st.median(secs):.1f}秒・最大 {max(secs):.1f}秒・"
+            f"{SHORT_MAX_S:g}秒 超 {sum(1 for s in secs if s > SHORT_MAX_S)}本）"]
+
+
+def _standing_lines(now: list[dict], lo: float, firsts: list[float]) -> list[str]:
+    """**いまの本の立ち位置**を、**尺で分けて**印字する（`durations` の註・2026-09-11 08:0x）。
+
+    `SHORT_MAX_S` を越える本は **下敷きの外**（Shorts フィードに乗らない ＝ §1 の
+    「長尺は 1〜25回」の側）。**この行を混ぜたまま「0回 が n本」と読まないこと。**
+    ショートの側だけを、下敷きの初点の下端／上端に当てます。
+    """
+    out = [f"  **いま 0回 のまま 齢 {lo:g}h を越えている本: {len(now)}本**"
+           + ("" if now else "（＝ この行は、次にそういう本が出た周に効きます）")]
+    for x in now:
+        sec = ("尺 不明" if x["seconds"] is None
+               else f"{x['seconds']:.1f}秒（{x['dur_src']}）")
+        mark = "  ** **下敷きの外**（Shorts フィードに乗らない尺）" if x["long"] else ""
+        out.append(f"    {x['id']}  齢 {x['age_h']:.1f}h  {sec}  {x['title'] or ''}{mark}")
+    if not now:
+        return out
+    shorts = [x for x in now if x["long"] is False]
+    longs = [x for x in now if x["long"] is True]
+    if longs:
+        out.append(f"  **この {len(now)}本 を 1つ に数えないこと** —— "
+                   f"{SHORT_MAX_S:g}秒 を越える本が **{len(longs)}本**"
+                   "（" + "・".join("%.1f秒" % x["seconds"] for x in longs) + "）"
+                   f" ＝ §1 の「長尺は 1〜25回」の側で、**この下敷きは答えません**。"
+                   f" 下敷きが答えられるのは **ショート {len(shorts)}本**"
+                   + ("" if shorts else "（＝ いまは 0本 ＝ この下敷きに当たる本が在りません）"))
+    if shorts and firsts:
+        lo_h, hi_h = min(firsts), max(firsts)
+        over = [x for x in shorts if (x["age_h"] or 0) > hi_h]
+        inside = [x for x in shorts if (x["age_h"] or 0) < lo_h]
+        if over:
+            out.append(f"  **下敷きの いちばん遅い初点 {hi_h:.1f}h を越えて 0回 のままのショートが "
+                       f"{len(over)}本 在ります** ——（"
+                       + "・".join(f"{x['id']} 齢 {x['age_h']:.1f}h ＝ +{(x['age_h'] - hi_h):.1f}時間"
+                                   for x in over)
+                       + "）**下敷きでは説明が付きません**（覆る条件 (5)）")
+        else:
+            out.append(f"  **下敷きの いちばん遅い初点 {hi_h:.1f}h を越えて 0回 のままのショートは 0本**"
+                       f"（越えた回に、下敷きの外へ出ます ＝ 覆る条件 (5)）")
+        if inside:
+            out.append(f"  **まだ下敷きの中のショート {len(inside)}本**（初点の下端 {lo_h:.1f}h より手前 ＝ "
+                       "**この齢の 0回 からは何も言えません**）: "
+                       + "・".join(f"{x['id']} 齢 {x['age_h']:.1f}h" for x in inside))
+    return out
 
 
 def main() -> int:
