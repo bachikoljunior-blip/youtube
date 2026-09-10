@@ -2871,7 +2871,8 @@ def channel_growth(rows: list[dict]) -> dict:
             "vid_sum": None, "vid_n": None, "vid_fresh": None, "vid_skipped": None,
             "vid_confirmed": None, "vid_unconfirmable": None,
             "mismatch": None, "over": False,
-            "over_streak": 0, "over_blocks": 0, "over_ready": False, "over_drawn": False}
+            "over_streak": 0, "over_blocks": 0, "over_ready": False, "over_drawn": False,
+            "step_flat_h": None, "flat_readable": True}
     if len(cs) < 2:
         return {**base, "span_h": None, "d_subs": None, "d_views": None,
                 "views_per_h": None, "subs_per_view": None,
@@ -2889,6 +2890,11 @@ def channel_growth(rows: list[dict]) -> dict:
     g = _channel_gate(rows, a, b)
     vd, conf = g["vd"], g["conf"]
     st = channel_over_streak(rows)
+    # **平らを「止まった」と読めるのは、実測の刻みの手前の平らより長いときだけ**
+    # （2026-09-11 04:0x・`_flat_span_h` の註。**full と短い行が同じ口から読むこと** ——
+    #  `channel_line_short` の覆る条件 (2)「2つが違う verdict を言ったら片方を消す」）
+    step_lo = (channel_steps(rows)["last"] or {}).get("flat_h_lo")
+    flat_h = _flat_span_h(ps)
     return {**base, "span_h": g["span_h"], "d_subs": g["d_subs"], "d_views": g["d_views"],
             "views_per_h": (g["d_views"] / g["span_h"]) if g["span_h"] >= CHANNEL_MIN_SPAN_H else None,
             "subs_per_view": (g["d_subs"] / g["d_views"]) if g["d_views"] > 0 else None,
@@ -2898,7 +2904,9 @@ def channel_growth(rows: list[dict]) -> dict:
             "vid_confirmed": conf, "vid_unconfirmable": vd["unconfirmable"],
             "mismatch": g["mismatch"], "over": g["over"],
             "over_streak": st["streak"], "over_blocks": st["blocks"],
-            "over_ready": st["ready"], "over_drawn": st["drawn"]}
+            "over_ready": st["ready"], "over_drawn": st["drawn"],
+            "step_flat_h": step_lo,
+            "flat_readable": step_lo is None or flat_h >= step_lo}
 
 
 def channel_line(rows: list[dict]) -> str:
@@ -2950,8 +2958,8 @@ def channel_line(rows: list[dict]) -> str:
                    else f" ＝ **まだ引かれません**（あと {CHANNEL_FLAT_LAPS - g['flat_laps']}周）")
                 + "。")
         # **平らが刻みの下端より短ければ、「止まった」とは読めません**（2026-09-11 04:0x）
-        step_lo = (st_["last"] or {}).get("flat_h_lo")
-        if step_lo is not None and g["flat_h"] < step_lo:
+        step_lo = g["step_flat_h"]
+        if not g["flat_readable"]:
             flat += (f"**ただし、この平らは {g['flat_h']:.1f}時間 で、直近に実測した刻みの手前の平ら "
                      f"{step_lo:.1f}時間 より短い ＝ 「チャンネルが止まった」とは読めません**"
                      "（`trend.channel_steps`・`_flat_span_h` の註）。")
@@ -3059,9 +3067,15 @@ def channel_line_short(rows: list[dict]) -> str:
         verdict = (f"**§7 (m) の覆る条件 (1) が引かれています**（いま {g['over_streak']}/"
                    f"{CHANNEL_FLAT_LAPS} 塊）＝ **総再生が動かないことを"
                    "「チャンネルが止まった」と読まないこと**")
+    elif g["flat_laps"] >= CHANNEL_FLAT_LAPS and g["flat_readable"]:
+        verdict = (f"**総再生は {g['flat_laps']}周（{g['flat_h']:.1f}時間）続けて同じ読み ＝ "
+                   f"門（{CHANNEL_FLAT_LAPS}周）が引かれました** ＝ 本の題や形を疑う前に、"
+                   "チャンネルの側を外すこと")
     elif g["flat_laps"] >= CHANNEL_FLAT_LAPS:
-        verdict = (f"**総再生は {g['flat_laps']}周 続けて同じ読み ＝ 門（{CHANNEL_FLAT_LAPS}周）が"
-                   "引かれました** ＝ 本の題や形を疑う前に、チャンネルの側を外すこと")
+        # **門は周で引けても、読みは引けません**（`_flat_span_h` の註・full と同じ口）
+        verdict = (f"**平らは {g['flat_h']:.1f}時間 で、実測の刻みの手前の平ら "
+                   f"{g['step_flat_h']:.1f}時間 より短い ＝ 「チャンネルが止まった」とは読めません**"
+                   "（`trend.channel_steps`）")
     else:
         verdict = ("**本ごとの 0回 を読む前に見ること** —— 総再生が動いていれば、"
                    "0回 は**その本の配りの側**です")

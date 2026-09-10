@@ -122,3 +122,45 @@ def test_trend_の側は_full_のまま():
     out = "\n".join(trend.lines(rows))
     assert trend.channel_line(rows) in out
     assert trend.channel_line_short(rows) not in out
+
+
+# ---- 平らの「読める／読めない」は full と短い行で同じ口から出ること（2026-09-11 04:0x・optimizer・Opus）
+# **踏んだ形**: 包絡で読むようにしたら `flat_laps` が 3周 に届き、短い行が
+# 「門が引かれました ＝ チャンネルの側を外すこと」と言い出した。**その 3周 は約 1.2時間**で、
+# 実測の刻みの手前の平ら（10.2時間）より桁で短い ＝ その平らからは何も読めない。
+
+def _short_flat_rows() -> list[dict]:
+    """刻み（+1,625）のあと、包絡が 3周 続けて同じ ＝ **周では門が引ける／時間では読めない**並び。"""
+    return [_row("2026-09-10T15:24:00+09:00", 28, 84781),
+            _row("2026-09-10T20:00:00+09:00", 28, 84781),
+            _row("2026-09-11T02:12:00+09:00", 28, 86406),   # 刻み（手前の平ら 10.8時間）
+            _row("2026-09-11T02:48:00+09:00", 28, 86406),
+            _row("2026-09-11T03:24:00+09:00", 28, 84781)]   # 遅れた複製 ＝ 包絡は 86,406 のまま
+
+
+def test_a_flat_shorter_than_the_step_is_not_read_as_stopped():
+    g = trend.channel_growth(_short_flat_rows())
+    assert g["flat_laps"] >= trend.CHANNEL_FLAT_LAPS      # 周では門に届く
+    assert g["flat_readable"] is False                    # 時間では読めない
+    short = trend.channel_line_short(_short_flat_rows())
+    assert "とは読めません" in short and "チャンネルの側を外すこと" not in short
+
+
+def test_positive_control_the_guard_is_load_bearing():
+    """**陽性対照**: 門（平らの時間）を無効にすると、短い行が「外すこと」に戻ること。"""
+    g = dict(trend.channel_growth(_short_flat_rows()))
+    assert g["step_flat_h"] is not None and g["flat_h"] < g["step_flat_h"]
+    # 刻みが 1つ も無い並び（＝ 比べる相手が無い）なら、門は当たらず周の側で読む
+    rows = [_row("2026-09-10T15:24:00+09:00", 28, 84781),
+            _row("2026-09-10T20:00:00+09:00", 28, 84781),
+            _row("2026-09-11T02:12:00+09:00", 28, 84781)]
+    g2 = trend.channel_growth(rows)
+    assert g2["step_flat_h"] is None and g2["flat_readable"] is True
+    assert "チャンネルの側を外すこと" in trend.channel_line_short(rows)
+
+
+def test_full_and_short_agree_on_the_flat_verdict():
+    """full と短い行が**違う verdict** を言わないこと（`channel_line_short` の覆る条件 (2)）。"""
+    rows = _short_flat_rows()
+    assert "とは読めません" in trend.channel_line(rows)
+    assert "とは読めません" in trend.channel_line_short(rows)
