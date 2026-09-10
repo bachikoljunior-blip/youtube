@@ -166,6 +166,28 @@ def rounds() -> list[datetime]:
     return sorted(out)
 
 
+def worktree_text() -> str:
+    """**いま作業ツリーに在る** METHOD（commit していない直しも入る）。
+
+    **なぜ blob ではないか**（2026-09-11 05:1x JST・optimizer・Opus。**この回に踏んだ**）:
+    `report()` の「いま 本文 N字」は `points()` の最後の窓の `now`（＝ **周の刻より前の
+    最後の commit の blob**）から取っていました。窓の端は commit ではなく周の刻で挟むのが
+    正しい（上の註）—— **ですが「いま」はその窓の端ではなく、この回が読んでいる字**です。
+    実測: この回が §7 末尾の一覧を **-4,166字** 縮めた直後に撃つと、
+    「いま 28,669字」（＝ 縮める前の数）と印字しました。
+    **その数を §7 の「いまの数」へ書き写すと、削った回ほど大きい嘘が載ります**
+    （METHOD が repo でいちばん多いと呼ぶ壊れ方 ＝「言っている所と、している所が別」）。
+    **窓の差（伸び）は blob のまま**です —— 動かしたのは「いま」の1行だけ。
+
+    **覆る条件**: (1) この道具を、作業ツリーが無い所（CI・別の checkout）から撃つ回が出たら、
+    読めないときに blob へ落ちる枝が要る（いまは無い ＝ 読めなければそのまま止まる。
+    黙って古い数を配るより安い・上の (3) と同じ扱い）。
+    (2) 「いま」に commit していない直しが入るのが邪魔になる回が出たら（例: 2体が同じ
+    作業ツリーを見る形に変わったとき）、印字を「いま」と「周の刻の blob」の2行に分けること。
+    """
+    return (ROOT / METHOD).read_text(encoding="utf-8")
+
+
 def blob_at(when: datetime) -> str | None:
     """その刻**より前**の最後の commit の METHOD（commit の刻で挟まない・05:5x の決め）。"""
     sha = _git("log", "-1", f"--before={when.isoformat()}", "--format=%H", "--", METHOD).strip()
@@ -254,9 +276,10 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
             f"  ＝ 1周 **{p['lines_per_lap']:+.1f}行・{p['chars_per_lap']:+.0f}字**"
             f"   （引用 {p['d_quote']:+d}字）")
     if ps:
-        m = ps[-1]["now"]
+        m = measure(worktree_text())   # **窓の端の blob ではなく、いま作業ツリーに在る字**（註）
         out.append(f"  いま 本文 {m['body_lines']}行・{m['body_chars']:,}字 ／ 引用 {m['quote_chars']:,}字"
-                   f"（引用は**飛ばしてよい側** ＝ 守れるのはここだけ・§5）")
+                   f"（引用は**飛ばしてよい側** ＝ 守れるのはここだけ・§5。"
+                   f"**この行だけは作業ツリー** ＝ 押していない直しも入る・`worktree_text` の註）")
     out += ["  " + v for v in verdict(ps)]
     s7 = [p for p in ps if p["s7_per_lap"] is not None]
     if s7:
@@ -266,9 +289,9 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
         for p in s7:
             out.append(f"  {p['from'].astimezone(JST):%m/%d %H:%M} → {p['to'].astimezone(JST):%m/%d %H:%M} JST"
                        f"   本文 {p['s7_body']:+d}字  ＝ 1周 **{p['s7_per_lap']:+.0f}字**")
-        m7 = s7[-1]["s7_now"]
+        m7 = measure7(worktree_text())   # 同じ（註）
         out.append(f"  いま 本文 {m7['body_lines']}行・{m7['body_chars']:,}字"
-                   f"（**上の §0〜§6・§8 とは別の数** ＝ 足さないこと）")
+                   f"（**上の §0〜§6・§8 とは別の数** ＝ 足さないこと。**この行も作業ツリー**）")
         over = [p for p in s7[-2:] if p["s7_per_lap"] > CHAR_GATE]
         out.append(f"  字の門 1周 +{CHAR_GATE}字: " + (
             "**引かれました** —— 直近 2窓 とも越えています。"

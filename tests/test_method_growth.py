@@ -173,3 +173,55 @@ def test_門が引かれた回は塊を名指しできること():
     assert "塊ごとの伸び" in out
     for name in M.SPAN7_NAMES:
         assert name in out
+
+
+# ---- 「いま」は窓の端の blob ではなく、作業ツリー（2026-09-11 05:1x・optimizer・Opus）----
+#
+# 実測: §7 末尾の一覧を -4,166字 縮めた直後に撃つと、`report()` は「いま 28,669字」
+# （＝ 縮める前の数）と印字していた。**削った回ほど、書き写すと大きい嘘が載る。**
+# 窓の差（伸び）は blob のまま —— 動かしたのは「いま」の 2行 だけ。
+# 覆る条件は `method_growth.worktree_text` の註。
+
+def test_いまは作業ツリーの字を読むこと():
+    """`worktree_text()` は `docs/METHOD.md` を**そのまま**返す（blob ではない）。"""
+    assert M.worktree_text() == (ROOT / "docs" / "METHOD.md").read_text(encoding="utf-8")
+
+
+def test_いまの行は作業ツリーと一致し_窓の端の_blob_ではないこと(monkeypatch):
+    """`report()` の「いま」の 2行 は、`points()` の `now`/`s7_now` から取らないこと。
+
+    **陽性対照**: `points()` が返す `now`/`s7_now` を壊しても「いま」の数は動かない
+    （＝ そこから取っていない）。
+    """
+    now = M.measure(M.worktree_text())
+    now7 = M.measure7(M.worktree_text())
+    out = M.report()
+    assert f"いま 本文 {now['body_lines']}行・{now['body_chars']:,}字" in out
+    assert f"いま 本文 {now7['body_lines']}行・{now7['body_chars']:,}字" in out
+
+    real = M.points
+
+    def broken(*a, **k):
+        ps = real(*a, **k)
+        for p in ps:
+            p["now"] = {"body_lines": -1, "body_chars": -1, "quote_chars": -1}
+            p["s7_now"] = {"body_lines": -2, "body_chars": -2}
+        return ps
+
+    monkeypatch.setattr(M, "points", broken)
+    assert M.report() == out        # 「いま」は blob 側の `now` には触っていない
+
+
+def test_positive_control_作業ツリーを差し替えると_いま_だけが動くこと(monkeypatch):
+    """**壊したら落ちるまで撃つ**（§5 の教訓の形3つ目）。
+
+    作業ツリーの METHOD に 500字 足すと「いま」の数だけが動き、窓の差（`+N字`）は動かない。
+    """
+    real_text = M.worktree_text()
+    before = M.report()
+    monkeypatch.setattr(M, "worktree_text", lambda: real_text.replace("## 0.", "X" * 500 + "\n## 0.", 1))
+    after = M.report()
+    assert before != after
+    bw = [l for l in before.split("\n") if "JST   本文" in l]
+    aw = [l for l in after.split("\n") if "JST   本文" in l]
+    assert bw == aw
