@@ -28,6 +28,15 @@ def svc():
 
 
 def channel() -> dict:
+    """チャンネルの数（登録・総再生・本数）を 1回 読む（**1単位**）。
+
+    **この 1点 を「いまの総再生」と読まないこと**（2026-09-11 04:0x・optimizer・Opus）——
+    `viewCount` は **遅れの違う複製から返ります**（`videos.list` と同じ族）。
+    実測: `hourly` の 03:23:59 が **86,406**・`optimizer` の 03:24:53 が **84,781**（**54秒 差で 1,625 違う**）・
+    02:12:18 と 02:12:43 も同じ 2値。直に 5回 撃つと 5回 とも 86,406 ＝ **低いほうが遅れた複製**。
+    読むのは `trend.channel_growth`（周ごとの max → 包絡）と `trend.channel_replicas`（割れと下がりを毎周 印字）。
+    **覆る条件はそちらの註**（3つ目の値が出たら 3回 読みを `cli.record_channel` に足す）。
+    """
     ch = svc().channels().list(part="id,snippet,statistics,contentDetails", mine=True).execute()["items"][0]
     return {"id": ch["id"], "title": ch["snippet"]["title"],
             "uploads": ch["contentDetails"]["relatedPlaylists"]["uploads"],
