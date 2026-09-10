@@ -1576,6 +1576,8 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     out.append(over_lag_line(rows))
     # 公開ずみで 0回 の本の処理の状態（`cli.zero_probe_target` の覆る条件は周をまたいで数える）。
     out.append(zero_probe_line(rows))
+    # チャンネル全体の登録と総再生（`cli.record_channel` の註。**本ごとの 0回 を読む前に見る数**）。
+    out.append(channel_line(rows))
     # **この一文は最後に置くこと**（`tests/test_studio_trend.py` が末尾で止めている）。
     out.append(
         "並びの再生は **それまでの最大（単調な包絡・数え直しの峰は落とす）** です（`trend.envelope` の註・2026-09-09 20:0x／2026-09-10 08:0x）"
@@ -1931,6 +1933,62 @@ def zero_probe_line(rows: list[dict]) -> str:
         body += ("  **`ok` だけ ＝ 0回 は本物**（出ていない側ではない）。"
                  f"**7本 過ぎて 1度も `ok` 以外が出なければ、この口は外してよい**（いま {z['books']}本）。")
     return body
+
+
+CHANNEL_MIN_SPAN_H = 0.5   # これより短い窓では、チャンネルの数の更新の刻みが見えるだけ
+
+
+def channel_growth(rows: list[dict]) -> dict:
+    """台帳の `channel` の行から、**チャンネル全体の登録と総再生の増え**を数える
+    （2026-09-10 15:5x・optimizer・Opus。**API 0単位** —— 数は `cli.record_channel` が毎周 残す）。
+
+    返すのは窓の**両端だけ**（最初の行と最後の行）で、途中の点は使いません
+    —— チャンネルの `viewCount` は本ごとの `statistics` と別の刻みで動くので、
+    区間ごとの %/時 を並べると刻みを測ることになります（`quota.pace()` が 09/06 に踏んだ形）。
+
+    * `subs_per_view` は **登録の増え ÷ 総再生の増え**（§7 の収益の節の覆る条件 (1) の「登録率」）。
+      **分母が 0 のときは `None`** ＝「まだ測れていない」。0 を返さないこと。
+    * `views_per_h` が **0 のまま**で、同じ窓に 0回 の本が在るなら、その 0回 は
+      **その本の側ではなくチャンネルの側**かもしれない ＝ 本ごとの `first_view` で読まないこと。
+
+    **覆る条件は `cli.record_channel` の註**（(1) 本ごとの合計と 10% 食い違ったら、この数で
+    「チャンネルが止まったか」を読まない・(2) 登録の分子が 0 のまま 7本）。
+    """
+    cs = [r for r in rows if r.get("event") == "channel"
+          and isinstance(r.get("views"), int) and isinstance(r.get("subs"), int)]
+    if len(cs) < 2:
+        return {"n": len(cs), "span_h": None, "d_subs": None, "d_views": None,
+                "views_per_h": None, "subs_per_view": None,
+                "subs": cs[-1]["subs"] if cs else None, "views": cs[-1]["views"] if cs else None}
+    a, b = cs[0], cs[-1]
+    span_h = (dt.datetime.fromisoformat(b["at"]) - dt.datetime.fromisoformat(a["at"])).total_seconds() / 3600
+    d_subs, d_views = b["subs"] - a["subs"], b["views"] - a["views"]
+    return {"n": len(cs), "span_h": span_h, "d_subs": d_subs, "d_views": d_views,
+            "views_per_h": (d_views / span_h) if span_h >= CHANNEL_MIN_SPAN_H else None,
+            "subs_per_view": (d_subs / d_views) if d_views > 0 else None,
+            "subs": b["subs"], "views": b["views"]}
+
+
+def channel_line(rows: list[dict]) -> str:
+    """`channel_growth` を1行にする（`status` と `trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
+    g = channel_growth(rows)
+    if g["n"] < 2:
+        return (f"**チャンネルの数の点: {g['n']}件** —— 増えを数えるには 2点 要ります"
+                "（`cli.record_channel` がこの回から毎周 残します・**API 0単位**）。"
+                "**METHOD §1 の「登録者 25人」は 09/05 の手写しの 1点**で、"
+                "いまとの差が**いつ付いたか**は、まだ台帳に在りません。")
+    if g["span_h"] is None or g["span_h"] < CHANNEL_MIN_SPAN_H:
+        return (f"**チャンネル 登録 {g['subs']}・総再生 {g['views']}**（点 {g['n']}件・"
+                f"窓 {g['span_h']:.2f}時間 ＜ {CHANNEL_MIN_SPAN_H:.1f}時間 ＝ **まだ読まないこと**）。")
+    rate = ("測れていません（総再生の増えが 0）" if g["subs_per_view"] is None
+            else f"**{g['subs_per_view'] * 100:.3f}%**（門 0.5%・§7 の収益の節の覆る条件 (1)）")
+    return (f"**チャンネル 登録 {g['subs']}（{g['d_subs']:+d}）・総再生 {g['views']}（{g['d_views']:+d}）**"
+            f"（点 {g['n']}件・窓 {g['span_h']:.1f}時間 ＝ **{g['views_per_h']:+.1f}回/時**）。"
+            f"登録率 ＝ {rate}。"
+            "**この数は本ごとの 0回 を読む前に見ること** —— チャンネルの総再生が動いていれば、"
+            "0回 は**その本の配りの側**です（動いていなければ、本ではなくチャンネルの側を疑う）。"
+            "**チャンネルの `viewCount` は本ごとの合計と別の刻みで動きます**"
+            "（覆る条件 (1) は `cli.record_channel` の註）。")
 
 
 def pair_gap_line(rows: list[dict], at: dt.datetime | None = None) -> str:

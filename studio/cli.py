@@ -307,11 +307,49 @@ def zero_probe_mark(rd: dict) -> str:
             f"失敗 {rd['failure'] or rd['rejection']}）—— `zero_probe_target` の覆る条件 (1)")
 
 
+def record_channel(ch: dict) -> None:
+    """`status` が毎周 読んでいる**チャンネルの数**を台帳に1行 残す（2026-09-10 15:5x・optimizer・Opus。**追加 0単位**）。
+
+    **穴**: `cmd_status` は 09/05 から毎周 `yt.channel()` を撃ち（登録・総再生・本数）、
+    **1行 印字して捨てて**いました。**残す口がどこにも無い**ので、
+    次の 2つ が、道具の側からは 1度も数えられていません:
+
+      * **登録率**（§7 の収益の節の覆る条件 (1)「登録率が実測で 0.5% を越えたら」）——
+        分子は登録の**増え**で、それは 2点 が要ります。METHOD §1 の「登録者 25人」は
+        09/05 に手で写した 1点 で、いまの 27人 との差が**いつ付いたか**を誰も言えません。
+      * **チャンネル全体の総再生が動いているか** —— 本ごとの 0回 が
+        「その本の配りが来ていない」のか「チャンネルの側が止まっている」のかを分ける唯一の数。
+        5本目 `2YZ_4FXC-XI` が 齢 5.3h で 0回 のまま §7 (c) の門を越えた回（この回）に、
+        **その問いに答える点が台帳に 1点 も無い**ことで気づきました。
+
+    ＝ `record_over`（12:4x は印字だけ・13:2x に残す口を足した）と**同じ族**の 3つ目です
+    ——「毎周 印字しているのに、周をまたいで数える口が無い」。
+
+    **`measured` では書きません**（`record_over` の註と同じ理由 —— 帯の2点組の分母は
+    `measured` の刻を数えているので、別の event 名で残して読むだけにする）。
+
+    数えるのは `trend.channel_growth`（毎周 `trend` が印字する ＝ **次の回は覚えていなくてよい**）。
+
+    **覆る条件**: (1) 総再生の増えが、同じ窓の**本ごとの増えの合計と 10% 以上 食い違う**回が出たら、
+    チャンネルの `viewCount` は本の合計ではない（ショートの feed 視聴の数え方が違う）＝
+    そのときは「チャンネルが止まったか」をこの数で読まないこと。
+    (2) 登録が 1度も動かないまま 7本 過ぎたら、登録率は「0.5% を越えたか」ではなく
+    **「分子が 0 のまま何本か」**で読むこと（§7 の収益の節の覆る条件 (1) の書き方を直す）。
+    """
+    ledger("channel", ch["id"], subs=ch.get("subscriberCount"),
+           views=ch.get("viewCount"), videos=ch.get("videoCount"))
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
     sids = studio_video_ids()
     print(f"チャンネル: 登録 {ch['subscriberCount']}・総再生 {ch['viewCount']}・本数 {ch['videoCount']}")
+    # 毎周 読んでいた数を台帳へ（`record_channel` の註。**追加 0単位** ＝ 上ですでに引いてある）。
+    record_channel(ch)
+    cl = trend.channel_line(ledger_rows())
+    if cl:
+        print("  " + cl)
     print(f"いま {now_jst():%m/%d %H:%M} JST")
     print("きょうの枠:")
     for v in yt.today_lineup(vids):
