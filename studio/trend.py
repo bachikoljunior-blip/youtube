@@ -2422,6 +2422,68 @@ def _flat_laps(laps: list[list[dict]]) -> int:
     return n
 
 
+def channel_steps(rows: list[dict]) -> dict:
+    """総再生（`viewCount`）が **動いた瞬間** を並べる —— 刻みの大きさと、その手前の平らの長さ
+    （2026-09-11 02:2x・optimizer・Opus。**API 0単位** —— 台帳の `channel` の行を読むだけ）。
+
+    **なぜ要るか（この回に実物で踏んだ）**: `channel_line` は窓の両端から
+    **`views_per_h`（回/時）**を出しますが、`viewCount` が**刻みで動く**とき、その数は率ではなく
+    **「刻み ÷ 窓」**です。実測 2026-09-11 02:12 JST: 総再生は **20点・10.2時間**（下端）
+    ずっと **84,781** で、**02:12 の 1点 で +1,625 して 86,406** になりました。
+    同じ窓の `channel_line` は **+150.5回/時** と印字しますが、**その 150.5 が実際に立った瞬間は
+    1つ もありません**（窓のほとんどは +0回/時・最後の1点だけが +1,625）。
+    ＝ 次の回が「1時間で 150回 くらい伸びている」と読むと、**在りもしない滑らかさ**を前提にします。
+
+    **平らは挟みで返します**（動いた刻そのものは台帳に無いので）:
+      `flat_h_lo` = 古い値の**最初の読み → 最後の読み**（この長さは確実に平らだった）
+      `flat_h_hi` = 古い値の**最初の読み → 新しい値の最初の読み**（これより長くはない）
+
+    * `steps` は古い順。`last` はいちばん新しい 1つ（無ければ `None`）。
+    * `n_values` は窓の中に在った**別々の値の数**。**`n_values <= 2` の窓では
+      `views_per_h` を率として読まないこと** —— 動きが 1回 しか無いので、
+      分子は刻み 1つ ぶんです（`one_step`）。
+
+    **効く先**: §7 (m)（本ごとの 0回 を読む前にチャンネルの側を見る）と
+    `channel_over_blocks`（「3周 続けて動かない」を塊で数える）。
+    **この回の実測は、塊の長さ（`CHANNEL_BLOCK_MIN_H` × 3 ＝ 16.8時間）が
+    刻み 10.8時間 より長いことを裏づけました** —— 周（1周 ≈ 0.6時間）で数えていれば
+    **3周 ＝ 1.8時間** で埋まり、刻みを「チャンネルが止まった」と読んで
+    (m) の当て所を作り直していたはずです（21:4x の直しの、実物での陽性）。
+
+    **覆る条件**:
+      (1) 刻みが 2つ 以上 台帳に載ったら、**その間隔の中央値**をここに書くこと ——
+          いまは n＝1 なので「10.8時間」は**1例**であって刻みの周期ではありません。
+      (2) 刻みの大きさが同じ窓の `d_views` とほぼ同じ回（＝ `one_step`）が 3回 続いたら、
+          `channel_line` の `views_per_h` は**印字ごとやめる**こと（率として読める窓が来ない）。
+      (3) 逆に `n_values` が 4 を越える窓が出たら、`viewCount` は滑らかに動いている ＝
+          この関数は「刻み」ではなく「揺れ」を測っているので、そのときは `drops` の側と並べること。
+    """
+    cs = _channel_rows(rows)
+    laps = _channel_laps(cs)
+    pts = [(_at(lap[0]), max(r["views"] for r in lap)) for lap in laps]
+    steps: list[dict] = []
+    if pts:
+        cur_v = pts[0][1]
+        cur_t0 = pts[0][0]
+        cur_last = pts[0][0]
+        cur_n = 1
+        for t, v in pts[1:]:
+            if v == cur_v:
+                cur_last, cur_n = t, cur_n + 1
+                continue
+            steps.append({
+                "t0": cur_t0, "t1": t, "d": v - cur_v,
+                "flat_h_lo": (cur_last - cur_t0).total_seconds() / 3600,
+                "flat_h_hi": (t - cur_t0).total_seconds() / 3600,
+                "flat_laps": cur_n,
+            })
+            cur_v, cur_t0, cur_last, cur_n = v, t, t, 1
+    n_values = len({v for _, v in pts})
+    return {"steps": steps, "last": steps[-1] if steps else None,
+            "n_values": n_values, "one_step": n_values <= 2 and len(steps) >= 1,
+            "laps": len(laps)}
+
+
 def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> dict:
     """同じ窓の**本ごとの増えの合計**（包絡で読む・**API 0単位**）。
 
@@ -2673,6 +2735,19 @@ def channel_line(rows: list[dict]) -> str:
     # `record_channel` の覆る条件 (1)「食い違ったら、この数でチャンネルが止まったかを読まない」が
     # 引かれているのに、この行は同じ息で「チャンネルの側が止まっていないかを外すこと」と言っていた
     # ＝ **言っている所と、している所が別**。門は引けても、読みは引けません）
+    # **刻みで動く読みの「回/時」は率ではない**（`channel_steps` の註・2026-09-11 02:2x）——
+    # 窓の中で総再生が **1度しか動いていない**なら、`views_per_h` の分子は刻み 1つ ぶんです。
+    st_ = channel_steps(rows)
+    step = ""
+    if st_["last"] is not None:
+        L = st_["last"]
+        step = (f"**総再生は刻みで動きます** —— 直近の動きは "
+                f"**{L['d']:+d}回 が 1点 で**（その手前は **{L['flat_laps']}周・"
+                f"{L['flat_h_lo']:.1f}〜{L['flat_h_hi']:.1f}時間** 同じ読み）。")
+        if st_["one_step"] and g["views_per_h"] is not None:
+            step += (f"**この窓で動いたのは その 1度 だけ ＝ 上の "
+                     f"{g['views_per_h']:+.1f}回/時 は率ではなく「刻み ÷ 窓」です**"
+                     "（率として読まないこと・`channel_steps` の覆る条件 (2)）。")
     flat = ""
     if g["flat_laps"] >= 2:
         flat = (f"**総再生は {g['flat_laps']}周 続けて同じ読み**（門 {CHANNEL_FLAT_LAPS}周）"
@@ -2730,7 +2805,7 @@ def channel_line(rows: list[dict]) -> str:
                else f"・食い違い **{g['mismatch'] * 100:.0f}%**" + tail))
     return (f"**チャンネル 登録 {g['subs']}（{g['d_subs']:+d}）・総再生 {g['views']}（{g['d_views']:+d}）**"
             f"（{g['laps']}周・点 {g['n']}件・窓 {g['span_h']:.1f}時間 ＝ **{g['views_per_h']:+.1f}回/時**）。"
-            f"{flat}登録率 ＝ {rate}。{cmp_}"
+            f"{step}{flat}登録率 ＝ {rate}。{cmp_}"
             + ("**この窓では、総再生が動かないことを「チャンネルが止まった」と読まないこと** ——"
                "本ごとの合計のほうが動いており、総再生はそれを受け取っていません"
                "（`cli.record_channel` の覆る条件 (1) が引かれている ＝ 2つは別の刻みで動く）。"
