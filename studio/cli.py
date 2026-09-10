@@ -23,7 +23,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import critic, hear, render, script, trend, yt
+from . import analytics, critic, hear, render, script, trend, yt
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
 IMAGES = ROOT / "assets" / "images"
@@ -920,6 +920,93 @@ def cmd_trend(a):
     return 0
 
 
+
+ANALYTICS_MIN_H = 20.0   # このAPIは日ごとにしか動かない（遅れ 3日）＝ 1日に1回で足りる
+ANALYTICS_WINDOW_D = 7   # 本ごとに引く窓（日）。**窓の中の数で、本の通算ではありません**
+
+
+def analytics_recent_ids(rows: list[dict], within_h: float = 24 * 10,
+                         now: dt.datetime | None = None) -> list[str]:
+    """`measured` の刻から、直近に測った本の ID を新しい順に。
+
+    **studio の本だけに絞りません** —— §7 の「90秒の上限」は
+    **60秒以内の本（旧作り）と越えた本（新しい作り）を比べる**問いなので、
+    分母から旧作りを落とすと**比べる相手が 0本 になります**（§7 が 4日間 そう書いていた当のもの）。
+    """
+    now = now or now_jst()
+    seen: dict[str, dt.datetime] = {}
+    for r in rows:
+        if r.get("event") != "measured" or not r.get("id"):
+            continue
+        at = dt.datetime.fromisoformat(r["at"])
+        if (now - at).total_seconds() / 3600 > within_h:
+            continue
+        seen[r["id"]] = max(seen.get(r["id"], at), at)
+    return [vid for vid, _ in sorted(seen.items(), key=lambda kv: kv[1], reverse=True)]
+
+
+def analytics_last_at(rows: list[dict]) -> dt.datetime | None:
+    ats = [dt.datetime.fromisoformat(r["at"]) for r in rows
+           if r.get("event") == "analytics_day"]
+    return max(ats) if ats else None
+
+
+def analytics_due(rows: list[dict], now: dt.datetime | None = None) -> bool:
+    """撃つ回か。**このAPIは 1日 に1度しか新しい日を持ちません**（遅れ 3日・`analytics.py` の註）
+    ので、毎周 撃つのは分母を増やさずクエリだけ使います。"""
+    last = analytics_last_at(rows)
+    if last is None:
+        return True
+    return ((now or now_jst()) - last).total_seconds() / 3600 >= ANALYTICS_MIN_H
+
+
+def cmd_analytics(a):
+    rows = ledger_rows()
+    if not a.force and not analytics_due(rows):
+        last = analytics_last_at(rows)
+        print(f"きょうのぶんは引いてあります（前は {last:%m/%d %H:%M} JST・門 {ANALYTICS_MIN_H:.0f}時間）。"
+              "**数は `trend` が毎周 印字します** ——引き直すなら `--force`")
+        return 0
+    d = analytics.daily(days=14)
+    lag = analytics.lag_days(d)
+    if not d:
+        print("!! Analytics API が 1行 も返しませんでした ——**0 と読まないこと**（`analytics` の覆る条件 (2)）")
+        return 1
+    last_day = max(r["day"] for r in d)
+    start = (dt.date.fromisoformat(last_day) - dt.timedelta(days=ANALYTICS_WINDOW_D)).isoformat()
+    sids = studio_video_ids(rows)
+    vids = analytics.per_video(analytics_recent_ids(rows), start, last_day)
+    tr = analytics.traffic(start, last_day)
+    print(f"Analytics（**Data API 0単位**・別枠のクエリ 3回）: 最後の日 {last_day}・**遅れ {lag}日**")
+    for r in d[-5:]:
+        print(f"  {r['day']}  再生 {int(r['views']):6d}・視聴 {int(r['estimatedMinutesWatched']):5d}分")
+    print(f"本ごと（窓 {start}〜{last_day}・**窓の中の数** ＝ 本の通算ではありません）:")
+    for r in vids:
+        mark = "新" if r["video"] in sids else "旧"
+        print(f"  {mark} {r['video']}  再生 {int(r['views']):5d}・平均 {int(r['averageViewDuration']):3d}秒"
+              f"・平均視聴率 {r['averageViewPercentage']:5.2f}%・登録+{int(r['subscribersGained'])}"
+              f"・いいね {int(r['likes'])}")
+    tot = sum(int(r["views"]) for r in tr) or 1
+    print("流入: " + " / ".join(f"{r['insightTrafficSourceType']} {int(r['views'])}"
+                                f"（{int(r['views']) / tot * 100:.1f}%）" for r in tr if int(r["views"])))
+    # **引いた数は台帳へ**（`cli.record_channel` の族 ＝ 印字して捨てない・JOURNAL 09/10 15:5x）。
+    known = {r.get("day") for r in rows if r.get("event") == "analytics_day"}
+    for r in d:
+        if r["day"] in known:
+            continue
+        ledger("analytics_day", r["day"], views=int(r["views"]),
+               minutes=int(r["estimatedMinutesWatched"]))
+    for r in vids:
+        ledger("analytics_video", r["video"], day=last_day, start=start, studio=r["video"] in sids,
+               views=int(r["views"]), minutes=int(r["estimatedMinutesWatched"]),
+               avg_seconds=int(r["averageViewDuration"]),
+               avg_percent=round(float(r["averageViewPercentage"]), 2),
+               subs_gained=int(r["subscribersGained"]), likes=int(r["likes"]))
+    ledger("analytics_traffic", last_day, start=start, lag_days=lag,
+           sources={r["insightTrafficSourceType"]: int(r["views"]) for r in tr})
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -933,6 +1020,7 @@ def main(argv=None):
     sub.add_parser("measure")
     tr = sub.add_parser("trend"); tr.add_argument("--days", type=float, default=3)
     tr.add_argument("--by-day-count", action="store_true")
+    an = sub.add_parser("analytics"); an.add_argument("--force", action="store_true")
     sub.add_parser("comments")
     rp = sub.add_parser("reply"); rp.add_argument("comment_id"); rp.add_argument("--text", required=True)
     rp.add_argument("--dry-run", action="store_true")

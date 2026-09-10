@@ -1580,6 +1580,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     out.append(channel_line(rows))
     # 公開**前**の本の処理の印（`cli.record_ready` の註 ＝ 印字だけにしない族の 4つ目）。
     out.append(ready_line(rows, now=now))
+    out.append(analytics_line(rows, now=now))
     # **この一文は最後に置くこと**（`tests/test_studio_trend.py` が末尾で止めている）。
     out.append(
         "並びの再生は **それまでの最大（単調な包絡・数え直しの峰は落とす）** です（`trend.envelope` の註・2026-09-09 20:0x／2026-09-10 08:0x）"
@@ -1636,6 +1637,80 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
             + "動いたぶんは 25組 の平らだけ・うち 23組 は上の「検出できない組」でした）。"
             + f"**p を引くなら、上の {bg}/{bn} 対 {og}/{on}（検出できた組）と一緒にしか読めません。**")
     return out
+
+
+
+#: この窓の再生がこれ未満の本は、維持率の比べから外す（外れ値だけで幅が決まる）。
+ANALYTICS_MIN_VIEWS = 30
+
+
+def analytics_state(rows: list[dict], now: dt.datetime | None = None) -> dict:
+    """台帳の `analytics_*` をまとめる（**API 0単位** ＝ 引いたのは `cli analytics` の回）。
+
+    返り: `last_day`（最後に引けた日）・`lag_days`・`age_h`（引いてから何時間）・
+    `days`（日ごとの再生の直近3日）・`new`/`old`（新しい作り／旧作りの 平均視聴秒・平均視聴率）・
+    `subs`（窓の中の登録の増えの合計）・`shorts_pct`（ショートのフィードの割合）。
+
+    **新／旧 を分ける印は、行に書いてある `studio` です** —— `trend` は台帳しか読まないので、
+    `scheduled` を数え直さないこと（`cli` が引いた回の判定をそのまま持つ）。
+    """
+    now = now or now_jst()
+    day_rows = [r for r in rows if r.get("event") == "analytics_day"]
+    vid_rows = [r for r in rows if r.get("event") == "analytics_video"]
+    tr_rows = [r for r in rows if r.get("event") == "analytics_traffic"]
+    if not day_rows:
+        return {}
+    last_day = max(r["id"] for r in day_rows)
+    at = max(dt.datetime.fromisoformat(r["at"]) for r in day_rows)
+    days = sorted(({r["id"]: r for r in day_rows}).values(), key=lambda r: r["id"])[-3:]
+    last_tr = max(tr_rows, key=lambda r: r["at"]) if tr_rows else None
+    latest = {}
+    for r in sorted(vid_rows, key=lambda r: r["at"]):
+        latest[r["id"]] = r          # 同じ本を2度 引いた回は、新しいほうだけ
+    def _side(want: bool) -> dict:
+        # **再生の少ない本を混ぜない** —— 1〜6回 の本は平均視聴率が 0% や 107.8% で出て、
+        # 「〜」で挟むと幅がその外れ値だけで決まります（この口を足した回に踏んだ）。
+        got = [r for r in latest.values()
+               if bool(r.get("studio")) is want and (r.get("views") or 0) >= ANALYTICS_MIN_VIEWS]
+        if not got:
+            return {"n": 0}
+        sec = sorted(r["avg_seconds"] for r in got)
+        pct = sorted(r["avg_percent"] for r in got)
+        return {"n": len(got), "avg_seconds": sec, "avg_percent": pct,
+                "sec_med": sec[len(sec) // 2], "pct_med": pct[len(pct) // 2]}
+    src = (last_tr or {}).get("sources") or {}
+    tot = sum(src.values())
+    return {"last_day": last_day, "lag_days": (last_tr or {}).get("lag_days"),
+            "age_h": (now - at).total_seconds() / 3600,
+            "days": [(r["id"], r["views"]) for r in days],
+            "new": _side(True), "old": _side(False),
+            "subs": sum(int(r.get("subs_gained") or 0) for r in latest.values()),
+            "shorts_pct": (src.get("SHORTS", 0) / tot * 100) if tot else None,
+            "sources": src}
+
+
+def analytics_line(rows: list[dict], now: dt.datetime | None = None) -> str:
+    """`analytics_state` を1行にする（`trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。
+
+    **維持率は Studio でしか見えない、ではありません**（2026-09-10 16:1x・optimizer・Opus。
+    derivation と実測は `studio/analytics.py` の註）。
+    """
+    a = analytics_state(rows, now=now)
+    if not a:
+        return ("**維持率と流入は 1度も引いていません** —— `python -m studio.cli analytics`"
+                "（**Data API 0単位**・別枠のクエリ 3回・`studio/analytics.py` の註）")
+    d = "・".join(f"{day[5:]} {v}回" for day, v in a["days"])
+    def _side(x: dict, name: str) -> str:
+        if not x["n"]:
+            return f"{name} なし"
+        return (f"{name} {x['n']}本 **平均視聴 中央 {x['sec_med']}秒**（{x['avg_seconds'][0]}〜{x['avg_seconds'][-1]}）"
+                f"・**平均視聴率 中央 {x['pct_med']:.1f}%**（{x['avg_percent'][0]:.1f}〜{x['avg_percent'][-1]:.1f}）")
+    sp = f"・**ショートのフィード {a['shorts_pct']:.1f}%**" if a["shorts_pct"] is not None else ""
+    return (f"**維持率と流入**（Analytics API・台帳から・**Data API 0単位**）: 最後の日 **{a['last_day']}**"
+            f"（引いたのは {a['age_h']:.0f}時間 前・**遅れ {a['lag_days']}日 ＝ きょう公開した本には答えません**）。"
+            f"日ごとの再生 {d}。{_side(a['new'], '新しい作り')} 対 {_side(a['old'], '旧作り')}"
+            f"——**%と秒で向きが逆になります**（判定は `hourly`・§5）。"
+            f"窓の中の**登録の増え 合計 {a['subs']}**{sp}")
 
 
 def report(within_h: float = 24 * 3) -> list[str]:
