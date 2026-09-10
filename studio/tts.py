@@ -53,7 +53,22 @@ def uses_custom_pronunciations(voice: str) -> bool:
 
 
 def voice_text(text: str, voice: str, yomi: dict[str, str], kana_in_voice: list[str] = ()) -> str:
-    """TTS に渡す文。Neural2 系は `kana_in_voice` の語（FORCE_ALL_KANA なら yomi の全語）を仮名に置き換える。画面の字は変えない。"""
+    """TTS に渡す文。Neural2 系は `kana_in_voice` の語（FORCE_ALL_KANA なら yomi の全語）を仮名に置き換える。画面の字は変えない。
+
+    **この置換も素の `replace` です**（語の境目を見ない）＝ `hear.expected_kana` が
+    2026-09-11 01:3x に閉じた穴の、**2つ目の口**（§5 の教訓の形2つ目）。
+    **この回に撃って、空でした。** 実物 6本・77コマ に `FORCE_ALL_KANA = True` を当てると、
+    **TTS へ渡る字は 23コマ で変わり、読みが変わるコマは 0** ——
+    §3 の 9（声の漢字は全部 `yomi`）が複合語に長い鍵を作らせるので、1字 の鍵が単独で当たる所は
+    どれも助数詞の読みと `yomi` の値が一致していました（20年→20ねん・10月分→10がつぶん）。
+    `kana_in_voice` の側も、いまの台本 6本 で **1字の漢字は 0個**。
+    **＝ ここは直しません**（壊れていない物を直さない・09/10 04:5x）。
+
+    **覆る条件**: (1) `kana_in_voice` か `yomi` に、**同じ字の助数詞と読みが違う 1字の鍵**を入れたら
+    （日→ひ で「1日」・月→つき で「6か月」・人→ひと で「3人」）、そのときは**音が割れます** ——
+    `hear._apply_one_kanji_yomi` と同じ形をここにも当てること。
+    (2) `FORCE_ALL_KANA` を True にする回は、その前にこの数を撃ち直すこと（API 0単位・焼かない）。
+    """
     if uses_custom_pronunciations(voice):
         return text
     words = list(yomi) if FORCE_ALL_KANA else [w for w in kana_in_voice if w in yomi]
