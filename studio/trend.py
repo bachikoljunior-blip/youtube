@@ -446,10 +446,32 @@ def shakes(rows: list[dict]) -> list[dict]:
     `still` で `after` がまだ無い／`between` の行は **保留**（決着待ち）で、
     `settle_stats` を動かす理由になりません。
 
-    **覆る条件**: (1) `confirmed`（`still` かつ `after == "high"`）が 1行 でも出たら、
-    そこで初めて `settle_stats` の覆る条件（`reads` を 5 に上げてから最大ではなく中央値へ）が
-    引かれます。**`still` だけでは引きません**（上の 19:0x の実測 ——
-    1度目の数え直しは、その瞬間 必ず `still` に見えます）。
+    **【2026-09-10 20:2x・optimizer・Opus】その `confirmed` が 1行 出て、
+    **同じ行が「中央値へ移す」を否定しました。分子は `over_max` へ移します。**
+    **引いた行**: `CIPYV_r1Hdo` 齢 101.6h（290 対 287）—— 18:38 に `still`、
+    19:15 の 3回 読みは **3回とも 287**、19:52 でまた 290 と 287 に割れ、
+    `_settled_after` は `after == "high"` ＝ `confirmed` を立てました。
+    **そこで実物 28行 の `after` を列挙したら、決着は 27行 で、
+    26行 が `high`・1行 が `low`（数え直しの本 `lywTMXD6WDM`）でした。**
+    ＝ **低い読みは、決着した 26/27 で「捨ててよい側」**。`max` はその 26行 で正しく、
+    中央値は 1行（数え直し）でだけ速く、その 1行 は `recounts()` が 6時間 で自分で直します。
+
+    **そして、どちらへ決着しても中央値の出番はありません**（これがこの回の要点）:
+
+        あとの点が **高い側** へ戻った  → 低い読みは一過性のごみ ＝ **`max` が正解**
+        あとの点が **低い側** で水準に  → それは数え直し ＝ **包絡を落とすのは `recounts()` の仕事**
+                                        （`max` は最大 `ENVELOPE_LAG_H` だけ遅らせる・値は間違えない）
+
+    ＝ **`n_values` の割れは、`settle_stats` を `max` から動かす理由になりません。**
+    動かす理由になるのは **「`max` が、その本の確定した水準より高い値を台帳に書いた」**回だけで、
+    それが `over_max`（その本を `recounts()` が挙げていて、その行の `high` が `to` より上）です。
+    **実測 いま 0行**（唯一の候補 `lywTMXD6WDM` は high 214・`to` 214 ＝ 越えていない）。
+
+    **覆る条件**: (1) **`over_max` が 1行 でも出たら**、そこで初めて `settle_stats` の覆る条件
+    （`reads` を 5 に上げてから最大ではなく中央値へ）が引かれます。
+    **`still` でも `confirmed` でも引きません**（上の 19:0x・20:2x の実測 ——
+    1度目の数え直しは その瞬間 必ず `still` に見え、`confirmed` は「低い読みが一過性だった」
+    ＝ `max` が正しかった側の札です）。
     (1-b) 保留の行が **7本 のうちに 3行** を越えて溜まったら、決着が付かない形が普通 ＝
     `_settled_after` の見る先（あとの点）を、点の数ではなく時間（`ENVELOPE_LAG_H`）で切ること。
     (2) `lag` の行の低いほうが、**その本について台帳が前に書いた値のどれとも一致しない**回が
@@ -458,7 +480,10 @@ def shakes(rows: list[dict]) -> list[dict]:
     3周 では「落ち着いた」を捉えきれない ＝ 周の数を `flats` の境目（いま 60.4時間）に合わせること。
     """
     out: list[dict] = []
-    recounted = {r["id"] for r in recounts(rows)}
+    rec_rows = recounts(rows)
+    recounted = {r["id"] for r in rec_rows}
+    # **確定した水準**（数え直しが落とした先）。挙がっていない本は「まだ分からない」ので入れない。
+    levels = {r["id"]: int(r["to"]) for r in rec_rows}
     for vid, pts in series(rows).items():
         for k, p in enumerate(pts):
             if int(p.get("n_values", 1)) <= 1:
@@ -482,6 +507,9 @@ def shakes(rows: list[dict]) -> list[dict]:
             # 6時間 下回るまで挙げないので、**1度目の数え直しは、その瞬間 必ず `still`**。
             # 第3の口と言えるのは、あとの点が**高い側へ戻った**ときだけ。
             confirmed = verdict == "still" and after == "high"
+            # **`settle_stats` を `max` から動かす唯一の分子**（2026-09-10 20:2x・上の註）——
+            # その本の確定した水準（`recounts()` の `to`）より、`max` が書いた値のほうが高い行。
+            over_max = vid in levels and hi > levels[vid]
             out.append({
                 "id": vid,
                 "age_h": float(p["age_h"]),
@@ -496,6 +524,7 @@ def shakes(rows: list[dict]) -> list[dict]:
                 "after": after,
                 "verdict": verdict,
                 "confirmed": confirmed,
+                "over_max": over_max,
             })
     return out
 
@@ -508,6 +537,7 @@ def shakes_line(rows: list[dict]) -> str:
     confirmed = [s for s in still if s["confirmed"]]
     pending = [s for s in still if not s["confirmed"]]
     rec = [s for s in sh if s["verdict"] == "recount"]
+    over = [s for s in sh if s["over_max"]]
     if not sh:
         return ("**同じ周に割れた読み（`n_values > 1`）: 0行** ＝ §7 (h) の覆る条件 (3) の分子は **0**"
                 "（`trend.shakes` の註。分けるのは齢でも周の数でもなく、**低い読みを台帳がこの窓で通ったか**）。")
@@ -515,7 +545,7 @@ def shakes_line(rows: list[dict]) -> str:
     old = [s for s in sh if s["age_h"] > 48]
     lag_n = len(sh) - len(still) - len(rec)
     after_txt = {"low": "低い側が水準になった ＝ **数え直しで決着**",
-                 "high": "高い側が続いた ＝ **第3の口の側**",
+                 "high": "高い側が続いた ＝ **低い読みは一過性**（`max` が正解・20:2x）",
                  "between": "あいだに落ちた ＝ まだ言えない",
                  None: "**あとの点がまだ無い ＝ この回では言えない**"}
     tail = ""
@@ -528,13 +558,22 @@ def shakes_line(rows: list[dict]) -> str:
                  + "。**この本の再生は実測で1度 下がっているので、「再生は減らない」を前提にした窓の門は当たりません** ——"
                  "2度目の数え直しなら**低いほうが新しい値**です（`trend._settled_after` の註）。")
     if confirmed:
-        tail += ("**第3の口が決着しました** ＝ §7 (h) の覆る条件 (3) が本当に引かれました"
-                 "（`still` かつ **あとの点が高い側へ戻った**行だけを分子に数えます）: "
+        tail += ("**低い読みが一過性だった行**（`still` かつ あとの点が高い側へ戻った ＝ "
+                 "**`max` が正しかった側**。2026-09-10 20:2x に分子から外しました）: "
                  + "・".join(
                      f"{s['id']} 齢 {s['age_h']:.1f}h（低い {s['low']} は窓の先頭 {s['floor']} より下 ＝ "
                      f"遅れでは説明が付かない・{s['low']} 対 {s['high']}。あとの点: {after_txt[s['after']]}）"
                      for s in confirmed)
-                 + "。ここで初めて `settle_stats` の覆る条件（`reads` を 5 に上げてから最大ではなく中央値へ）へ進みます。")
+                 + "。**これは `settle_stats` を動かす理由になりません** —— 決着が高い側なら低い読みは"
+                 "捨ててよい側・低い側で水準になれば それは数え直しで、包絡を落とすのは `recounts()` の仕事です"
+                 "（`trend.shakes` の 20:2x の註）。")
+    if over:
+        tail += ("**`max` が、確定した水準より高い値を書いた行が出ました** ＝ "
+                 "**ここで初めて `settle_stats` の覆る条件**（`reads` を 5 に上げてから最大ではなく中央値へ）"
+                 "へ進みます: "
+                 + "・".join(f"{s['id']} 齢 {s['age_h']:.1f}h（書いた {s['high']} ＞ 確定した水準）"
+                             for s in over)
+                 + "。")
     if pending:
         tail += ("**保留（決着待ち）の割れが在ります —— これは「第3の口」ではありません**: "
                  + "・".join(
@@ -544,13 +583,14 @@ def shakes_line(rows: list[dict]) -> str:
                  "`recounts()` は生が包絡を 6時間 より長く下回るまで挙げないので、"
                  "**どの本の 1度目の数え直しも、その瞬間は必ずこの形**になります"
                  "（`trend.shakes` の 19:0x の註）。**分子は 0 のままで、`settle_stats` は動かさないこと** ——"
-                 "決着は `_settled_after` があとの点で付けます（低い側が水準になれば数え直し・高い側へ戻れば第3の口）。")
+                 "決着は `_settled_after` があとの点で付けます（低い側が水準になれば数え直し ＝ `recounts()` の側・高い側へ戻れば低い読みが一過性 ＝ `max` の側。**どちらでも `settle_stats` は動きません**・20:2x）。")
     if not rec and not still:
         tail += ("**齢 48h 超の行が割れても、低いほうがこの窓で本が通った値なら遅れの側です** ——"
                  "この道の分子は **0** のまま（`trend.shakes` の覆る条件 (1)）。")
     return (f"**同じ周に割れた読み（`n_values > 1`）: {len(sh)}行**（うち齢 48h 超 **{len(old)}行**）"
             f" —— **遅れ {lag_n}行 / 数え直しの本 {len(rec)}行 / "
-            f"第3の口（決着） {len(confirmed)}行 / 保留 {len(pending)}行**"
+            f"低い読みが一過性 {len(confirmed)}行 / 保留 {len(pending)}行 / "
+            f"**`max` が高すぎた行 {len(over)}行**（＝ `settle_stats` を動かす唯一の分子・20:2x）**"
             f"（`trend.shakes`。**分けるのは齢でも周の数でもなく、「低い読みを台帳がこの窓で通ったか」**"
             "・**その本を `recounts()` が挙げていれば数え直しの側**）。"
             f"いちばん大きい割れは {worst['id']} 齢 {worst['age_h']:.1f}h の **{worst['span']}回**"
