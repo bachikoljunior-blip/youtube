@@ -890,6 +890,98 @@ def _matched(inf: list[dict]) -> dict:
     return res
 
 
+#: `gate_span` が門 (2) の比の振れ幅を見るときに遡る時間。
+GATE_SPAN_H = 24.0
+
+
+def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
+    """**門 (2) の比は、本ではなく「いつ測ったか」で上下する。その振れ幅を出す**
+    （2026-09-10 09:4x JST・optimizer・Opus が足した）。
+
+    **なぜ要るか —— 比は毎周 動きますが、その動きの大半は本の側の事実ではありません。**
+    `_pairs` は 2点目の刻で組を帯（02:00〜10:00 JST）と外に分けるので、
+    **いま撃った `measure` は、いる側の分母だけを増やします。** そして本が落ち着いていれば
+    その組は伸びないので、**測っている側の率だけが下がります**
+    ＝ **比は、いま自分が居る側から逃げる向きに動きます**（帯の中の回は 0.5 へ、外の回は上へ）。
+
+    実測（2026-09-10 09:4x・台帳を測りの刻で切って読み直した・API 0単位）:
+
+        09/09 18:14〜21:50  **外**の 4周   外 3/33 → 3/37（**分子は 3 のまま**）  比 1.692 → **1.897**（上へ）
+        09/10 02:06〜09:39  **帯**の 12周  帯 4/20 → **11/48**                     比 1.150 → 2.063 → **1.318**
+          うち 06:53〜09:39 の 4周           帯 **11**/32 → **11**/48（**分子は 11 のまま**）  比 2.063 → **1.318**（下へ）
+
+    ＝ **直近 4周 で比が 0.745 落ちたぶんは、分子が 1つも動かないまま分母が 16組 増えたぶん**です。
+    24時間 の振れ幅は **1.067 〜 2.063**（門 0.5 の 2〜4倍 の幅）で、
+    **1周ぶんの点をそのまま読むのは、鋸の歯のどこに刺さったかを読むことです。**
+
+    **これは §7 が 2度 名指しした族の 3つ目です**: 02:2x は「測った回数」、
+    `_matched` は「測った齢」、ここは **「測った刻」**が、本の側が動かなくても門を通します。
+    `_matched` が齢と長さをそろえても消えません —— そろえるのは**組の中**の偏りで、
+    **どちらの側に組が足されるか**は測る刻が決めるからです。
+
+    **読み方（門 (2) の引き方）**: 点ではなく、**この振れ幅の上限 `hi` が 0.5 を切った回にだけ引く。**
+    上限で読めば、鋸の歯のどの位置で撃っても答えが変わりません
+    （下限で読むと、帯の中を続けて撃った回に、本の側が何も変わらないまま引けてしまいます）。
+
+    出すもの: `lo`/`hi`（`hours` のあいだの比の最小・最大）・`now`（いまの比）・
+    `n`（読み直した測りの回数）・`points`（(刻, 側, 比) の並び。次の回が列挙で確かめられるように残す）。
+
+    **覆る条件**: (1) `hi` が 0.5 を切ったら、門 (2) は**刻では説明が付かない**
+    ＝ そのときは本当に引かれた（判定は `hourly`・§5）。
+    (2) `hi` と `lo` の差が **0.2倍 を下回ったまま 3周** 続いたら、鋸の歯は消えている
+    （＝ 帯と外の両方が同じ速さで積まれている）ので、点で読んでよい。そのときこの註を書き直すこと。
+    (3) 測りの間隔（`quota.pace()` の床）が変われば 1日に帯へ入る回数が変わるので、
+    振れ幅も一緒に動きます —— **幅が広がった回は、まず床を見ること**（`_matched` の (0-新) と同じ向き）。
+    (4) `hours` を変えたら `lo`/`hi` は当然 動きます。**24時間 なのは、帯が 1日に 1度しか回らないから**で、
+    それより短くすると片側しか入らない窓が出ます（＝ 幅が嘘に狭くなる）。
+    """
+    occ = sorted({r["at"] for r in rows if r.get("event") == "measured"})
+    res: dict[str, object] = {"n": 0, "lo": None, "hi": None, "now": None,
+                              "points": [], "hours": hours}
+    if not occ:
+        return res
+    last = _at({"at": occ[-1]})
+    cut = last - dt.timedelta(hours=hours)
+    other = [r for r in rows if r.get("event") != "measured"]
+    by_at: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("event") == "measured":
+            by_at.setdefault(r["at"], []).append(r)
+    seen: list[dict] = []
+    points: list[tuple[str, str, float]] = []
+    for at in occ:
+        seen.extend(by_at[at])
+        if _at({"at": at}) < cut:
+            continue
+        inf = informative(other + seen)
+        r = inf.get("gate_ratio")
+        if r is None:
+            continue
+        points.append((at, str(inf.get("gate_side")), float(r)))
+    if not points:
+        return res
+    vals = [p[2] for p in points]
+    res.update({"n": len(points), "lo": min(vals), "hi": max(vals),
+                "now": vals[-1], "points": points})
+    return res
+
+
+def _span_line(rows: list[dict]) -> str:
+    """`gate_span` を 1文にする（`trend` が毎周 印字する。註は `gate_span`）。"""
+    g = gate_span(rows)
+    if not g["n"] or g["hi"] is None:
+        return ""
+    lo, hi = float(g["lo"]), float(g["hi"])  # type: ignore[arg-type]
+    band = [p for p in g["points"] if p[0] and _at({"at": p[0]}).hour >= DEAD_START  # type: ignore[union-attr]
+            and _at({"at": p[0]}).hour < DEAD_END]
+    return (f"**ただし、この比は 1周ぶんの点で読まないこと** —— 直近 {GATE_SPAN_H:.0f}時間 の"
+            f"振れ幅は **{lo:.3f}〜{hi:.3f}倍**（測り {g['n']}回・うち帯の中 {len(band)}回）。"
+            f"**比は、いま自分が測っている側から逃げる向きに動きます**"
+            f"（帯の中の回は 0.5 へ・外の回は上へ。分子が動かないまま分母だけが増えるため）。"
+            f"**門 (2) を引くのは、この振れ幅の上限 {hi:.3f} が 0.5 を切った回だけ**"
+            f"（`trend.gate_span` の註・覆る条件 (1)）。")
+
+
 def band_vs_age(rows: list[dict], iters: int = 2000, seed: int = 20260909) -> dict:
     """**帯の 0 は「刻」なのか「齢」なのかを、台帳の中だけで分けにいく**
     （2026-09-09 00:2x JST・optimizer・Opus が足した）。
@@ -1107,6 +1199,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         f" —— **齢だけの比との差 {_gdiff}**（門 {GAP_SPLIT}倍・`_matched` の覆る条件 (0)）。"
         f"**§7 の門 (2)（0.5倍）を読む側は {_gs}** ——"
         f"差が {GAP_SPLIT}倍 を越えた回から、門は齢＋長さ の側で読みます（`_matched` の覆る条件 (0)）。"
+        f"{_span_line(rows)}"
         f"**帯に1組も無い齢の束**: {_un}"
         f" —— 公開が 10:00 JST に固定なので、帯が持てる齢は 16〜24h・40〜48h… だけです。"
         f"**そこは伸びのいちばん濃い齢を含みません** ＝ そろえない比は、帯ではなく齢を測ります。")
