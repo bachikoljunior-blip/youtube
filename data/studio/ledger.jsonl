@@ -2804,3 +2804,6 @@
 {"views": 6, "likes": 0, "comments": 1, "age_h": 160.6, "title": "【知らないと損】2026年4月 働く年金受給者は年54万円増える", "n_values": 1, "at": "2026-09-11T01:37:53+09:00", "id": "1huadpEk6HY", "event": "measured"}
 {"publish_at": "2026-09-11T10:00:00+09:00", "title": "65歳から70歳まではたらくと年金が年10万円ふえる 在職定時改定 #Short", "at": "2026-09-11T01:37:53+09:00", "id": "mja40GJ-GHU", "event": "pending"}
 {"seconds": 83.9, "image": true, "chars": 438, "scenes": [6.1, 6.7, 5.2, 8.7, 6.0, 6.9, 8.1, 8.4, 7.5, 6.3, 7.7, 6.4], "at": "2026-09-11T01:43:09+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "built"}
+{"subs": 28, "views": 84781, "videos": 269, "at": "2026-09-11T01:36:37+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-11T01:36:37+09:00", "id": "mja40GJ-GHU", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-11T01:36:37+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
