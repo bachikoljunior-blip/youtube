@@ -2753,3 +2753,6 @@
 {"n": 0, "kinds": [], "at": "2026-09-11T00:43:15+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
 {"n": 1, "kinds": ["missing_cond"], "at": "2026-09-11T00:45:24+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
 {"n": 2, "kinds": ["missing_cond", "missing_cond"], "at": "2026-09-11T00:47:53+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
+{"subs": 28, "views": 84781, "videos": 269, "at": "2026-09-11T00:59:16+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-11T00:59:16+09:00", "id": "mja40GJ-GHU", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-11T00:59:16+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
