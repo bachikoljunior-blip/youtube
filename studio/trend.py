@@ -2124,21 +2124,28 @@ def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> d
     窓の頭に点を持たない本（窓の中で公開された本・測り始めた本）は**外します**（`skipped`）——
     基準が無いので、その本の再生を丸ごと「増え」と数えると合計が上へ外れます。
     """
-    out = {"sum": 0, "n": 0, "skipped": 0}
+    out = {"sum": 0, "n": 0, "fresh": 0, "skipped": 0}
     for _vid, pts in series(rows).items():
         env = envelope(pts)
         a = b = None
+        fresh = False
         for p, v in zip(pts, env):
             t = _at(p)
             if t <= t0:
                 a = v
             if t <= t1:
                 b = v
+            if t0 < t <= t1:
+                fresh = True
         if a is None or b is None:
             out["skipped"] += 1
             continue
         out["sum"] += b - a
         out["n"] += 1
+        # **伸びを出せるのは、窓の中で読み直した本だけ**（`measure` が触るのは公開から 7日 以内 ＝
+        # 実測 19本）。基準を持つ 46本 のうち残りは、点が窓より前で止まっているので必ず +0 を返します
+        # —— **その 0 を「伸びなかった」と読まないこと。**
+        out["fresh"] += 1 if fresh else 0
     return out
 
 
@@ -2161,7 +2168,7 @@ def channel_growth(rows: list[dict]) -> dict:
     cs = _channel_rows(rows)
     laps = _channel_laps(cs)
     base = {"n": len(cs), "laps": len(laps), "flat_laps": _flat_laps(laps),
-            "vid_sum": None, "vid_n": None, "vid_skipped": None,
+            "vid_sum": None, "vid_n": None, "vid_fresh": None, "vid_skipped": None,
             "mismatch": None, "over": False}
     if len(cs) < 2:
         return {**base, "span_h": None, "d_subs": None, "d_views": None,
@@ -2178,7 +2185,8 @@ def channel_growth(rows: list[dict]) -> dict:
             "views_per_h": (d_views / span_h) if span_h >= CHANNEL_MIN_SPAN_H else None,
             "subs_per_view": (d_subs / d_views) if d_views > 0 else None,
             "subs": b["subs"], "views": b["views"],
-            "vid_sum": vd["sum"], "vid_n": vd["n"], "vid_skipped": vd["skipped"],
+            "vid_sum": vd["sum"], "vid_n": vd["n"], "vid_fresh": vd["fresh"],
+            "vid_skipped": vd["skipped"],
             "mismatch": mismatch,
             # **門は片側だけ**（`channel_video_delta` の註 —— 逆向きは「触っていない 250本」で説明が付く）
             "over": mismatch is not None and mismatch >= CHANNEL_MISMATCH and vd["sum"] > d_views}
@@ -2208,8 +2216,9 @@ def channel_line(rows: list[dict]) -> str:
                    else f" ＝ **まだ引かれません**（あと {CHANNEL_FLAT_LAPS - g['flat_laps']}周）")
                 + "。")
     # **覆る条件 (1) を、次の回が手で数えなくてよいように道具が当てる**（`channel_video_delta` の註）
-    cmp_ = (f"同じ窓の**本ごとの増えの合計 {g['vid_sum']:+d}回**（測っている {g['vid_n']}本・"
-            f"基準の無い {g['vid_skipped']}本 は外した）"
+    cmp_ = (f"同じ窓の**本ごとの増えの合計 {g['vid_sum']:+d}回**（**窓の中で読み直した {g['vid_fresh']}本**"
+            f"／基準を持つ {g['vid_n']}本・基準の無い {g['vid_skipped']}本 は外した。"
+            f"**伸びを出せるのは読み直した側だけ**）"
             + ("・食い違い ＝ 測れていません（両方 0）。" if g["mismatch"] is None
                else f"・食い違い **{g['mismatch'] * 100:.0f}%**"
                     + ("。**合計がチャンネルを越えました ＝ `record_channel` の覆る条件 (1) が引かれます**"

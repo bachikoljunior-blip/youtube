@@ -253,3 +253,27 @@ def test_positive_control_two_sided_gate_would_fire_on_the_explainable_side():
     g = trend.channel_growth(rows)
     two_sided = g["mismatch"] >= trend.CHANNEL_MISMATCH        # 片側の門を外した形
     assert two_sided is True and g["over"] is False
+
+
+def test_only_books_reread_inside_the_window_can_grow():
+    """**窓の中で読み直した本**と、基準だけ持つ本を分ける（`measure` が触るのは 7日 以内）。"""
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T15:00:00+09:00", 27, 84060),
+            _m("2026-09-10T09:00:00+09:00", "live", 100, 10.0),
+            _m("2026-09-10T15:00:00+09:00", "live", 160, 16.0),
+            _m("2026-09-09T09:00:00+09:00", "old", 500, 200.0)]   # 窓より前で止まっている
+    g = trend.channel_growth(rows)
+    assert g["vid_n"] == 2 and g["vid_fresh"] == 1
+    assert g["vid_sum"] == 60                                     # 止まっている本は必ず +0
+    assert "読み直した 1本" in trend.channel_line(rows)
+
+
+def test_positive_control_stale_books_would_look_like_no_growth():
+    """**陽性対照**: `fresh` を出さないと、止まっている本の +0 が「伸びなかった」に混ざる。"""
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T15:00:00+09:00", 27, 84000),
+            _m("2026-09-09T09:00:00+09:00", "old1", 500, 200.0),
+            _m("2026-09-09T10:00:00+09:00", "old2", 300, 200.0)]
+    g = trend.channel_growth(rows)
+    assert g["vid_n"] == 2 and g["vid_fresh"] == 0                # 読み直した本は 0本
+    assert g["vid_sum"] == 0                                      # 合計 0 は「測っていない」の 0
