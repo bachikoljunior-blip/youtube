@@ -1,11 +1,11 @@
 {
- "id": "2026-09-12-taishoku-koujo-70man-bg",
- "asked_at": "2026-09-11T00:31:48+09:00",
- "for": "2026-09-12 の本（2026-09-12-taishoku-koujo-70man）の背景",
- "prompt": "日本の50代後半の男性が、明るい自宅のテーブルで書類を見ながら電卓に手をおいている様子。おだやかな表情。やわらかい自然光。写実的な写真風。文字やロゴは入れない。縦長。",
- "avoid": "文字・ロゴ・実在の人物・透かし",
- "size": "1080x1920",
- "format": "jpg",
- "out": "assets/images/2026-09-12-taishoku-koujo-70man-bg.jpg",
- "status": "pending"
+  "id": "2026-09-12-taishoku-koujo-70man-bg",
+  "asked_at": "2026-09-11T00:31:48+09:00",
+  "for": "2026-09-12 の本（2026-09-12-taishoku-koujo-70man）の背景",
+  "prompt": "日本の50代後半の男性が、明るい自宅のテーブルで書類を見ながら電卓に手をおいている様子。おだやかな表情。やわらかい自然光。写実的な写真風。文字やロゴは入れない。縦長。",
+  "avoid": "文字・ロゴ・実在の人物・透かし",
+  "size": "1080x1920",
+  "format": "jpg",
+  "out": "assets/images/2026-09-12-taishoku-koujo-70man-bg.jpg",
+  "status": "done"
 }
