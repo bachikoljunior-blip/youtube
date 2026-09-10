@@ -118,7 +118,7 @@ def test_陽性対照_窓で1度も通っていない低い読みは第3の口()
     assert trend.shakes(back)[0]["over_max"] is False
     line = trend.shakes_line(back)
     assert "低い読みが一過性 1行" in line
-    assert "`max` が高すぎた行 0行" in line
+    assert "掘り起こした行 0行" in line
 
 
 def test_陰性対照_窓の先頭より上なら_台帳が書いていなくても遅れ() -> None:
@@ -137,13 +137,19 @@ def test_陽性対照_齢で切る古い門なら_実物が第3の口になる()
     new_gate = [s for s in sh if s["verdict"] == "still"]   # 低い読みが窓で通った値かで切る門
     assert old_gate, "齢 48h 超で割れた行が実物から消えた ＝ この対照ごと見直すこと"
     assert len(new_gate) < len(old_gate), "2つの門が同じ答え ＝ 足しても増えていない"
-    # **3つ目の門（`max` が高すぎたか）も、2つ目と違う答えを返すこと**（2026-09-10 20:2x）——
-    # `still` は在り、`confirmed` も 1行 在るが、分子（`over_max`）は 0。
-    assert new_gate, "`still` が実物から消えた ＝ この対照ごと見直すこと"
-    assert [s for s in new_gate if s["confirmed"]], \
-        "決着した行が実物から消えた ＝ 検査の土台（19:0x の実測）が変わっている"
-    assert not [s for s in new_gate if s["over_max"]], \
-        "`confirmed` と `over_max` が同じ答え ＝ 20:2x の門を足しても増えていない"
+    # **3つ目の門（`max` が水準を掘り起こしたか）も、2つ目と違う答えを返すこと**
+    # （2026-09-10 20:2x・門は 2026-09-11 03:0x）—— **実物の分子は 0**。
+    #
+    # **2026-09-11 03:0x に、ここの土台が実物から消えました**: 19:0x/20:2x が撃った
+    # `CIPYV_r1Hdo` の `still` は、その本を `recounts()` が挙げた時点で `recount` に変わり、
+    # いま実物の `still` は **0行**（この検査は「消えたら見直すこと」と書いてあった）。
+    # → **`still` が在ることを前提にした行は、合成の対照のほうへ移しました**
+    #   （`test_studio_shakes_confirmed.py` の陰性／陽性 2件）。ここに残すのは
+    #   **実物で分子が 0 であること**だけ ＝ 実物と合成の役目を分ける。
+    assert not [s for s in sh if s["over_max"]], \
+        "実物で掘り起こしが出た ＝ `trend.shakes` の覆る条件 (1) を撃つこと"
+    assert not [s for s in sh if s["verdict"] == "still" and s["over_max"]], \
+        "`still` と `over_max` が同じ答え ＝ 門を足しても増えていない"
 
 
 def test_周の門と範囲の門は_実物で1行_割れる() -> None:

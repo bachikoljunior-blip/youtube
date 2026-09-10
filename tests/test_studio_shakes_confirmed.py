@@ -100,7 +100,7 @@ def test_保留は保留と印字し_分子を動かさないこと():
     rows = _flat("C") + [_split("C", _base(), 287, 290)]
     line = trend.shakes_line(rows)
     assert "低い読みが一過性 0行" in line
-    assert "`max` が高すぎた行 0行" in line
+    assert "掘り起こした行 0行" in line
     assert "保留 1行" in line
     assert "これは「第3の口」ではありません" in line
     assert "`settle_stats` は動かさないこと" in line
@@ -116,16 +116,19 @@ def test_決着しても_settle_statsは動かさないと印字される():
     line = trend.shakes_line(rows)
     assert "低い読みが一過性 1行" in line
     assert "保留 0行" in line
-    assert "`max` が高すぎた行 0行" in line
+    assert "掘り起こした行 0行" in line
     assert "`settle_stats` を動かす理由になりません" in line
 
 
-def test_陽性対照_数え直しが水準を落としたら_maxが高すぎた行になる():
-    """**新しい分子が、本当に別の物を見ているか**（§5 の教訓の形）。
+def test_陰性対照_数え直しの手前の平らは分子ではない():
+    """**2026-09-11 03:0x に、20:2x の陽性対照ごと差し替えました。**
 
-    `max` が 290 と書いたあと、その本の水準が 6時間 以上 287 に留まって
-    `recounts()` が 290 → 287 と落としたら、**290 は実物より高い値**でした ＝ 分子 1行。
-    （上の `test_あとの点が低い側に落ちたら…` は 3点 しか続かないので `recounts()` は挙げません）
+    20:2x の陽性対照は `_flat` を **290**（＝ 水準が落ちる前の平ら）で組んでおり、
+    そこに 287/290 の割れを置いて「`max` が高すぎた」と数えていました。
+    **それは実物 `CIPYV_r1Hdo` 齢 101.6/102.9/103.5h そのもの**で、
+    **その時刻の本当の値は 290**（`recounts()` が峰を最後に見た齢は 103.5h）。
+    `max` は間違えていません —— 落ちる前の点は**構造として必ず `hi > to`** になるので、
+    門が無いと「その本がいつか数え直されたか」を数えるだけになります。
     """
     base = _base()
     rows = (_flat("C") + [_split("C", base, 287, 290)]
@@ -133,9 +136,29 @@ def test_陽性対照_数え直しが水準を落としたら_maxが高すぎた
     assert [r["id"] for r in trend.recounts(rows)] == ["C"]
     s = trend.shakes(rows)[0]
     assert s["verdict"] == "recount"          # 2度目以降は `recounts()` が当てる
-    assert s["over_max"] is True, "確定した水準より高い値を書いた行を、分子に数えていない"
+    assert s["floor"] == 290, "窓の先頭は落ちる前の水準 ＝ 掘り起こしではない"
+    assert s["over_max"] is False, "数え直しの手前の平らを分子に数えている（20:2x の穴）"
     line = trend.shakes_line(rows)
-    assert "`max` が高すぎた行 1行" in line
+    assert "掘り起こした行 0行" in line
+
+
+def test_陽性対照_水準が落ちたあとに掘り起こしたら分子になる():
+    """**新しい分子が、本当に別の物を見ているか**（§5 の教訓の形・4つ目）。
+
+    水準が **287 に落ち切ってから**（窓 6時間 の先頭も 287）、`max` が **290** を書いた行。
+    ＝ 古い複製を掘り起こして台帳に高い値を残した ＝ ここで初めて `settle_stats` の側。
+    """
+    base = 85.0
+    settled = [_row("C", base + 0.7 * i, 287) for i in range(14)]   # 9.1時間 の平ら
+    dig = _split("C", base + 0.7 * 14, 287, 290)
+    after = [_row("C", base + 0.7 * (15 + i), 287) for i in range(12)]
+    rows = settled + [dig] + after
+    assert [r["id"] for r in trend.recounts(rows)] == ["C"]
+    s = [x for x in trend.shakes(rows) if x["age_h"] == dig["age_h"]][0]
+    assert s["floor"] == 287, "窓の先頭は落ちたあとの水準"
+    assert s["over_max"] is True, "掘り起こしを分子に数えていない"
+    line = trend.shakes_line(rows)
+    assert "掘り起こした行 1行" in line
     assert "ここで初めて `settle_stats` の覆る条件" in line
 
 
