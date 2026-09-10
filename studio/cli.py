@@ -241,6 +241,72 @@ def record_over(vid: str, live: int, over: int, age_h: float,
            over=over, age_h=round(age_h, 1), src=src)
 
 
+ZERO_PROBE_MIN_H = 3.0    # 台帳の中で「0回 のまま」を越えた本が 1本 も無い齢（§7「1回目が付いた齢」）
+ZERO_PROBE_MAX_H = 48.0   # ここを越えたら「配りが来ていない」ほうの話 ＝ 処理は関係ない
+
+
+def zero_probe_target(pubs: list[dict], studio_ids: set[str], now: dt.datetime) -> str | None:
+    """**公開ずみなのに 0回 の studio の本**を 1本 だけ選ぶ（`status` が 1単位 で処理の状態を引く先）。
+
+    2026-09-10 15:0x・optimizer・Opus。**追加 1単位**（この門が立っている周だけ・1周 1本まで）。
+
+    **穴**: `yt.readiness()` は 09/08 02:5x から在りますが、`cmd_status` はそれを
+    **`privacy != "public"` の本にしか当てていません**（公開前に「10:00 に本当に出るか」を
+    見るために足された口）。**公開したあとに処理が落ちた本・拒否された本は、誰も見ません** ——
+    見えるのは「0回」だけで、それは `trend` の側では「配りが来ていない」と同じ形です。
+
+    ＝ §4 (0-b) の族の**4つ目の型**（1つ目 見つけた上で別の札／2つ目 両側がそろって間違える／
+    3つ目 欄が無いのを 0回 と読む（`yt.views_of`）／**4つ目 出ていないのを 0回 と読む**）。
+
+    **この回に手で撃って実測した**（`videos.list` 1単位・5本目 `2YZ_4FXC-XI` 齢 4.5h 0回）:
+    `uploadStatus processed`・`processingStatus succeeded`・`failureReason` なし・
+    `rejectionReason` なし・`privacyStatus public`・`madeForKids false`・`duration PT1M30S`
+    ＝ **この本の 0回 は本物で、「出ていない」ではありません。**
+    **その1単位を、次の回が手で撃たなくてよいように道具へ入れました。**
+
+    **門**（1周 1単位 を越えないための形）:
+      * studio の本だけ（旧作りの 0回 は診る先が無い ＝ §8）
+      * `views == 0` かつ `views_absent` でない（欄が無い側は `yt.views_of` の口）
+      * 齢 `ZERO_PROBE_MIN_H` 〜 `ZERO_PROBE_MAX_H`（台帳の 4本 は 齢 5.0h までに 1回目が付いた・§7）
+      * **いちばん若い 1本 だけ**（0回 の本が 2本 並んでも 1単位 のまま）
+
+    **同じ周に `hourly` が別の側から同じ問いを撃っています**（14:3x・§14）——
+    `https://www.youtube.com/shorts/<id>` の公開ページを 5本目 と 4本目 で並べ、
+    `playabilityStatus` OK・`isShortsEligible` true ほか **8項目 とも同じ・違うのは viewCount だけ**
+    （**API 0単位**）。**2つは違う物を見ます**（§5 の教訓の形1つ目を先に撃った）:
+    公開ページは**視聴者から見て再生できるか**、`readiness` は**持ち主から見た uploadStatus /
+    processingStatus / rejectionReason**（拒否の理由・処理が途中か）。
+    重なるのは「再生できない」形だけで、**「処理が途中」「拒否の理由の名前」は公開ページに出ません。**
+    **ただし 0単位 の側のほうが安いので、下の (2) で 2つが 7本 一度も食い違わなければ、外すのはこちら側です。**
+
+    **覆る条件**: (1) この門が立った本の `readiness` が **`ok` でなかった回が 1度でも出たら**、
+    それは「0回」を読む前に必ず見る数 ＝ `trend` の側（`first_view`・`hold`）にも印を回すこと。
+    (2) 7本 過ぎて 1度も `ok` 以外が出なければ、この口は外してよい（`yt.views_of` の (j) と同じ数え方）。
+    **数えるのは台帳の `zero_probe` の行**（`ok` を毎回 残しているので、次の回は覚えていなくてよい）。
+    (3) 0回 の本が 2本 以上 同時に並ぶ回が出たら、1本だけでは足りない ＝ 束で引くこと（`videos.list` は 50件で 1単位）。
+    """
+    best, best_age = None, None
+    for v in pubs:
+        if v["id"] not in studio_ids or v["views"] != 0 or v.get("views_absent"):
+            continue
+        age = (now - yt.when(v)).total_seconds() / 3600
+        if not (ZERO_PROBE_MIN_H <= age <= ZERO_PROBE_MAX_H):
+            continue
+        if best_age is None or age < best_age:
+            best, best_age = v["id"], age
+    return best
+
+
+def zero_probe_mark(rd: dict) -> str:
+    """`zero_probe_target` の本に添える1行。**`ok` でも黙らない**（0回 が本物だと言うのが仕事）。"""
+    if rd["ok"]:
+        return ("  ** 0回 のまま ＝ **出ていない側ではありません**"
+                f"（upload {rd['upload']}・processing {rd['processing']}・失敗 なし・1単位）")
+    return ("  !! **0回 の出どころは処理の側です**"
+            f"（upload {rd['upload']}・processing {rd['processing']}・"
+            f"失敗 {rd['failure'] or rd['rejection']}）—— `zero_probe_target` の覆る条件 (1)")
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
@@ -275,6 +341,13 @@ def cmd_status(a):
         if v.get("views_absent"):
             mark += "  ** `viewCount` の欄がありません ＝ この 0回 は読めていないだけ（`yt.views_of` の覆る条件 (1)）"
         print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['views']:5d}回 いいね{v['likes']:3d} 齢{age:5.0f}h {v['title'][:36]}{mark}")
+    # 公開ずみで 0回 の studio の本があれば、処理の側かどうかを 1単位 で見る（`zero_probe_target` の註）。
+    zp = zero_probe_target(yt.published(), sids, now_jst())
+    if zp:
+        rd = yt.readiness(zp)
+        print(f"  {zp} {zero_probe_mark(rd)}")
+        ledger("zero_probe", zp, ok=rd["ok"], upload=rd["upload"],
+               processing=rd["processing"], failure=rd["failure"] or rd["rejection"])
     # 視聴者のコメントは 2026-09-07 20:4x まで1度も見ていなかった（`yt.viewer_comments()` の註）。
     # 唯一の批評「ＡＩナレーショングダグダ」は 9日間 読まれていない。**ここに出し続けること。**
     try:
