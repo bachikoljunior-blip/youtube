@@ -1574,6 +1574,8 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # `cli.over_ledger` の 3つ の覆る条件は周をまたいで数える物で、印を残す口が無かった
     # （2026-09-10 13:2x・optimizer・Opus。`trend.over_lag` の註）。
     out.append(over_lag_line(rows))
+    # 公開ずみで 0回 の本の処理の状態（`cli.zero_probe_target` の覆る条件は周をまたいで数える）。
+    out.append(zero_probe_line(rows))
     # **この一文は最後に置くこと**（`tests/test_studio_trend.py` が末尾で止めている）。
     out.append(
         "並びの再生は **それまでの最大（単調な包絡・数え直しの峰は落とす）** です（`trend.envelope` の註・2026-09-09 20:0x／2026-09-10 08:0x）"
@@ -1886,6 +1888,48 @@ def over_lag_line(rows: list[dict]) -> str:
         body += "  届かない印: " + "・".join(
             f"{m['id']} 齢{m['age_h']}h 生{m['views_live']} 対 台帳{m['views_ledger']}"
             for m in o["late"])
+    return body
+
+
+def zero_probes(rows: list[dict]) -> dict:
+    """**公開ずみで 0回 の本の処理の状態**（台帳 `zero_probe`）を数える。API 0単位。
+
+    2026-09-10 15:2x JST・optimizer・Opus。`cli.zero_probe_target` を足した同じ回に、
+    その数を**次の回が覚えていなくてよい所**へ回した（`over_lag` と同じ形 ——
+    `status` が印字して捨てるだけでは、覆る条件が周をまたいで引けない）。
+
+    **`ok` は「0回 が本物」の意味**（処理は通っている ＝ 出ていない側ではない）。
+    **`ok` でない行は、その本の 0回 を「配りが来ていない」と読んではいけない**という印です。
+
+    **覆る条件**: (1) `bad` が 1件でも出たら `cli.zero_probe_target` の (1) ＝
+    `first_view`・`hold` の側にも印を回すこと（0回 を読む前に必ず見る数になる）。
+    (2) `books`（撃った本の数）が 7本 を越えて `bad` が 0 なら、この口は外してよい ——
+    残るのは `hourly` が撃っている公開ページの側（**API 0単位**・§14 14:3x）。
+    """
+    ps = [r for r in rows if r.get("event") == "zero_probe"]
+    bad = [r for r in ps if not r.get("ok")]
+    return {"n": len(ps), "books": len({r.get("id") for r in ps}),
+            "ok": len(ps) - len(bad), "bad": bad}
+
+
+def zero_probe_line(rows: list[dict]) -> str:
+    """`zero_probes` を1行にする（`trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
+    z = zero_probes(rows)
+    if z["n"] == 0:
+        return ("**公開ずみで 0回 の本の処理: 印 0件**（`zero_probe`）—— "
+                "**この 0 は「落ちた本が無い」ではなく「0回 の本がこの窓に無かった」**です"
+                "（`cli.zero_probe_target` の門は 齢 3〜48h の studio の本だけ）。")
+    body = (f"**公開ずみで 0回 の本の処理: 印 {z['n']}件・{z['books']}本** —— "
+            f"**`ok` {z['ok']}件 / `ok` でない {len(z['bad'])}件**（`zero_probe`・1周 1単位）。")
+    if z["bad"]:
+        body += ("  !! " + "・".join(f"{r.get('id')} upload {r.get('upload')}／"
+                                     f"processing {r.get('processing')}／失敗 {r.get('failure')}"
+                                     for r in z["bad"])
+                 + " ＝ **その 0回 を「配りが来ていない」と読まないこと**"
+                   "（`cli.zero_probe_target` の覆る条件 (1)）。")
+    else:
+        body += ("  **`ok` だけ ＝ 0回 は本物**（出ていない側ではない）。"
+                 f"**7本 過ぎて 1度も `ok` 以外が出なければ、この口は外してよい**（いま {z['books']}本）。")
     return body
 
 
