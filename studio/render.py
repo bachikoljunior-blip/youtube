@@ -16,7 +16,8 @@ def build(s: Script, image: Path | None = None) -> dict:
     durs = [t for _, t in audio]
     full = concat(wavs, d / "voice.wav")
     n = len(s.segments)
-    pngs = [slide(seg.show, seg.sub, seg.say, i, n, image, d / f"slide-{i:02d}.png")
+    pngs = [slide(seg.show, seg.sub, seg.say, i, n, image, d / f"slide-{i:02d}.png",
+                  tag=seg.tag, board=seg.board)
             for i, seg in enumerate(s.segments, 1)]
     lst = d / "slides.txt"
     lines = []
