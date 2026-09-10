@@ -94,7 +94,9 @@ def test_1行で数え直しと第3の口を分けて印字する():
             + _flat_book("B") + [_split("B", 32.6 + 0.7 * 100, 213, 214)])
     line = trend.shakes_line(rows)
     assert "数え直しの本 1行" in line
-    assert "第3の口 1行" in line
+    # **`still` はあとの点が付くまで「保留」**（2026-09-10 19:0x・分子は決着した行だけ）
+    assert "第3の口（決着） 0行" in line
+    assert "保留 1行" in line
     # **どちらの本を名指ししているかが、行から読めること**（次の回が手で引かないため）
     assert "A 齢" in line and "B 齢" in line
 
@@ -102,5 +104,5 @@ def test_1行で数え直しと第3の口を分けて印字する():
 def test_第3の口が0行なら覆る条件の分子は0と印字する():
     rows = _recounted_book("A") + [_split("A", 32.6 + 0.7 * 100, 213, 214)]
     line = trend.shakes_line(rows)
-    assert "第3の口 0行" in line
+    assert "第3の口（決着） 0行" in line
     assert "第3の口には数えません" in line

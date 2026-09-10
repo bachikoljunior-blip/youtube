@@ -31,12 +31,18 @@ def _row(vid: str, age: float, views: int, *, n: int = 1, lo: int | None = None)
 # ---------- 実物（§5 の教訓の形 4つ目: 直した門が実物のどの形を通るかを列挙する） ----------
 
 def test_本物の台帳に第3の口は無い() -> None:
-    """**2026-09-10 17:3x に名前を直しました** —— 札は `lag` と `recount` の 2つ に増えており、
-    ここが見ているのは「`still`（第3の口）が 0行 か」＝ §7 (h) の覆る条件 (3) の分子です。"""
+    """**2026-09-10 19:0x にもう一度 名前を直しました** —— 分子は札（`still`）ではなく
+    **決着**（`confirmed` ＝ `still` かつ あとの点が高い側へ戻った）です。
+
+    18:38 の実物 `CIPYV_r1Hdo`（齢 101.6h・290 対 287）で `still` が初めて 1行 出ましたが、
+    **`recounts()` は 1度目の数え直しを、その瞬間には挙げられません**（6時間 下回るまで待つ）＝
+    **どの本の 1度目の数え直しも、割れた瞬間は必ず `still` に見えます**（`trend.shakes` の註）。
+    だから `still` を分子にすると、数え直しのたびに `settle_stats` を中央値へ動かすことになります。
+    """
     sh = trend.shakes(_rows())
     assert sh, "本物の台帳に `n_values > 1` の行が 1つも無い —— measure が n_values を書いていない"
-    still = [s for s in sh if s["verdict"] == "still"]
-    assert not still, f"第3の口が出た。`trend.shakes` の覆る条件 (1) を撃つこと: {still}"
+    confirmed = [s for s in sh if s["confirmed"]]
+    assert not confirmed, f"第3の口が決着した。`trend.shakes` の覆る条件 (1) を撃つこと: {confirmed}"
 
 
 def test_齢_48h_超で割れた行は_低いほうが窓で通った値() -> None:
@@ -53,11 +59,19 @@ def test_齢_48h_超で割れた行は_低いほうが窓で通った値() -> No
     # **2026-09-10 17:3x に 3つ目の札が出ました**（`recount`）——`lywTMXD6WDM` 齢 103.4h・213 対 214。
     # 低いほうは窓の先頭 214 より下ですが、**この本は `recounts()` が挙げている**（216→214）＝
     # 「再生は減らない」を前提にした窓の門が当たらない本です（`trend._settled_after` の註）。
+    # **2026-09-10 19:0x に 4つ目の状態が出ました**（`still` かつ **保留**）——`CIPYV_r1Hdo`
+    # 齢 101.6h・290 対 287。低いほうは窓の先頭より下だが `recounts()` はまだ挙げられない
+    # （1度目の数え直しは `hours_below` が 0）＝ **決着が付くまで分子に入れない**。
     recounted = {r["id"] for r in trend.recounts(_rows())}
     for s in sh:
-        assert s["verdict"] in ("lag", "recount")
+        assert s["verdict"] in ("lag", "recount", "still")
         if s["verdict"] == "recount":
             assert s["id"] in recounted, f"数え直しの本でないのに `recount` と貼っている: {s}"
+            continue
+        if s["verdict"] == "still":
+            assert s["floor"] is not None and s["low"] < s["floor"], \
+                f"窓で通った値なのに `still` と呼んでいる: {s}"
+            assert not s["confirmed"], f"あとの点が高い側へ戻った ＝ 覆る条件 (1) を撃つこと: {s}"
             continue
         assert s["floor"] is not None and s["low"] >= s["floor"], \
             f"低い読みが窓の先頭より下なのに `lag` と呼んでいる: {s}"
@@ -72,7 +86,13 @@ def test_陽性対照_窓で1度も通っていない低い読みは第3の口()
     assert s["age_h"] < 48
     assert s["verdict"] == "still", "窓の先頭より下の読みを遅れ扱い ＝ 門が効いていない"
     assert s["floor"] == 500 and s["low"] == 498
-    assert "第3の口が出ています" in trend.shakes_line(rows)
+    # **札は出るが、あとの点が無いので分子には入らない**（2026-09-10 19:0x）
+    assert s["confirmed"] is False
+    assert "保留 1行" in trend.shakes_line(rows)
+    # あとの点が高い側へ戻って初めて第3の口（＝ 2つの状態が同じ字にならないこと）
+    back = rows + [_row("X", 31.0, 500), _row("X", 32.0, 500)]
+    assert trend.shakes(back)[0]["confirmed"] is True
+    assert "第3の口（決着） 1行" in trend.shakes_line(back)
 
 
 def test_陰性対照_窓の先頭より上なら_台帳が書いていなくても遅れ() -> None:
@@ -89,7 +109,12 @@ def test_陽性対照_齢で切る古い門なら_実物が第3の口になる()
     sh = trend.shakes(_rows())
     old_gate = [s for s in sh if s["age_h"] > 48]          # 齢だけで切る門
     new_gate = [s for s in sh if s["verdict"] == "still"]   # 低い読みが窓で通った値かで切る門
-    assert old_gate and not new_gate, "2つの門が同じ答え ＝ 足しても増えていない"
+    assert old_gate, "齢 48h 超で割れた行が実物から消えた ＝ この対照ごと見直すこと"
+    assert len(new_gate) < len(old_gate), "2つの門が同じ答え ＝ 足しても増えていない"
+    # **3つ目の門（決着）も、2つ目と違う答えを返すこと**（2026-09-10 19:0x）——
+    # `still` は在っても、あとの点が高い側へ戻るまで分子は 0。
+    assert new_gate and not [s for s in new_gate if s["confirmed"]], \
+        "`still` と `confirmed` が同じ答え ＝ 決着の門を足しても増えていない"
 
 
 def test_周の門と範囲の門は_実物で1行_割れる() -> None:
