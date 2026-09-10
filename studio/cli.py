@@ -448,12 +448,26 @@ def cmd_measure(a):
     # **読み直した本数を、その回に言う**（2026-09-10 07:0x・optimizer・Opus。上の `n_values` の註）。
     # §7 の (h) を読む回が、**撃つだけで分母と分子を読めるようにする**ため
     # （`wake_placed` を毎周 台帳へ書き写したのと同じ形・§7 (d)）。
+    #
+    # **札を直した**（2026-09-10 09:2x・optimizer・Opus）: 07:0x はこの数を
+    # 「**§7 (h) の分母と分子**」と呼びましたが、**08:0x に (h) の道は移りました** ——
+    # 数え直しは**周と周のあいだ**に起き、同じ周の 3回 読みは 3回 とも新しい値を返すので、
+    # **`n_values` は必ず 1**（実測: 台帳の `n_values > 1` は 8行 とも伸び中の本・48h 超は 0行。
+    # いっぽう数え直しは `trend.recounts` に 5本 出ている）。
+    # **札がそのままだと、次の回はここを読んで「数え直しは 0件」と書きます**
+    # （道具が古い道を指し続ける ＝ この回に `gate_side` で直したのと同じ族）。
+    # いまの札は**この数が本当に見張っている物**、つまり (h) の**覆る条件 (3)**
+    # 「`n_values > 1` が **48h 超の行**で 1度でも出たら、遅れでも数え直しでもない第3の口」です。
     if settled:
         over = [i for i in settled if ages.get(i, 0) > SETTLE_WITHIN_H]
         shook = sorted(i for i, s in settled.items() if s["n_values"] > 1)
+        old_shook = sorted(i for i in shook if ages.get(i, 0) > SETTLE_WITHIN_H)
         print(f"落ち着かせた: {len(settled)}本（うち齢 {SETTLE_WITHIN_H}h 超 **{len(over)}本**）"
               f"・揺れた **{len(shook)}本**" + (f"（{'・'.join(shook)}）" if shook else "")
-              + "　＝ §7 (h) の分母と分子")
+              + f"・うち齢 {SETTLE_WITHIN_H}h 超 **{len(old_shook)}本**"
+              + "　＝ §7 (h) の**覆る条件 (3)** の分母と分子"
+              + "（1本でも出たら第3の口）。**数え直しはここでは見えません** ——"
+              + "`trend` の「数え直し」の行（`trend.recounts`）で見ること")
     return 0
 
 

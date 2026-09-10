@@ -232,3 +232,26 @@ def test_measure_は48h超を何本読んだかを印字する(monkeypatch, caps
     assert "落ち着かせた: 3本" in out
     assert f"齢 {cli.SETTLE_WITHIN_H}h 超 **2本**" in out, "**分母**（(h) が数える側）を出すこと"
     assert "揺れた **1本**（YOUNG）" in out, "**分子**を、ID つきで出すこと"
+    # **揺れた本のうち 48h 超が何本か** ＝ 覆る条件 (3) の分子（2026-09-10 09:2x）。
+    # YOUNG は齢が浅いので 0本 —— **ここが 1本 以上 になったら第3の口**。
+    assert f"揺れた **1本**（YOUNG）・うち齢 {cli.SETTLE_WITHIN_H}h 超 **0本**" in out
+
+
+def test_measure_の札は数え直しの道を指さない(monkeypatch, capsys):
+    """**道具が古い道を指し続けると、次の回はそれを読んで書きます**（2026-09-10 09:2x・optimizer・Opus）。
+
+    07:0x はこの数を「§7 (h) の分母と分子」と呼びましたが、**08:0x に (h) の道は移りました** ——
+    数え直しは周と周のあいだに起き、同じ周の 3回 読みは 3回 とも新しい値を返すので
+    `n_values` は必ず 1。**この印字から「数え直しは 0件」を読んではいけません。**
+    札は (h) の**覆る条件 (3)**（48h 超の行で `n_values > 1` が出たら第3の口）を指すこと。
+    """
+    old_at = cli.now_jst() - timedelta(hours=cli.SETTLE_WITHIN_H + 1)
+    old_iso = old_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pub = [_book("OLD1", old_iso)]
+    monkeypatch.setattr(cli.trend, "pair_gap_line", lambda rows: "")
+    _measure_rows(monkeypatch, pub, {"OLD1": {"views": 1, "views_min": 1, "n_values": 1}})
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if ln.startswith("落ち着かせた:"))
+    assert "覆る条件 (3)" in line, "この数が本当に見張っている物を名指しすること"
+    assert "trend.recounts" in line, "数え直しを見る先（`trend.recounts`）を指すこと"
+    assert "数え直しはここでは見えません" in line
