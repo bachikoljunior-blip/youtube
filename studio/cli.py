@@ -126,6 +126,44 @@ def comments_to_show(cs: list[dict], fresh: list[dict], keep: int = 3) -> list[d
     return must + rest[:keep]
 
 
+STATUS_COMMENT_CHARS = 60
+
+
+def comment_line_text(text: str, limit: int = STATUS_COMMENT_CHARS, one_line: bool = True) -> str:
+    """視聴者コメントを **1行** に畳む。**落とした字は必ず数で言う。**
+
+    2026-09-10 12:0x JST（optimizer・Opus）に足した。**この回に踏んだ**:
+    `status` は `c["text"][:60]` を素で印字していたので、**2つ 落としていました**。
+
+    実測（09/09 23:49 の礼・**88字**）:
+
+        出た   ``…年金事務所の方に聞きに行ってもたぶん有効みたいな感じ``
+        落ちた ``でハッキリした回答が得られなかったので大変助かりました。``（**28字**）
+
+    ＝ 切れ目が **文の途中**なので、出た側だけを読むと「年金事務所でも たぶん有効と
+    言われた」と**逆の意味に読めます**。落ちたのは、§7 が「制度の窓口で分からなかった
+    ことが、ここで分かった と視聴者が書いた最初の1件」と呼んでいる当の節でした。
+    **印が無いので、読む側は切れたことを知りません。**
+
+    2つ目: この文には **改行**が在り、素で印字すると **1件が 2行に割れます**。
+    2行目には刻も ID も `[未返信]` も付かないので、**別のコメントに見えます**
+    （実測: 09/08 の「そこが知りたい」も同じ形で割れていた）。
+
+    ＝ **`comments_to_show`（01:4x）が「どの行を出すか」で塞いだ穴の、
+    「その行に何が載るか」の側**です。窓を直しても、窓に載る字が黙って欠けていました。
+
+    **覆る条件**: (1) 印つきで切れた行を見た回が、`comments` を撃たずに
+    その行だけで判断した回が出たら、`limit` ではなく**未返信の行だけ全文**にすること。
+    (2) 台帳の `text` は `cmd_comments` が **500字** で切っており、そちらは印が無い。
+    500字 を越えるコメントが 1件でも来たら、同じ形（落とした字数を残す）にすること
+    —— いまの最長は 88字 なので、まだ引けない。
+    """
+    one = " ⏎ ".join(text.split("\n")) if one_line else text
+    if len(one) <= limit:
+        return one
+    return one[:limit] + f"…〔＋{len(one) - limit}字・全文は `python -m studio.cli comments`〕"
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
@@ -174,7 +212,8 @@ def cmd_status(a):
             st = "" if c.get("status", "published") == "published" else f"[{c['status']}]"
             arrow = "↳" if c.get("reply") else " "
             ans = f"[返信ずみ {c['answered_at'][:16]}]" if c.get("answered") else "[未返信]"
-            print(f"  {mark}{st}{arrow} {c['at'][:16]} {c['video_id']} {ans} {c['author']}: {c['text'][:60]}")
+            print(f"  {mark}{st}{arrow} {c['at'][:16]} {c['video_id']} {ans} {c['author']}: "
+                  + comment_line_text(c["text"]))
     except Exception as e:  # noqa: BLE001
         print("視聴者コメントは引けなかった:", str(e)[:100])
     print("台帳 直近 5行:")
@@ -501,7 +540,8 @@ def cmd_comments(a):
         # **答えたか**は台帳では埋まらない（`cli reply` を通らない返信が在る）。`yt._mark_answered` の註。
         ans = f"返信ずみ {c['answered_at'][:16]}" if c.get("answered") else "**未返信**"
         print(f"{'★新着' if new else '     '} {c['at'][:16]} {head} いいね{c['likes']} {ans} "
-              f"{'' if st == 'published' else '[' + st + '] '}{c['author']}\n       {c['text'][:400]}")
+              f"{'' if st == 'published' else '[' + st + '] '}{c['author']}\n       "
+              + comment_line_text(c["text"], 400, one_line=False))
         if new:
             ledger("viewer_comment", c["video_id"], comment_id=c["id"], author=c["author"],
                    posted_at=c["at"], status=st, parent_id=c.get("parent_id", c["id"]),
