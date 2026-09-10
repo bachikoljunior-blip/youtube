@@ -723,6 +723,20 @@ def flats(rows: list[dict]) -> dict:
             "shortest_stayed_h": shortest_stay, "runs": runs}
 
 
+def last_rise_gap_h(pts: list[dict], env: list[int]) -> float:
+    """**最後に包絡が上がってから、いまの点までの時間**（`hold` の「確定」の材料・API 0単位）。
+
+    上がった点が 1つも無ければ、**並びの全長**（最初の点からいまの点まで）を返します
+    ——「一度も伸びていない」は「平らがずっと続いている」ことなので、
+    **0時間 として返すと、その本だけが門を素通りします**（`hold` の 05:4x の註）。
+    """
+    last_age = float(pts[-1]["age_h"])
+    for i in range(len(env) - 1, 0, -1):
+        if env[i] is not None and env[i - 1] is not None and env[i] > env[i - 1]:
+            return last_age - float(pts[i]["age_h"])
+    return last_age - float(pts[0]["age_h"])
+
+
 HOLD_AGES = (6.0, 12.0, 24.0)
 #: §1 の表が「公開 6時間で最終の 70〜90%」と書いている帯。**この帯に入るかを、毎回 数で見る。**
 HOLD_BAND = (70.0, 90.0)
@@ -766,8 +780,48 @@ def hold(rows: list[dict], ages: tuple[float, ...] = HOLD_AGES) -> list[dict]:
     (2) 48h を越えて確定した本が **5本** そろったら、分母を「いまの再生」から「48h の点」へ移すこと
     （§7 の行の文言どおりの比になる）。いまは確定 2本 だけなので、確定と伸び中を混ぜないために
     分母を「いまの再生」にして、伸び中の本には印を付けています。
+
+    **【2026-09-11 05:4x・optimizer・Opus】「確定」を、直近2点から `flats` の境目へ移しました。**
+
+    **踏んだ形**: この回の `measure` の 1回で、3本目 `lQHX9LJ80Sg`（齢 67.2h）の印が
+    **「まだ伸びている」→「確定」**へ落ちました。**その本は 0.5時間 前に +2回 伸びています**
+    （690 → 692）——落ちた理由は、**直近2点がたまたま同じ値だった**こと だけでした。
+    同じ周の §7「いまの数」は同じ本を「**齢 66h でもまだ動きます**」と書いており、
+    **同じ道具の 2つ の行が、同じ周に逆を言っていました**（§7 17:3x の「言っている所と、
+    している所が別」の族）。
+
+    **実測（この回・台帳ぜんぶ・API 0単位。`last_rise_gap_h`）**::
+
+        EkNqtkK49Bw  齢 115.2h  145回   最後の伸びから **2.4時間**   ← 直近2点の形では「確定」
+        nQbVxuWpWw8  齢  91.2h   66回   最後の伸びから **82.6時間**
+        lQHX9LJ80Sg  齢  67.2h  692回   最後の伸びから **0.5時間**   ← この回に「確定」へ落ちた本
+        gv1u7n_pCAQ  齢  43.2h  935回   最後の伸びから **1.2時間**
+
+    ＝ **直近2点の形で「確定」だった 3本 のうち 2本 は、2.4時間 と 0.5時間 前に伸びていました。**
+
+    **直し**: `growing` は **`flats(rows)["thresh_h"]`**（いま **60.4時間** ＝ 実測でいちばん長い
+    「戻った平ら」・床は `FLAT_STOP_H` 24時間）で決める。**この道具は既に、同じ台帳から
+    「20.9時間（いま 60.4時間）より短い平らを『止まった』と読まないこと」を出しています**
+    （`flats` の註）—— `hold` だけが、その規則の外で 1組 の平らを「止まった」と読んでいました。
+    ＝ **新しい定数は 1つも足していません**（門は `flats` が実測から引き直す）。
+
+    **向きは変わりません**（この回に撃って確かめた）: `hold_verdict` は伸びている本に ``"in"`` を
+    返さないので、実物の 4本 の判定は **帯の中 0本・帯の外 3本・分けられない 1本** のまま
+    （`EkNqtkK49Bw` は挟みが帯を跨ぐので `growing` のどちらでも ``unknown``・残る 2本 は
+    上限が 70% を割るので ``out``）。動いたのは**印字の印**と、上の**覆る条件 (2) の分母**
+    （確定 3本 → **1本**）です。
+
+    **覆る条件**: (3) 「確定」と印字した本が、そのあと 1回でも伸びたら、門（`flats` の境目）が
+    まだ短い ＝ そのときは `flats` の覆る条件 (1) が自分で門を上げるので、ここは触らないこと。
+    (4) 逆に、確定した本が 5本 そろう前に**全部の本が 60時間 以上 平らにならない**回り方に変わったら
+    （1日1本 をやめる・測る刻が伸びる）、この門は「いつまでも確定しない」側に倒れます ——
+    そのときは齢（例 齢 7日）で切ること。
+    (5) `flats` が門を 100時間 を越える所まで上げたら、**確定は事実上 来ません** ＝
+    上の覆る条件 (2) の「5本」は、そのときは齢で数え直すこと。
     """
     mine = ours(rows)
+    # **「確定」の門は、直近2点ではなく `flats` の境目**（下の 05:4x の註）。
+    thresh = float(flats(rows)["thresh_h"])
     out: list[dict] = []
     for vid, pts in sorted(series(rows).items(), key=lambda kv: published_at(kv[1])):
         if vid not in mine or not pts:
@@ -777,13 +831,17 @@ def hold(rows: list[dict], ages: tuple[float, ...] = HOLD_AGES) -> list[dict]:
         last = env[-1]
         if not last:
             continue
+        gap = last_rise_gap_h(pts, env)
         row: dict = {
             "id": vid,
             "day": published_at(pts).strftime("%m/%d"),
             "age_h": last_age,
             "views": last,
-            # **まだ伸びている ＝ 分母がこれから増える**（割合は上限）。直近2点で見る。
-            "growing": len(env) > 1 and (env[-1] > env[-2] or last_age < 48.0),
+            "since_rise_h": gap,
+            "flat_thresh_h": thresh,
+            # **まだ伸びている ＝ 分母がこれから増える**（割合は上限）。
+            # **平らの長さで見る**（直近2点では見ない ——`flats` と同じ規則・05:4x の註）。
+            "growing": last_age < 48.0 or gap < thresh,
             "at": {},
         }
         for h in ages:
@@ -887,15 +945,21 @@ def hold_lines(rows: list[dict]) -> list[str]:
                 int(HOLD_AGES[0]), six["age_h"], six["pct"],
                 six["hi_age_h"], six["hi_pct"],
                 {"in": "帯の中", "out": "帯の外", "unknown": "**分けられない**"}.get(v, "-"))
+        mark = ("・**まだ伸びている ＝ この割合は上限**" if r["growing"] else "・確定")
+        if r.get("since_rise_h") is not None:
+            mark += "・最後の伸びから %.1fh" % r["since_rise_h"]
         out.append("  %s %-12s %s   いま %d回（%.1fh%s）%s" % (
-            r["day"], r["id"], " / ".join(cells), r["views"], r["age_h"],
-            "・**まだ伸びている ＝ この割合は上限**" if r["growing"] else "・確定", note))
+            r["day"], r["id"], " / ".join(cells), r["views"], r["age_h"], mark, note))
     out.append(
         f"§1 の表の「公開 6時間で最終の {lo:.0f}〜{hi:.0f}%」は、**帯の中 {tally['in']}本・"
         f"帯の外 {tally['out']}本・分けられない {tally['unknown']}本**（数えた {have}本）です。"
         f"**「分けられない」は 6h ちょうどの点が無く、挟みが帯を跨いだ本** ——"
         f"「帯の外」に数えないこと（`trend.hold_verdict` の註・2026-09-10 05:0x に 0/4 から直した）。"
-        f"**齢 6h・12h の点で本の当たり外れを読まないこと** ——大きい本ほど尾が長く出ています。")
+        f"**齢 6h・12h の点で本の当たり外れを読まないこと** ——大きい本ほど尾が長く出ています。"
+        + (f"**「確定」は、最後に伸びてから {got[0]['flat_thresh_h']:.1f}時間"
+           f"（＝ 実測でいちばん長い「戻った平ら」・`trend.flats`）を越えた本だけです** ——"
+           "**直近2点が平らなだけの本を「確定」と読まないこと**（2026-09-11 05:4x に直した）。"
+           if got else ""))
     return out
 
 

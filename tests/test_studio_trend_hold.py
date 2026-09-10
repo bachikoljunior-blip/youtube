@@ -51,10 +51,18 @@ def test_no_point_yet_is_none_not_zero():
 
 
 def test_growing_book_is_marked_because_its_share_is_an_upper_bound():
+    """**確定は「平らの長さ」で決める**（2026-09-11 05:4x に、直近2点から `flats` の境目へ移した）。
+
+    前の形は `env[-1] > env[-2]` ——**直近2点がたまたま同じ値**なら、
+    0.5時間 前に伸びた本でも「確定」と印字していた（`hold` の 05:4x の註）。
+    """
     growing = tr.hold(_rows([(1.0, 10), (6.0, 40), (30.0, 100)]))[0]
     assert growing["growing"] is True
-    settled_rows = _rows([(1.0, 10), (6.0, 40), (60.0, 100), (61.0, 100)])
-    assert tr.hold(settled_rows)[0]["growing"] is False
+    # **門（`flats` の境目・この並びでは床の 24時間）を越えて平らな本だけが確定**
+    settled_rows = _rows([(1.0, 10), (6.0, 40), (30.0, 100), (95.0, 100)])
+    settled = tr.hold(settled_rows)[0]
+    assert settled["growing"] is False
+    assert settled["since_rise_h"] == 65.0 and settled["flat_thresh_h"] == 24.0
     assert "確定" in "\n".join(tr.hold_lines(settled_rows))
 
 
@@ -64,9 +72,9 @@ def test_band_count_is_derived_from_the_numbers_not_a_copy():
     2026-09-10 05:0x に `n/m` から「帯の中 n本・帯の外 m本・分けられない k本」へ変えた
     （`trend.hold_verdict` の註）。**どちらの形でも、写しを持たないことは同じ。**
     """
-    inside = _rows([(1.0, 10), (6.0, 80), (60.0, 100), (61.0, 100)], vid="IN")
+    inside = _rows([(1.0, 10), (6.0, 80), (30.0, 100), (95.0, 100)], vid="IN")
     assert "帯の中 1本・帯の外 0本・分けられない 0本" in "\n".join(tr.hold_lines(inside))
-    outside = _rows([(1.0, 10), (6.0, 40), (60.0, 100), (61.0, 100)], vid="OUT")
+    outside = _rows([(1.0, 10), (6.0, 40), (30.0, 100), (95.0, 100)], vid="OUT")
     assert "帯の中 0本・帯の外 1本・分けられない 0本" in "\n".join(tr.hold_lines(outside))
     assert "帯の中 1本・帯の外 1本・分けられない 0本" in "\n".join(tr.hold_lines(inside + outside))
 
@@ -153,3 +161,64 @@ def test_ledger_now_answers_the_question_section7_asked():
     six = [r for r in got if r["at"][6.0]]
     assert len(six) >= 4
     assert all(0 < r["at"][6.0]["pct"] <= 100 for r in six)
+
+
+# ---------------------------------------------------------------------------
+# 「確定」は平らの長さで決める（2026-09-11 05:4x・optimizer・Opus）
+#   この回に踏んだ形: 3本目 `lQHX9LJ80Sg` が **0.5時間 前に +2回 伸びた**まま
+#   「確定」へ落ちた（直近2点が同じ値だった ＝ それだけ）。`hold` の 05:4x の註。
+# ---------------------------------------------------------------------------
+
+def test_直近2点が平らなだけの本を確定と読まない():
+    """**踏んだ実物の形**（齢 67h・0.5時間 前に伸び・最後の2点が同じ値）。"""
+    rows = _rows([(1.0, 10), (6.0, 200), (66.0, 690), (66.7, 692), (67.2, 692)])
+    got = tr.hold(rows)[0]
+    assert got["since_rise_h"] == 0.5
+    assert got["growing"] is True
+    line = "\n".join(tr.hold_lines(rows))
+    assert "まだ伸びている" in line and "最後の伸びから 0.5h" in line
+    # **陽性対照**: 直す前の形（直近2点だけ）は、この本を「確定」と読む。
+    env = tr.envelope(tr.series(rows)[list(tr.series(rows))[0]])
+    assert (env[-1] > env[-2]) is False
+
+
+def test_門は_flats_の境目で_定数を足していない():
+    """門は `flats` が実測から引き直す（`FLAT_STOP_H` はその床）。**新しい定数は無い。**"""
+    # 「20時間 平らだったあとに伸びた」本が同じ台帳に居ると、門はその長さより上へ動く。
+    resumed = _rows([(1.0, 10), (10.0, 50), (40.0, 50), (41.0, 90), (120.0, 90)], vid="BACK")
+    thresh = tr.flats(resumed)["thresh_h"]
+    assert thresh == tr.hold(resumed)[0]["flat_thresh_h"]
+    assert thresh >= tr.FLAT_STOP_H
+
+
+def test_一度も伸びていない本は_並びの全長で見る():
+    """伸びた点が 1つも無い本を、`0時間 前に伸びた`（＝ 門を素通り）と読まないこと。"""
+    rows = _rows([(1.0, 7), (30.0, 7), (95.0, 7)])
+    got = tr.hold(rows)[0]
+    assert got["since_rise_h"] == 94.0 and got["growing"] is False
+    # **陽性対照**: 同じ形でも、まだ 24時間 に届いていなければ確定にしない。
+    young = tr.hold(_rows([(1.0, 7), (30.0, 7), (50.0, 7)], vid="YOUNG"))[0]
+    assert young["since_rise_h"] == 49.0 and young["growing"] is False
+    fresh = tr.hold(_rows([(1.0, 7), (20.0, 7)], vid="FRESH"))[0]
+    assert fresh["growing"] is True          # 齢 48h 前 ＝ 分母はこれから増える
+
+
+def test_実物の台帳で_確定の本は最後の伸びから門を越えている():
+    """**この検査は数を固定しません**（本が増えれば動く）—— 見るのは規則だけ。"""
+    got = tr.hold(tr.ledger_rows())
+    assert got
+    for r in got:
+        if not r["growing"]:
+            assert r["age_h"] >= 48.0
+            assert r["since_rise_h"] >= r["flat_thresh_h"], r["id"]
+
+
+def test_帯の判定は_この直しで動いていない():
+    """**向きは変わらないこと**（05:4x の註）——伸びている本に「帯の中」は返さない側は同じ。"""
+    got = tr.hold(tr.ledger_rows())
+    tally = {"in": 0, "out": 0, "unknown": 0}
+    for r in got:
+        v = tr.hold_verdict(r["at"][6.0], bool(r["growing"]))
+        if v:
+            tally[v] += 1
+    assert tally["in"] == 0                  # 帯の中と言い切れる本は 0本 のまま
