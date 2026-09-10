@@ -278,6 +278,12 @@ def points(laps: int = 6, n: int = 3, after: datetime | None = None) -> list[dic
             s7a, s7b = measure7(a), measure7(b)
         except (KeyError, ValueError):
             s7a = s7b = None
+        # **塊ごと**も同じ窓で数えます（合計の門は、塊どうしの打ち消しに対して盲・`split_drawn` の註）。
+        try:
+            sp_a, sp_b = measure7_split(a), measure7_split(b)
+            s7_split = {nm: (sp_b[nm]["body_chars"] - sp_a[nm]["body_chars"]) / laps for nm in SPAN7_NAMES}
+        except (KeyError, ValueError):
+            s7_split = None
         # **本の節**（毎周 読む 4つ目・2026-09-11 06:5x）。**id で挟む** —— 節の番号は本が増えると動く。
         try:
             bk_a, bk_b = books_all(a), measure_books(b)
@@ -298,6 +304,7 @@ def points(laps: int = 6, n: int = 3, after: datetime | None = None) -> list[dic
             "now": mb,
             "s7_body": None if s7b is None else s7b["body_chars"] - s7a["body_chars"],
             "s7_per_lap": None if s7b is None else (s7b["body_chars"] - s7a["body_chars"]) / laps,
+            "s7_split": s7_split,
             "s7_now": s7b,
         })
     return out
@@ -344,6 +351,44 @@ def split_report(laps: int = 6, n: int = 3, after: datetime | None = None) -> st
     return "\n".join(out)
 
 
+def split_drawn(ps: list[dict]) -> list[str]:
+    """**塊ごとの門**（1周 +300字・直近 2窓 とも越えたら）。名前は `SPAN7_NAMES` の順。
+
+    **なぜ合計とは別に要るか**（2026-09-11 07:3x・optimizer・Opus が足した）:
+    3塊 の門は**合計だけ**を見ていました。合計は**塊どうしの打ち消しに対して盲**です ——
+    1つ が伸び、別の 1つ が畳まれた窓では、合計は下を向きます。
+    **実測（この回・`--split --points 8`）**:
+
+        09/11 03:22 → 06:58   いまの数 **+416字/周** / 末尾の一覧 **-1,401字/周**
+                              → 合計は **-882字/周** ＝ 門は鳴らない
+
+    ＝ **畳んだのは 末尾の一覧（04:4x の -8,404字）で、伸びたのは「いまの数」**。
+    合計の側から見ると、この 2つ は同じ 1つ の数に潰れます。
+    **4つ目（本の節）の門は最初から節ごと**なので（`book_report`）、
+    **塊の側だけが合計で読まれていました** —— そろえます。
+
+    **この門が名指しする側の水準**（同じ回に数えた）: 「いまの数」は
+    **09/09 23:1x の 3,957字 → 09/11 06:5x の 16,339字（48周 で +313%）**。
+    §7 自身が「**毎周 上書き**する1塊」と書いている側が、3塊 の **58%** を占めています。
+
+    **覆る条件**: (1) この門が引かれた回に `--split` を撃って、名指しされた塊が
+    実際には**日付つきの節の出入り**で動いていた（挟みが滑った）なら、
+    直すのは門ではなく `section7_spans`（その註の覆る条件 (1)(2)）。
+    (2) 合計の門と塊の門が **3窓 続けて同じ答え**しか返さなければ、塊の側は畳んでよい
+    （＝ 打ち消しは起きていない ＝ この註の前提が外れた）。
+    """
+    ok = [p for p in ps if p.get("s7_split")]
+    tail2 = ok[-2:]
+    if len(tail2) < 2:
+        return []
+    drawn = []
+    for nm in SPAN7_NAMES:
+        vals = [p["s7_split"][nm] for p in tail2]
+        if all(v > CHAR_GATE for v in vals):
+            drawn.append(f"{nm}（{vals[0]:+.0f} / {vals[1]:+.0f}）")
+    return drawn
+
+
 def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
     ps = points(laps, n, after)
     out = [f"METHOD の「毎回 読む」側（§0〜§6・§8）の伸び —— 窓は {laps}周・**周の刻で挟む**（commit ではない）"]
@@ -376,6 +421,13 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
             "**`--split` で どの塊が吸ったかを名指ししてから、§5／§6 の形を当てること**"
             if len(s7[-2:]) == 2 and len(over) == 2 else
             f"引かれません（直近 2窓 で越えたのは {len(over)} つ）"))
+        # **塊ごとの門**（合計は打ち消しに対して盲・`split_drawn` の註・2026-09-11 07:3x）。
+        sd = split_drawn(ps)
+        out.append(f"  塊ごとの門 1周 +{CHAR_GATE}字: " + (
+            "**引かれました** —— " + "・".join(sd) +
+            "。**合計が下を向いていても、この塊は伸びています**（打ち消し）。"
+            "§5／§6 の形を当てること（決めは本文・derivation は外）"
+            if sd else "引かれません（直近 2窓 とも越えた塊は 0 つ）"))
     out += book_report(ps)
     return "\n".join(out)
 

@@ -342,3 +342,70 @@ def test_positive_control_4つ目_の_いま_は窓の端の_blob_ではない�
     lv = [l for l in M.report().split("\n") if "いま 本文 **" in l]
     assert lv == [l for l in out.split("\n") if "いま 本文 **" in l]
     assert all("-1字" not in l for l in lv)
+
+
+# ---- 塊ごとの門（合計は打ち消しに対して盲・2026-09-11 07:3x・optimizer・Opus）----
+#
+# 実測 09/11 03:22 → 06:58: いまの数 +416字/周 / 末尾の一覧 -1,401字/周 → 合計 -882字/周。
+# **畳んだ塊と伸びた塊が同じ窓に居ると、合計は下を向く。**
+# 4つ目（本の節）の門は最初から節ごとなので、3塊 の側だけが合計で読まれていた。
+# 覆る条件は `method_growth.split_drawn` の註。
+
+def _s7p(**per_lap):
+    return {"s7_split": {n: float(per_lap.get(n, 0.0)) for n in M.SPAN7_NAMES}}
+
+
+def test_塊ごとの門は_2窓_続いたときだけ引く():
+    assert M.split_drawn([_s7p(いまの数=400), _s7p(いまの数=10)]) == []
+    drawn = M.split_drawn([_s7p(いまの数=400), _s7p(いまの数=400)])
+    assert drawn == ["いまの数（+400 / +400）"]
+
+
+def test_塊ごとの門は窓が_1つ_しか無ければ引かないこと():
+    assert M.split_drawn([_s7p(いまの数=900)]) == []
+    assert M.split_drawn([]) == []
+
+
+def test_positive_control_合計が下を向いても塊の門は鳴ること():
+    """**この門が在る理由そのもの** —— 打ち消しの窓を 2つ 並べる。
+
+    合計（`s7_per_lap`）は -985 と -985 で、字の門は 1度も鳴らない。
+    それでも「いまの数」は 2窓 とも +416 で伸びている。
+    """
+    ps = [{"s7_per_lap": -985.0, **_s7p(いまの数=416, 末尾の一覧=-1401)} for _ in range(2)]
+    assert all(p["s7_per_lap"] < 0 for p in ps)          # 合計は下向き
+    assert M.split_drawn(ps) == ["いまの数（+416 / +416）"]
+    # 畳んだ側（末尾の一覧）は名指ししないこと
+    assert "末尾の一覧" not in "".join(M.split_drawn(ps))
+
+
+def test_塊ごとの門は報告に印字されること():
+    assert "塊ごとの門" in M.report()
+
+
+def test_positive_control_報告の行は_split_drawn_の答えを載せていること(monkeypatch):
+    """**壊したら落ちるまで撃つ** —— 行が在るだけでは、その門が繋がっている証拠になりません
+    （実測: `sd = []` に潰しても「塊ごとの門: 引かれません」は同じ字で出ました）。"""
+    monkeypatch.setattr(M, "split_drawn", lambda ps: ["いまの数（+416 / +416）"])
+    line = [l for l in M.report().split("\n") if "塊ごとの門" in l]
+    assert len(line) == 1
+    assert "**引かれました**" in line[0] and "いまの数（+416 / +416）" in line[0]
+    monkeypatch.setattr(M, "split_drawn", lambda ps: [])
+    line = [l for l in M.report().split("\n") if "塊ごとの門" in l]
+    assert "引かれません" in line[0]
+
+
+def test_塊ごとの門は_3塊_の名を全部見ること():
+    """1つでも見落とすと、その塊だけが測られない側へ移る（12:1x が踏んだ形）。"""
+    for n in M.SPAN7_NAMES:
+        assert M.split_drawn([_s7p(**{n: 400}), _s7p(**{n: 400})]) == [f"{n}（+400 / +400）"]
+
+
+def test_points_は塊ごとの数も同じ窓で持つこと():
+    ps = M.points()
+    assert ps and all(p["s7_split"] is not None for p in ps)
+    for p in ps:
+        assert set(p["s7_split"]) == set(M.SPAN7_NAMES)
+        # 塊の和は合計（`s7_per_lap`）と一致すること
+        # ＝ 別の挟みで数えていないことの陽性対照（`section7_spans` を 1つ 落とすと割れる）
+        assert abs(sum(p["s7_split"].values()) - p["s7_per_lap"]) < 1e-6
