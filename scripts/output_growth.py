@@ -119,7 +119,30 @@ def _copy_ledger_until(src: Path, dst: Path, cut: datetime) -> None:
     dst.write_text("\n".join(keep) + "\n", encoding="utf-8")
 
 
-def output_at(sha: str, ledger_cut: datetime | None = None) -> str:
+_SITECUSTOMIZE = """import datetime as _dt, os
+_v = os.environ.get("STUDIO_FAKE_NOW")
+if _v:
+    _fixed = _dt.datetime.fromisoformat(_v)
+
+    class _D(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _fixed.astimezone(tz) if tz is not None else _fixed.replace(tzinfo=None)
+
+        @classmethod
+        def utcnow(cls):
+            return _fixed.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+
+        @classmethod
+        def today(cls):
+            return _fixed.replace(tzinfo=None)
+
+    _dt.datetime = _D
+"""
+
+
+def output_at(sha: str, ledger_cut: datetime | None = None,
+               now: datetime | None = None) -> str:
     """その commit の `studio/` を、**いまの台帳の写し**に当てて `trend` を走らせ、出力を返す。
 
     台帳は写しなので、古いコードが書いても本物には届きません（`trend` は読むだけですが、
@@ -135,6 +158,21 @@ def output_at(sha: str, ledger_cut: datetime | None = None) -> str:
     検査 `test_この回が撃った_3点_と_1字も違わないこと` は、**その次の周に必ず赤くなる形**でした。
     **点を書くときは、その台帳の刻も一緒に書くこと** —— 刻が在れば、あとから何周 経っても再現できます。
     （§6 の「赤が既定になると、次の回は自分が壊したのかを見分けられません」の族）
+
+    **【2026-09-11 02:3x・optimizer・Opus】台帳を切るだけでは再現しませんでした。**
+    23:2x の「刻が在れば何周 経っても再現できます」は**偽**で、**3周 もちませんでした** ——
+    `trend` は齢と「引いたのは N時間 前」を**実時計**（`common.now_jst`）から出すので、
+    台帳を切っても**走らせた時刻**で字数が動きます。
+    実測: 同じ sha・同じ台帳の刻で **8,088 → 8,089字**。増えた 1字 は
+    `analytics_line` の **「引いたのは 9時間 前」→「10時間 前」**でした
+    （**桁が変わる所を跨いだ瞬間に赤くなる** ＝ 23:2x が閉じたつもりの穴と同じ形）。
+    **いまは `ledger_cut` を渡すと `now` も同じ刻に凍らせます**（`_SITECUSTOMIZE` を
+    写しの側にだけ置き、`PYTHONPATH` で当てる ＝ `studio/` は 1行も触らない）。
+    ＝ **その刻に印字されたはずの物**を再現します。**古いコードにも効きます**（起動時に当てるので）。
+    **`now`** は既定で `ledger_cut` と同じ刻です。**別に渡せるのは陽性対照のため**
+    （台帳を 1行も動かさずに時計だけ動かして、凍らせが本当に届いているかを見る）。
+    **覆る条件**: (5) 実時計を `datetime.datetime.now` 以外（`time.time`・OS の日付）から
+    取る印字が出たら、この凍らせ方では止まりません —— そのときは差だけを見て、絶対の字数の点は捨てること。
     """
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
@@ -155,8 +193,16 @@ def output_at(sha: str, ledger_cut: datetime | None = None) -> str:
                     _copy_ledger_until(f, d / "data" / "studio" / f.name, ledger_cut)
             else:
                 os.symlink(f, d / "data" / "studio" / f.name)
+        envv = dict(os.environ)
+        clock = now if now is not None else ledger_cut
+        if clock is not None:
+            # **台帳を切るだけでは再現しません**（註の 02:3x）—— 実時計も同じ刻に凍らせる。
+            # `now` を別に渡せるのは**陽性対照のため**（台帳を動かさずに時計だけ動かす）。
+            (d / "sitecustomize.py").write_text(_SITECUSTOMIZE, encoding="utf-8")
+            envv["PYTHONPATH"] = os.pathsep.join([str(d), envv.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+            envv["STUDIO_FAKE_NOW"] = clock.isoformat()
         r = subprocess.run([sys.executable, "-m", "studio.cli", "trend"],
-                           cwd=d, capture_output=True, text=True)
+                           cwd=d, capture_output=True, text=True, env=envv)
         if r.returncode != 0:
             raise RuntimeError(
                 f"{sha[:8]} の studio/ が いまの台帳で落ちました（註の覆る条件 (1)）:\n{r.stderr[-400:]}")
