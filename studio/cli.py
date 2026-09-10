@@ -164,6 +164,58 @@ def comment_line_text(text: str, limit: int = STATUS_COMMENT_CHARS, one_line: bo
     return one[:limit] + f"…〔＋{len(one) - limit}字・全文は `python -m studio.cli comments`〕"
 
 
+def over_ledger(vid: str, live: int, rows: list[dict] | None = None) -> int | None:
+    """`status` の生の読みが、**台帳が持っている最大より高い**とき、その差を返す（でなければ None）。
+
+    2026-09-10 12:4x JST（optimizer・Opus）に足した。**この回に踏んだ。**
+
+    **踏んだ形**: 12:25 の `status` は 3本目 `lQHX9LJ80Sg` を **658回** と印字し、
+    7分後の `measure`（`settle_stats` の **3回 読みの最大**）は **613回** を台帳へ書きました。
+    **同じ `videos.list` の同じ `statistics.viewCount`** です（読む口は 1つ）。
+    **再生は減らないので、真の値は 658 以上** ＝ **台帳に入った 613 は 45回（7.3%）低い。**
+
+    **なぜ 3回 では拾えないか**（この回に撃って数えた・1読み 1単位）:
+
+        8回 読み    613×7・**658×1**
+        24回 読み   613×24（**0回**）
+        ＝ 高いほうの複製は **33読み中 2回（約6%）** しか出ません
+
+    ＝ `settle_stats(reads=3)` がこれを拾う見込みは **2割 を切ります**。
+    **そして 3回 が全部そろっても、それは「落ち着いた」ではありません** ——
+    この回の `measure` は「揺れた **0本**」と印字しており、`n_values` は **1** です。
+    **§7 (h) の覆る条件 (3) は `n_values` で鳴る門なので、この型では構造的に鳴りません。**
+
+    **効くのは「いまの数」ではなく「平ら」の側**（envelope は最大を取るので、
+    次にどれかの読みが 658 を見た周に台帳は追いつきます）——
+    **追いつくまでのあいだ、台帳には同じ値が並び、それは「本が止まった」と同じ形に見えます。**
+    実測: 3本目 は 48.3h→50.5h の **4周** が 613 で並んでおり、§7 (a) はこの並びを
+    「48.3h の +77 のあと 平ら」と読んで **60.4時間 の物差し**に当てています。
+    **その平らの少なくとも一部は、本ではなく読みです。**
+
+    **手**: `status` はこの読みに **1単位 も払っていません**（本の行を出すのに既に引いた数）。
+    **高い側を見たら、捨てずに印字する。** 拾うのは次の `measure` の仕事（judgement は
+    `hourly`・§5）。ここは「台帳がまだ持っていない数を、いま見た」と言うだけです。
+
+    **比べる先は台帳の最大**（envelope と同じ側）で、最後の行ではありません ——
+    `recounts` が峰を落とした本では、最後の行より高い値が台帳に在ります。
+    **低い側は印字しません**（遅れている複製は既知で、envelope が吸います・§6）。
+
+    **覆る条件**: (1) この印が出た次の `measure` が 3周 続けてその数に届かなければ、
+    高い側は複製ではなく別の口 ＝ そのときは `settle_stats` の `reads` ではなく
+    **どの読みが高いか**（時刻・順番）を数えること。
+    (2) この印が 1度も出ないまま 7本 過ぎたら、12:25 の 658 は一度きりの揺れ ＝ この口を外す。
+    (3) 印が毎周 出るなら、拾う側（`settle_stats` の `reads`）を上げるほうが安い。
+    """
+    rows = ledger_rows() if rows is None else rows
+    seen = [r["views"] for r in rows
+            if r.get("event") == "measured" and r.get("id") == vid
+            and isinstance(r.get("views"), int)]
+    if not seen:
+        return None
+    top = max(seen)
+    return live - top if live > top else None
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
@@ -186,9 +238,13 @@ def cmd_status(a):
         if yt.when(v).date() > now_jst().date():
             print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['title'][:40]}{lineup_mark(v, sids)}")
     print("直近 公開 10本:")
+    lrows = ledger_rows()
     for v in yt.published()[:10]:
         age = (now_jst() - yt.when(v)).total_seconds() / 3600
-        print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['views']:5d}回 いいね{v['likes']:3d} 齢{age:5.0f}h {v['title'][:36]}")
+        # 2026-09-10 12:4x: **台帳より高い読みを捨てない**（`over_ledger` の註。追加 0単位）。
+        over = over_ledger(v["id"], v["views"], lrows)
+        mark = f"  ** 台帳の最大より +{over}回 ＝ まだ台帳に無い（次の measure で拾うこと）" if over else ""
+        print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['views']:5d}回 いいね{v['likes']:3d} 齢{age:5.0f}h {v['title'][:36]}{mark}")
     # 視聴者のコメントは 2026-09-07 20:4x まで1度も見ていなかった（`yt.viewer_comments()` の註）。
     # 唯一の批評「ＡＩナレーショングダグダ」は 9日間 読まれていない。**ここに出し続けること。**
     try:
