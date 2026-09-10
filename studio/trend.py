@@ -2298,6 +2298,18 @@ CHANNEL_MISMATCH = 0.10                 # `cli.record_channel` の覆る条件 (
 #: —— 窓の頭の真の値を上から抑えるのに使う（`channel_video_delta` の註）。片方だけ動かさないこと。
 REPLICA_LAG_H = 2.8
 
+#: **(m) の「3周 続いたら」を数える塊の長さ**（2026-09-10 21:4x・optimizer・Opus）。
+#: 窓ぜんたい（`channel_growth`）は**台帳の両端**なので刻が進むだけ伸び、`sum_confirmed` は
+#: **単調に増えるだけ**です（`cut = t0 + REPLICA_LAG_H` の t0 が動かないので、`late` は増える一方 ＝
+#: `min(late)` は下がる一方・`b` は上がる一方）。**＝ 1度 引かれた門は、新しい証拠が 1つも無くても
+#: 次の周・その次の周と引かれ続け、「3周 続いた」が勝手に埋まります。**
+#: `_flat_laps` の註（「行を数えると 1.3倍 速く門に着く」）と同じ族で、こちらは**時刻**の側。
+#: → 塊は**重ならないように**切り、1塊ごとに 1回だけ数えます（`channel_over_blocks`）。
+#: 長さは **遅れの 2倍** ＝ 塊の中に「遅れの外」の区間が 遅れと同じだけ残ります
+#: （ちょうど `REPLICA_LAG_H` にすると `late` が末尾の 1点 だけになり、
+#: 数えるのは伸びではなく複製の揺れになります）。
+CHANNEL_BLOCK_MIN_H = 2 * REPLICA_LAG_H
+
 
 def _channel_rows(rows: list[dict]) -> list[dict]:
     """`channel` の行を**刻の順**に並べて返す。
@@ -2431,6 +2443,88 @@ def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> d
     return out
 
 
+def _channel_gate(rows: list[dict], a: dict, b: dict) -> dict:
+    """**1つの区間**（`channel` の行 a → b）で、`record_channel` の覆る条件 (1) が引かれるか。
+
+    窓ぜんたい（`channel_growth`）も 1塊（`channel_over_blocks`）も**同じこの口**を通します
+    —— 2つの実装を持つと、片方だけ直した回に「同じ問いに違う答え」が出ます
+    （METHOD §5 の教訓の形 1つ目と同じ族）。
+    """
+    t0, t1 = _at(a), _at(b)
+    span_h = (t1 - t0).total_seconds() / 3600
+    d_subs, d_views = b["subs"] - a["subs"], b["views"] - a["views"]
+    vd = channel_video_delta(rows, t0, t1)
+    denom = max(abs(d_views), abs(vd["sum"]))
+    mismatch = None if denom == 0 else abs(d_views - vd["sum"]) / denom
+    conf = vd["sum_confirmed"]
+    return {"t0": t0, "t1": t1, "span_h": span_h,
+            "d_subs": d_subs, "d_views": d_views, "vd": vd,
+            "mismatch": mismatch, "conf": conf,
+            # **門は片側だけ**（`channel_video_delta` の註 —— 逆向きは「触っていない 250本」で説明が付く）
+            # **かつ、分子は `sum_confirmed`** —— `None`（区間が遅れより短い）なら引けません
+            "over": (mismatch is not None and mismatch >= CHANNEL_MISMATCH
+                     and conf is not None and conf > d_views)}
+
+
+def channel_over_blocks(rows: list[dict]) -> list[dict]:
+    """**(m) の「3周 続いたら」を、重ならない塊で数える**
+    （2026-09-10 21:4x・optimizer・Opus。**API 0単位**）。
+
+    **なぜ「周」で数えないか（この回に実物で撃った）**: `channel_growth` の窓は
+    **台帳の `channel` の行の両端**で、周が進むほど伸びるだけです。その窓の `sum_confirmed` は
+    **単調に増えるだけ**（`cut = t0 + REPLICA_LAG_H` の `t0` が動かないので `late` は増える一方 ＝
+    `min(late)` は下がる一方・包絡 `b` は上がる一方）。
+    ＝ **1度 引かれた門は、新しい証拠が 1つも無くても次の周・その次の周と引かれ続けます。**
+    実測（この回・11周 を1周ずつ再生した）: `over` は 10周 とも False で、
+    21:20 の周に初めて True。その True の中身は `gv1u7n_pCAQ` の **930 → 932（+2回）** 1本 だけで、
+    **同じ +2 が、次の周も その次の周も同じ窓の中に居ます** ＝ 周で数えると
+    **2時間 後には「3周 続いた」が埋まり、(m) の当て所ごと作り直す**ことになっていました。
+
+    **数え方**: いちばん新しい行から**後ろへ**、長さ `CHANNEL_BLOCK_MIN_H`（＝ 遅れの 2倍）以上 の
+    塊に切り、**塊どうしは重ねません**。返すのは**新しい順**に、塊ごとの `_channel_gate`。
+    切り残し（いちばん古い側の、長さの足りない塊）は返しません ＝ **まだ言えない**。
+
+    **覆る条件**: (1) 塊が 3つ そろう前にチャンネルの `viewCount` が動いたら、
+    そこで数え直し（`over` でない塊が 1つ 入れば連なりは切れる ＝ `channel_over_streak`）。
+    (2) 周の間隔が伸びて 1塊 に 2周 も入らなくなったら（1塊 5.6時間 ＝ いまの床 37分 で 9周）、
+    塊の中の点が足りず `sum_confirmed` が `None` になります —— そのときは長さではなく
+    **点の数**で切ること。(3) `REPLICA_LAG_H` を動かす回は、この長さも一緒に動きます（定義から）。
+    """
+    laps = _channel_laps(_channel_rows(rows))
+    out: list[dict] = []
+    i = len(laps) - 1
+    while i >= 0:
+        t1 = _at(laps[i][-1])
+        j = i
+        while j >= 0 and (t1 - _at(laps[j][0])).total_seconds() / 3600 < CHANNEL_BLOCK_MIN_H:
+            j -= 1
+        if j < 0:
+            break                       # 切り残し ＝ まだ言えない
+        out.append(_channel_gate(rows, laps[j][0], laps[i][-1]))
+        i = j - 1
+    return out
+
+
+def channel_over_streak(rows: list[dict]) -> dict:
+    """**いま何塊 続けて (m) の門が引かれているか**（新しい側から数える）。
+
+    `channel_over_blocks` の註のとおり、**周ではなく塊**で数えます。
+    §7 (m) の「3周 続いたら (m) の当て所ごと作り直し」は、この `streak` が
+    `CHANNEL_FLAT_LAPS`（3）に届いた回のことです ＝ **`3 × 5.6時間 ＝ 16.8時間` ぶんの、
+    重ならない証拠**。`blocks` が 3つ に満たないうちは、届きようがありません（`ready` が False）。
+    """
+    bs = channel_over_blocks(rows)
+    n = 0
+    for b in bs:
+        if not b["over"]:
+            break
+        n += 1
+    return {"streak": n, "blocks": len(bs), "need": CHANNEL_FLAT_LAPS,
+            "block_h": CHANNEL_BLOCK_MIN_H,
+            "ready": len(bs) >= CHANNEL_FLAT_LAPS,
+            "drawn": n >= CHANNEL_FLAT_LAPS}
+
+
 def channel_growth(rows: list[dict]) -> dict:
     """台帳の `channel` の行から、**チャンネル全体の登録と総再生の増え**を数える
     （2026-09-10 15:5x・optimizer・Opus。**API 0単位** —— 数は `cli.record_channel` が毎周 残す）。
@@ -2463,34 +2557,32 @@ def channel_growth(rows: list[dict]) -> dict:
     base = {"n": len(cs), "laps": len(laps), "flat_laps": _flat_laps(laps),
             "vid_sum": None, "vid_n": None, "vid_fresh": None, "vid_skipped": None,
             "vid_confirmed": None, "vid_unconfirmable": None,
-            "mismatch": None, "over": False}
+            "mismatch": None, "over": False,
+            "over_streak": 0, "over_blocks": 0, "over_ready": False, "over_drawn": False}
     if len(cs) < 2:
         return {**base, "span_h": None, "d_subs": None, "d_views": None,
                 "views_per_h": None, "subs_per_view": None,
                 "subs": cs[-1]["subs"] if cs else None, "views": cs[-1]["views"] if cs else None}
     a, b = cs[0], cs[-1]
-    t0, t1 = _at(a), _at(b)
-    span_h = (t1 - t0).total_seconds() / 3600
-    d_subs, d_views = b["subs"] - a["subs"], b["views"] - a["views"]
-    vd = channel_video_delta(rows, t0, t1)
-    denom = max(abs(d_views), abs(vd["sum"]))
-    mismatch = None if denom == 0 else abs(d_views - vd["sum"]) / denom
     # **門に当てるのは `sum_confirmed`（遅れでは説明が付かない伸びだけ）**
     # —— `sum` は「窓の中で見えるようになった再生」で、窓より前に付いたぶんを含みます
     # （`channel_video_delta` の註・2026-09-10 19:3x の実測）。
-    conf = vd["sum_confirmed"]
-    return {**base, "span_h": span_h, "d_subs": d_subs, "d_views": d_views,
-            "views_per_h": (d_views / span_h) if span_h >= CHANNEL_MIN_SPAN_H else None,
-            "subs_per_view": (d_subs / d_views) if d_views > 0 else None,
+    # **窓ぜんたいの `over` は「いま引かれているか」だけ。「3周 続いたか」は
+    # `channel_over_streak`（重ならない塊）で数えます** —— この窓は伸びる一方なので、
+    # 同じ 1回の証拠が毎周 数え直されます（`channel_over_blocks` の註・21:4x）。
+    g = _channel_gate(rows, a, b)
+    vd, conf = g["vd"], g["conf"]
+    st = channel_over_streak(rows)
+    return {**base, "span_h": g["span_h"], "d_subs": g["d_subs"], "d_views": g["d_views"],
+            "views_per_h": (g["d_views"] / g["span_h"]) if g["span_h"] >= CHANNEL_MIN_SPAN_H else None,
+            "subs_per_view": (g["d_subs"] / g["d_views"]) if g["d_views"] > 0 else None,
             "subs": b["subs"], "views": b["views"],
             "vid_sum": vd["sum"], "vid_n": vd["n"], "vid_fresh": vd["fresh"],
             "vid_skipped": vd["skipped"],
             "vid_confirmed": conf, "vid_unconfirmable": vd["unconfirmable"],
-            "mismatch": mismatch,
-            # **門は片側だけ**（`channel_video_delta` の註 —— 逆向きは「触っていない 250本」で説明が付く）
-            # **かつ、分子は `sum_confirmed`** —— `None`（窓が遅れより短い）なら引けません
-            "over": (mismatch is not None and mismatch >= CHANNEL_MISMATCH
-                     and conf is not None and conf > d_views)}
+            "mismatch": g["mismatch"], "over": g["over"],
+            "over_streak": st["streak"], "over_blocks": st["blocks"],
+            "over_ready": st["ready"], "over_drawn": st["drawn"]}
 
 
 def channel_line(rows: list[dict]) -> str:
@@ -2535,9 +2627,22 @@ def channel_line(rows: list[dict]) -> str:
     # **覆る条件 (1) を、次の回が手で数えなくてよいように道具が当てる**（`channel_video_delta` の註）
     conf = g["vid_confirmed"]
     if g["over"]:
+        # **「3周 続いたか」は、この窓では数えられません**（`channel_over_blocks` の註・21:4x）——
+        # 窓は台帳の両端なので伸びる一方で、`sum_confirmed` は単調に増えるだけ ＝
+        # **同じ 1回の証拠が毎周 数え直され、新しい証拠なしに「3周」が埋まります**。
+        # 数えるのは**重ならない塊**（1塊 ＝ 遅れの 2倍）。
         tail = (f"。**確かめられた伸びは {conf:+d}回**（複製の遅れ {REPLICA_LAG_H:.1f}時間 の外の読みで抑えた側）"
                 "＝ **合計がチャンネルを越えました ＝ `record_channel` の覆る条件 (1) が引かれます**"
-                "（触っている本の増えを、総再生が受け取っていない）。")
+                "（触っている本の増えを、総再生が受け取っていない）。"
+                f"**「{CHANNEL_FLAT_LAPS}周 続いたか」は、周ではなく「重ならない塊」で数えます**"
+                f"（1塊 {CHANNEL_BLOCK_MIN_H:.1f}時間 ＝ 遅れの 2倍・`trend.channel_over_streak`）: "
+                f"**いま {g['over_streak']}/{CHANNEL_FLAT_LAPS} 塊**"
+                + (f"（切れた塊は {g['over_blocks']}個 ＝ **まだ {CHANNEL_FLAT_LAPS} に届きようがありません**）"
+                   if not g["over_ready"] else "")
+                + ("。**引かれました ＝ (m) の当て所ごと作り直すこと**" if g["over_drawn"]
+                   else "。**この窓の `over` を「1周ぶん」と数え足さないこと** —— "
+                        "同じ +N が次の周もこの窓に居ます")
+                + "。")
     elif conf is None:
         tail = (f"（**窓 {g['span_h']:.1f}時間 ＜ 遅れ {REPLICA_LAG_H:.1f}時間** ＝ "
                 "**この窓では伸びを確かめられません** —— `sum` の側だけで門を引かないこと。"

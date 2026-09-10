@@ -48,9 +48,22 @@ def test_本物の台帳に_maxが高すぎた行は無い() -> None:
     settled = [s for s in sh if s["after"] in ("high", "low")]
     assert settled, "決着した行が 1行も無い ＝ `_settled_after` が動いていない"
     lows = [s for s in settled if s["after"] == "low"]
+    known = {r["id"] for r in trend.recounts(_rows())}
     for s in lows:
-        assert s["verdict"] == "recount" or s["id"] in {r["id"] for r in trend.recounts(_rows())}, \
-            f"低い側で水準になったのに、数え直しの本ではない ＝ 覆る条件 (1) の手前を見直すこと: {s}"
+        if s["verdict"] == "recount" or s["id"] in known:
+            continue
+        # **2026-09-10 21:5x に 3つ目の枝を足しました**（optimizer・Opus。実測で落ちた）——
+        # `CIPYV_r1Hdo` 齢 103.5h・287 対 290・`held_h` **1.21時間**。
+        # `recounts()` は生が包絡を `ENVELOPE_LAG_H`（6.0時間）より長く下回るまで挙げないので、
+        # **どの本の 1度目の数え直しも、決着した瞬間は必ずこの形**になります
+        # （`trend.shakes` の 19:0x の註が、まさにそう書いてあった側）。
+        # ＝ ここで赤くしていたのは道具ではなく**この検査の主張**でした
+        # （METHOD §5 の教訓の形 3つ目「落ちなければ、疑うのは道具ではなく検査のデータ」の裏返し）。
+        held = s["held_h"]
+        assert held is not None and held < trend.ENVELOPE_LAG_H, (
+            "低い側で水準になり、しかも生が包絡を "
+            f"{trend.ENVELOPE_LAG_H}時間 より長く下回っているのに `recounts()` が挙げていない "
+            f"＝ 数え直しの機構そのものを見ること: {s}")
 
 
 def test_齢_48h_超で割れた行は_低いほうが窓で通った値() -> None:
