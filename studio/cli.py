@@ -442,8 +442,9 @@ def cmd_status(a):
         # この回は「30時間 放置」と読み違え、API を別に 1単位 撃って確かめた。
         nun = sum(1 for c in cs if not c.get("answered"))
         # **突き合わせのもう1方向**（`gone_comments` の註）。**立たない回は 1字も足さない。**
-        gone = gone_comments(ledger_rows(), cs)
-        gmark = f"・!! **消えた {len(gone)}件**（`comments` を撃つこと）" if gone else ""
+        _lrows = ledger_rows()
+        gone = gone_comments(_lrows, cs)
+        gmark = gone_status_mark(_lrows, gone)
         print(f"視聴者コメント: {len(cs)}件（台帳に無い新着 {len(fresh)}件{note}{gmark}"
               + (f"・うちスレッドの返信 {nrep}件" if nrep else "")
               + f"・**未返信 {nun}件**" + "）")
@@ -804,6 +805,39 @@ def gone_comments(rows: list[dict], live: list[dict]) -> list[dict]:
         seen.add(cid)
         out.append(r)
     return out
+
+
+def gone_unlogged(rows: list[dict], gone: list[dict]) -> list[dict]:
+    """消えたコメントのうち、**台帳の `comment_gone` にまだ無いもの**（2026-09-10 18:3x・optimizer・Opus）。
+
+    **穴**: `gone_comments` は台帳の `viewer_comment` と いまの API を比べるので、
+    **1度 消えたコメントは、以後ずっと「消えている」**。`cmd_status` はそれを毎周
+    「!! 消えた N件（`comments` を撃つこと）」と印字していました ——
+    **`cmd_comments` が 15:35 に `comment_gone` を台帳へ書いたあとも、同じ命令を出し続けます。**
+    実測: この行が立ってから 09/10 18:0x の回まで、**中身は同じ 1件**（`Ugy3gdkwxAy5P3Nw_fd4AaABAg`）で、
+    18:0x の回はその命令に従って `comments` を **1単位** 撃ち、**台帳に既に在る事実**を読み直しました。
+
+    ＝ **「毎周 印字して捨てる」の裏返し**（`cli.record_channel` の族）: 台帳には残っているのに、
+    印字の側が台帳を見ないので、**済んだ仕事の命令が消えません**。
+    **数は残す**（§7 (n) は件数で数える）・**命令は未記録のぶんにだけ出す**。
+
+    **覆る条件**: (1) 消えたコメントが**戻ってくる**回が在ったら（API にまた出る）、
+    `comment_gone` は「その時点で消えていた」印にすぎないので、戻りも台帳へ残すこと。
+    (2) 未記録が 0件 の窓で、それでも `comments` を撃つ理由が出たら（新着・未返信の側）、
+    それは**この行ではなく新着の行が言うこと**。
+    """
+    logged = {r.get("comment_id") for r in rows if r.get("event") == "comment_gone"}
+    return [r for r in gone if r.get("comment_id") not in logged]
+
+
+def gone_status_mark(rows: list[dict], gone: list[dict]) -> str:
+    """`status` の1行に足す印。**未記録が在るときだけ「撃つこと」と言う**（`gone_unlogged` の註）。"""
+    if not gone:
+        return ""
+    new = gone_unlogged(rows, gone)
+    if new:
+        return f"・!! **消えた {len(gone)}件**（うち未記録 {len(new)}件 ＝ `comments` を撃つこと）"
+    return f"・消えた {len(gone)}件（**台帳に記録ずみ ＝ この行のために撃たなくてよい**）"
 
 
 def gone_comments_line(rows: list[dict], live: list[dict]) -> str:

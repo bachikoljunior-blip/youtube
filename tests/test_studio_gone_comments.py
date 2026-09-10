@@ -97,3 +97,38 @@ def test_positive_control_direction():
     """**陽性対照**: 「新着」の側（live に在って台帳に無い）は、この口では 1件も数えない。"""
     rows = [_led("c1")]
     assert cli.gone_comments(rows, [_live("c1"), _live("c2")]) == []
+
+
+def _gone_led(cid: str) -> dict:
+    return {"event": "comment_gone", "comment_id": cid, "id": "vvv",
+            "author": "@a", "posted_at": "2026-09-08T03:39:30Z", "text": "本文"}
+
+
+def test_記録ずみの消えたコメントは撃つ命令を出さない():
+    """2026-09-10 18:3x（optimizer・Opus）。**数は残し、命令だけ引っ込める**（`gone_unlogged` の註）。"""
+    rows = [_led("c1"), _gone_led("c1")]
+    gone = cli.gone_comments(rows, [])
+    assert len(gone) == 1                       # 数は消えない（§7 (n) は件数で数える）
+    assert cli.gone_unlogged(rows, gone) == []  # 記録ずみ ＝ 未記録は 0件
+    mark = cli.gone_status_mark(rows, gone)
+    assert "撃つこと" not in mark and "!!" not in mark and "1件" in mark
+
+
+def test_まだ記録していない消えたコメントは撃つ命令を出す():
+    rows = [_led("c1")]
+    gone = cli.gone_comments(rows, [])
+    assert [r["comment_id"] for r in cli.gone_unlogged(rows, gone)] == ["c1"]
+    assert "撃つこと" in cli.gone_status_mark(rows, gone)
+
+
+def test_消えたコメントが0件なら1字も足さない():
+    assert cli.gone_status_mark([_led("c1"), _gone_led("c1")], []) == ""
+
+
+def test_positive_control_記録の突き合わせは種別を見る():
+    """**陽性対照**: `comment_gone` ではなく `viewer_comment` の側を数えると、
+    **消えたコメントは必ず「記録ずみ」に見えます**（同じ `comment_id` が両方に在るため）。
+    種別で引いているので、`comment_gone` が 1行 も無いこの並びでは 1件 が未記録に立ちます。"""
+    rows = [_led("c1")]
+    gone = cli.gone_comments(rows, [])
+    assert len(cli.gone_unlogged(rows, gone)) == 1
