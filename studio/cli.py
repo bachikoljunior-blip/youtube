@@ -1017,7 +1017,18 @@ def cmd_analytics(a):
         print(f"維持率カーブ（窓 {cstart}〜{last_day}・**残っている率**・"
               f"`audienceWatchRatio`。1.00 より上は見直し）:")
     for r in picked:
-        mk = analytics.curve_marks(analytics.curve(r["video"], cstart, last_day))
+        # **1本 の 500 で、残りのカーブを落とさないこと**（この回に `9zkfjEH48PY` で実測）。
+        # **エラーと空は別**（`analytics.curve` の覆る条件 (2)）—— `marks: None` にせず、
+        # `error` を残して次の回が数えられるようにする。
+        try:
+            mk = analytics.curve_marks(analytics.curve(r["video"], cstart, last_day))
+        except Exception as e:  # noqa: BLE001
+            print(f"  !! {r['video']} カーブが引けなかった: {str(e)[:80]}"
+                  "（**空とは別**・`analytics.curve` の覆る条件 (2)）")
+            ledger("analytics_curve", r["video"], day=last_day, start=cstart,
+                   studio=r["video"] in sids, views=int(r["views"]), marks=None,
+                   error=str(e)[:200])
+            continue
         mark = "新" if r["video"] in sids else "旧"
         if mk is None:
             print(f"  {mark} {r['video']}  **空**（覆る条件 (1)（齢）を見ること・`analytics.curve` の註）")

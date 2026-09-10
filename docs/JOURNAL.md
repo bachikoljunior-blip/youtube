@@ -119321,3 +119321,9 @@ SUBSCRIBER 174（4.4%）/ RELATED_VIDEO 38 / YT_OTHER_PAGE 31 / ほか 9**
 下限は **再生 145回 → 100点・76回 → 0点** のあいだ（`CURVE_MIN_VIEWS = 100` はその上側）。
 
 `pytest -m live` **778 passed / 12 skipped・赤 0**（771 → 778）。陽性対照は **6つ とも落とした**。
+
+**16:5x（同じ回）**: カーブの引きを **1本ずつ守った** —— この回に `9zkfjEH48PY` で
+**HttpError 500** を1度 見ています。守らないと、1本の 500 で**残りのカーブが全部 落ちます**
+（台帳の `analytics_day`/`video`/`traffic` は先に書いてあるので、落ちるのはカーブだけ）。
+**エラーと空は別**なので `marks: None` に加えて `error` を残し、次の回が数で分けられるようにした
+（`analytics.curve` の覆る条件 (2)）。`pytest -m live` **779 passed・赤 0**。

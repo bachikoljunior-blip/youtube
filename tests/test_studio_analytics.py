@@ -218,3 +218,14 @@ def test_カーブが1本も無ければ行を出さない():
 def test_カーブの行も毎周の並びに入っている():
     import inspect
     assert "curve_line(" in inspect.getsource(trend.lines)
+
+
+def test_エラーで返った本は空とは別に数える():
+    """**1本 の 500 で残りを落とさない・`error` を残す**（`analytics.curve` の覆る条件 (2)）。"""
+    import inspect
+    src = inspect.getsource(cli.cmd_analytics)
+    assert "except Exception" in src and 'error=str(e)' in src
+    rows = _curve_rows([("n1", True, 0.71, 0.21)])
+    rows.append({"event": "analytics_curve", "id": "n2", "studio": True, "views": 150,
+                 "marks": None, "error": "HttpError 500", "at": _at("2026-09-10 16:45")})
+    assert trend.curve_state(rows)["empty"] == ["n2"]
