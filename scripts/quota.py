@@ -161,6 +161,11 @@ QUANT_FULL_PCT = 8.0
 # **覆る条件**: 1日1本 の規則が変わったら、この 720 も測り直すこと。
 FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 720.0
 
+#: **余裕の門**（`ceiling_rate()` ÷ 要る速さ）。ここを切ったら着地の数を信じずに掃き直す。
+#: **出どころは1か所**（2026-09-11 07:5x・optimizer・Opus。それまで `pace_report` と
+#: `margin_line` が 3.0 を別々に持っていた ＝ 片方だけ動かせる形でした）。
+CEILING_MARGIN_GATE = 3.0
+
 # **オーナー指示（2026-09-02 18:4x JST・原文。一字も変えないこと）**:
 #
 # > **「使用量は定期的に画面送るからとりあえず最初は今までの最高速度の二分の一の速度でやって」**
@@ -1250,6 +1255,14 @@ def record_model_choice(role: str, model: str, why: str,
         "all_models_week_pct": (round(float(p["used_now"]), 1)
                                 if p.get("used_now") is not None else None),
         "fable_only_pct": (round(float(fe["est"]), 1) if fe.get("est") is not None else None),
+        # **その周が実際に見た余裕**（`ceiling_rate()` の門 3.0倍）。**手で並べないこと** ——
+        # 2026-09-11 07:5x まで §7「いまの数」が「3.07 → 3.07 → …」を**手で送って**いました。
+        # `pace(過去の刻)` で数え直すと同じ列は出ません（`per_lap` と遅れは**いまの台帳**から
+        # 引き直されるので、過去の点も「いまの基準」で塗り替わる）——実測 09/10 17:45〜21:58 の
+        # **8周 とも 3.094〜3.098**、手の列は 3.07〜3.09。**同じ物を指していません。**
+        # ＝ **その周が見た数は、その周に書くしかありません**（読む側は `margin_series()`）。
+        "reach_ceiling_margin": (round(float(p["reach_ceiling_margin"]), 3)
+                                 if p.get("reach_ceiling_margin") is not None else None),
         "expected_goal_effect": (
             "次に出る1本の台本を持つ（題材・台本・直し ＝ 効き目の当のもの・高）" if tier == "leverage"
             else "measure・道具・親の手続き・公開前の build/hear（Opus で足りる所・他モデルの半分）" if tier == "other"
@@ -1260,6 +1273,62 @@ def record_model_choice(role: str, model: str, why: str,
     with MODEL_CHOICE_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
     return row
+
+
+def margin_series(n: int = 8) -> list[tuple[str, float]]:
+    """**余裕（`ceiling_rate()` ÷ 要る速さ）の、周ごとの列**を新しい順の逆（古い順）で返す。
+
+    出どころは `data/model_choice.jsonl` の `reach_ceiling_margin`
+    （親が周ごとに 2行 積むので、**同じ刻は 1つ に畳む**）。API 0単位。
+
+    **なぜ台帳から読むのか**（2026-09-11 07:5x・optimizer・Opus）:
+    この列は §7「いまの数」に **手で送られて**いました（「3.07 → 3.07 → 3.08 → 3.08 → 3.09」）。
+    **`pace(過去の刻)` で数え直しても、その列は出ません** —— `per_lap` も遅れも
+    **いまの台帳**から引き直されるので、過去の点まで「いまの基準」で塗り替わります。
+    実測（この回・09/10 17:45〜21:58 の 8周 を数え直した）: **3.094〜3.098**（手の列は 3.07〜3.09）。
+    ＝ **どちらが正しいかではなく、別の問いです**:
+
+        手の列（その周が見た数）  基準は毎回ちがう ＝ **「門を切ったか」はこちらで読む**
+        数え直し（いまの基準）    基準は同じ ＝ **「時が減るぶんの下がり」はこちらで読む**
+
+    **門（3.0倍）を切ったかは前者**なので、その周に書くしかありません。
+    **手で送るのをやめ、親が周ごとに積むようにしました**（`record_model_choice`）。
+
+    **覆る条件**: (1) この列が **3周 続けて 1つも積まれなかったら**（親が `pace()` で
+    落ちている ＝ `record_model_choice` の `except` に入っている）、欠けを黙って詰めないこと
+    —— 空の周は空のまま出し、`pace()` の側を見ること。
+    (2) 列の点が **8周 そろっても門を 1度も切らないまま 3日** 続いたら、
+    見る数は余裕ではなく着地の側へ戻してよい（`ceiling_rate()` の覆る条件 (1) と一緒に読む）。
+    """
+    if not MODEL_CHOICE_FILE.exists():
+        return []
+    seen: dict[str, float] = {}
+    for line in MODEL_CHOICE_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        m, at = r.get("reach_ceiling_margin"), r.get("at")
+        if m is None or not at:
+            continue
+        seen[at] = float(m)                      # 同じ刻の 2行 は畳む（親は役ごとに 1行）
+    return sorted(seen.items())[-n:]
+
+
+def margin_line(n: int = 8) -> str:
+    """`margin_series` を1行にする（`--pace` が印字する。**手で並べないこと**）。"""
+    xs = margin_series(n)
+    if not xs:
+        return ("      余裕の列: **まだ 1点も積まれていません**（`record_model_choice` が "
+                "`reach_ceiling_margin` を書き始めた回より前 ＝ 次の周から埋まります）")
+    body = " → ".join(f"{v:.2f}" for _, v in xs)
+    hit = [f"{a[5:16]} {v:.2f}" for a, v in xs if v < CEILING_MARGIN_GATE]
+    return (f"      余裕の列（周ごと・その周が見た数・`quota.margin_series`）: **{body}**"
+            f"（{len(xs)}周・門 {CEILING_MARGIN_GATE:.1f}倍）"
+            + (f" —— **切った周: {'・'.join(hit)}** ＝ 掃き直すこと" if hit else " ＝ **門の上**"))
 
 
 def sub_model(now: datetime | None = None, role: str | None = None) -> tuple[str, str]:
@@ -1960,8 +2029,9 @@ def pace_report(now: datetime | None = None) -> None:
                   f"閉じた輪が出せる最速 **{p['reach_ceiling_rate']:.2f} %/時**"
                   f"（1周の最短 {FLOOR_MIN_CLAMP:.0f}分 ＋ 遅れ {p['reach_lag_min']:.1f}分）に対し、"
                   f"要るのは **{p['forward_rate']:.2f} %/時** ＝ **{m:.2f}倍 の余裕**"
-                  + ("（門 3.0倍 を切っています ＝ **着地を信じずに掃き直すこと**）" if m < 3.0
-                     else "（門 3.0倍）"))
+                  + (f"（門 {CEILING_MARGIN_GATE:.1f}倍 を切っています ＝ **着地を信じずに掃き直すこと**）"
+                     if m < CEILING_MARGIN_GATE else f"（門 {CEILING_MARGIN_GATE:.1f}倍）"))
+            print(margin_line())
         print(f"      いまの間隔のまま **{p['reach_carry']:.1f}%**"
               f"（＝ 直近の区間の {p['carry_rate']:.3f} %/時。"
               f"**残す {100.0 - p['reach_carry']:.0f}% は、リセットで消えます**）")
