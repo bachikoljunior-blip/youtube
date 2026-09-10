@@ -628,6 +628,10 @@ AGE_BUCKETS = ((0, 12), (12, 24), (24, 36), (36, 48), (48, 72), (72, 10_000))
 #: ＝ そろえないと、帯の率だけが下へ引かれます（**門 0.5 へ向かう向き** ＝ 帯を「在る」と言わせる側）。
 GAP_BUCKETS = ((0, 30), (30, 60), (60, 120), (120, 1_000_000))
 
+#: 齢だけの比と 齢＋長さ の比が これだけ割れたら、**門 (2) は齢＋長さ の側で読む**
+#: （`_matched` の覆る条件 (0)。2026-09-10 09:0x に **0.103倍 で初めて越えました**）。
+GAP_SPLIT = 0.1
+
 
 def _pairs(rows: list[dict]) -> list[dict]:
     """`measured` の連続する2点を、判定に要る形だけにして並べる。
@@ -816,16 +820,24 @@ def _matched(inf: list[dict]) -> dict:
 
     ＝ **30分 を越えると、長いほうが伸び率は低い**（＝ 長さは「伸びた」を予言しない。
     長い組は測りが疎な時期＝伸びる本が居なかった時期から来ています）。
-    **§5 の「必ず一致する2つ目の意見に、確かめる力は無い」に当たるので、判定は齢の側のままにします。**
+    ~~**§5 の「必ず一致する2つ目の意見に、確かめる力は無い」に当たるので、判定は齢の側のままにします。**~~
+    **【2026-09-10 09:0x に、この行は取り消しました（optimizer・Opus）】** 差は
+    0.010 → 0.050 → 0.069 → 0.086 → 0.094 → 0.099 → **0.103倍** と **7周 続けて開き、門 0.1 を越えました**。
+    ＝ **2つの意見は一致していません**（03:4x に「必ず一致する」と読んだのは、**差が小さかった1周ぶん**の話でした）。
+    **これからの門 (2) は `gate_side`（＝ 齢＋長さ）の側で読むこと。** どちらで読むかは
+    **道具が毎周 印字し、`informative()` の `gate_side`/`gate_ratio`/`gate_n` に残します**
+    ——読み替えを人の記憶に置くと、次の回が古い側を読みます（この repo が §5 で 2度 踏んだ形）。
     それでも `GAP_BUCKETS` を残して毎周 印字するのは、**偏りが片側にしか無いから**です ——
     10〜30分 の組は **6組 とも帯**（帯の最短 10.7分 対 外の最短 41.0分。出どころは親の穴埋めの周・§5）で、
     **0/6 が帯の分母だけを膨らませ、率を下げます**（実測: 帯 6/26 23.1% → 長さもそろえると 6/22 **27.3%** ＝ **+4.2 ポイント**）。
     **その向きは門 0.5 へ向かう向き ＝ 帯を「在る」と言わせる側**なので、放っておけません。
 
-    **覆る条件**: (0) 齢だけの比と 齢＋長さ の比が **0.1倍 以上** 割れた回が出たら、
-    そのときは長さが効いている ＝ **門は齢＋長さ の側で読むこと**（いまの差は §7 の (2) を見ること）。
-    **越える回に要るのは、道具の直しではなく読み替えだけです** —— `trend` は毎周 両方を印字するので、
-    その回は §7 (2) と (b-2) の「そろえた比」を**齢＋長さ の数のほうで**読み、そう書き直せば足ります。
+    **覆る条件**: ~~(0) 齢だけの比と 齢＋長さ の比が 0.1倍 以上 割れた回が出たら、門は齢＋長さ の側で読むこと~~
+    **＝ 2026-09-10 09:0x に引かれました（0.103倍）。門は `gate_side` の側で読みます。**
+    **(0-新) 差が `GAP_SPLIT` を下回ったまま 3周 続いたら、長さはもう効いていない ＝ 読む側は齢だけへ戻ります**
+    （`gate_side` が勝手に戻るので、そのときは §7 (2) の見出しを直すだけ。**戻りは「直った」ではなく
+    「帯の短い組が減った」印**なので、床（`quota.pace()`）が伸びていないかを一緒に見ること ——
+    開いた向きの理由が床だったので、閉じる向きの理由も床のはずです）。
     (1) 公開の刻を変えた本が出たら、帯が持てる齢が増えるので数え直すこと
     （`band_vs_age` の覆る条件 (2) と同じ刻 —— そのとき `unmatched` が短くなって教える）。
     (2) そろえた側でも 20組 を越えて 0.5倍 を切ったら、**そのときは齢では説明が付かない**
@@ -859,6 +871,22 @@ def _matched(inf: list[dict]) -> dict:
         gaps = sorted(p["gap_min"] for p in inf
                       if p["band"] is want_band and p["bucket"] in buckets)
         res[key] = statistics.median(gaps) if gaps else None
+
+    # **どちら側で門 (2) を読むかを、返り値に残す**（2026-09-10 09:0x・覆る条件 (0) が引かれた回）。
+    # 読み替えを人の記憶に置くと、次の回が古い側を読みます。
+    def _rt(a: tuple[int, int], b: tuple[int, int]) -> float | None:
+        return (a[0] / a[1]) / (b[0] / b[1]) if a[1] and b[1] and b[0] else None
+
+    r_age = _rt(res["band_matched"], res["out_matched"])          # type: ignore[arg-type]
+    r_gap = _rt(res["band_gapmatched"], res["out_gapmatched"])    # type: ignore[arg-type]
+    res["ratio_age"] = r_age
+    res["ratio_agegap"] = r_gap
+    if r_age is None or r_gap is None:
+        res["gate_side"], res["gate_ratio"], res["gate_n"] = "齢だけ", r_age, res["band_matched"][1]  # type: ignore[index]
+    elif abs(r_gap - r_age) >= GAP_SPLIT:
+        res["gate_side"], res["gate_ratio"], res["gate_n"] = "齢＋長さ", r_gap, res["band_gapmatched"][1]  # type: ignore[index]
+    else:
+        res["gate_side"], res["gate_ratio"], res["gate_n"] = "齢だけ", r_age, res["band_matched"][1]  # type: ignore[index]
     return res
 
 
@@ -1065,12 +1093,20 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     _gdiff = f"{abs(_r2 - _r1):.3f}倍" if _r1 is not None and _r2 is not None else "—"
     _bgm = f"{_inf['band_gap_med']:.1f}分" if _inf.get("band_gap_med") else "—"
     _ogm = f"{_inf['out_gap_med']:.1f}分" if _inf.get("out_gap_med") else "—"
+    # **門 (2) を読む側は、道具が言う**（2026-09-10 09:0x・optimizer・Opus。
+    #  この回に差が 0.103倍 ＝ 門 0.1 を越え、`_matched` の覆る条件 (0) が引かれた。
+    #  「読み替えだけ」で足りるが、**読み替えを人の記憶に置くと次の回が古い側を読む**ので、
+    #  どちらで読むかを毎周 印字する ——`gate_side` は返り値にも残る）。
+    _side, _gate = (("齢＋長さ", _r2) if _r1 is not None and _r2 is not None
+                    and abs(_r2 - _r1) >= GAP_SPLIT else ("齢だけ", _r1))
+    _gs = f"**{_side} の {_gate:.3f}倍**" if _gate is not None else "—"
     out.append(
         f"**齢の束をそろえると 帯 {_bmg}/{_bmn} 対 外 {_omg}/{_omn}（{_mat}）**"
-        f" —— そろえない生の側は {_raw}。**§7 の門 (2)（0.5倍）は、そろえた側で読むこと**"
-        f"（`_matched` の註）。**組の長さもそろえると {_gmat}**"
+        f" —— そろえない生の側は {_raw}。**組の長さもそろえると {_gmat}**"
         f"（帯 {_gbg}/{_gbn} 対 外 {_gog}/{_gon}・組の長さの中央値 帯 {_bgm}／外 {_ogm}）"
-        f" —— **齢だけの比との差 {_gdiff}**（門 0.1倍・`_matched` の覆る条件 (0)）。"
+        f" —— **齢だけの比との差 {_gdiff}**（門 {GAP_SPLIT}倍・`_matched` の覆る条件 (0)）。"
+        f"**§7 の門 (2)（0.5倍）を読む側は {_gs}** ——"
+        f"差が {GAP_SPLIT}倍 を越えた回から、門は齢＋長さ の側で読みます（`_matched` の覆る条件 (0)）。"
         f"**帯に1組も無い齢の束**: {_un}"
         f" —— 公開が 10:00 JST に固定なので、帯が持てる齢は 16〜24h・40〜48h… だけです。"
         f"**そこは伸びのいちばん濃い齢を含みません** ＝ そろえない比は、帯ではなく齢を測ります。")

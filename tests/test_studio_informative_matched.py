@@ -170,17 +170,42 @@ def test_長さもそろえた比が印字に出る():
     assert "齢だけの比との差" in hit[0]
 
 
-def test_本物の台帳では長さは門を動かさない():
-    """**動かす日が来たら教える** —— 差が 0.1倍 を越えたら門は齢＋長さ の側で読むこと。"""
+def test_本物の台帳では門は齢と長さの側で読む():
+    """**2026-09-10 09:0x に、差が 0.103倍 で門 0.1 を越えました**（前の回 0.099・7周 続けて開いた）。
+
+    前の形（`test_本物の台帳では長さは門を動かさない`）は「越えたら教える」仕掛けで、
+    **狙いどおり赤になって教えました**。越えたあとも同じ assert を残すと毎周 赤のままなので、
+    **見張る先を次の門へ移します** —— いまの見張りは 2つ:
+
+      (a) 読む側が `齢＋長さ` であること（`gate_side`。戻ったら `_matched` の覆る条件 (0-新)）
+      (b) その側の比が **0.5倍 を切っていない**こと（＝ 門 (2) が本当に引かれる日。判定は `hourly`・§5）
+    """
     from studio.cli import ledger_rows
     inf = trend.informative(ledger_rows())
-    if not (inf["band_matched"][1] and inf["out_matched"][1] and inf["out_matched"][0]):
-        return
-    if not (inf["band_gapmatched"][1] and inf["out_gapmatched"][1]
-            and inf["out_gapmatched"][0]):
+    if inf["gate_ratio"] is None:
         return
     d = abs(_ratio(inf["band_gapmatched"], inf["out_gapmatched"])
             - _ratio(inf["band_matched"], inf["out_matched"]))
-    assert d < 0.1, (
-        f"齢だけ と 齢＋長さ の比が {d:.3f}倍 割れた ＝ 長さが効いている。"
-        "`_matched` の覆る条件 (0) を読んで、門を齢＋長さ の側へ移すこと")
+    assert inf["gate_side"] == "齢＋長さ", (
+        f"齢だけ と 齢＋長さ の差が {d:.3f}倍 ＝ 門 {trend.GAP_SPLIT} を下回って戻った。"
+        "`_matched` の覆る条件 (0-新) を読むこと（3周 続いたら読む側を齢だけへ戻す）")
+    assert not (inf["gate_ratio"] < 0.5 and inf["gate_n"] > 20), (
+        f"門 (2) が引かれた: {inf['gate_side']} {inf['gate_ratio']:.3f}倍"
+        f"（帯 {inf['band_gapmatched']}・n={inf['gate_n']} > 20組）。"
+        "そろえた側でも 0.5倍 を切った ＝ 齢では説明が付かない。"
+        "**判定は `hourly`**（§5）—— optimizer は数を並べるだけ")
+
+
+def test_読む側は差が門を越えたときだけ齢と長さになる():
+    """**陽性対照**: 同じ道で、差が小さい台帳なら `gate_side` は齢だけへ戻る。"""
+    inf = trend.informative(_ledger_gap())
+    d = abs(_ratio(inf["band_gapmatched"], inf["out_gapmatched"])
+            - _ratio(inf["band_matched"], inf["out_matched"]))
+    want = "齢＋長さ" if d >= trend.GAP_SPLIT else "齢だけ"
+    assert inf["gate_side"] == want
+    assert inf["gate_ratio"] is not None and inf["gate_n"] > 0
+
+
+def test_読む側が印字に出る():
+    hit = [ln for ln in trend.lines(_ledger_gap()) if "門 (2)（0.5倍）を読む側" in ln]
+    assert hit, "どちらで読むかは毎周 印字すること（記憶に置かない）"
