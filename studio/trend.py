@@ -1751,6 +1751,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     out.append(over_lag_line(rows))
     # 公開ずみで 0回 の本の処理の状態（`cli.zero_probe_target` の覆る条件は周をまたいで数える）。
     out.append(zero_probe_line(rows))
+    out.append(views_absent_line(rows))
     # チャンネル全体の登録と総再生（`cli.record_channel` の註。**本ごとの 0回 を読む前に見る数**）。
     out.append(channel_line(rows))
     # 公開**前**の本の処理の印（`cli.record_ready` の註 ＝ 印字だけにしない族の 4つ目）。
@@ -2226,6 +2227,61 @@ def zero_probe_line(rows: list[dict]) -> str:
         body += ("  **`ok` だけ ＝ 0回 は本物**（出ていない側ではない）。"
                  f"**7本 過ぎて 1度も `ok` 以外が出なければ、この口は外してよい**（いま {z['books']}本）。")
     return body
+
+
+VIEWS_ABSENT_SINCE = "2026-09-10T14:20:00+09:00"
+# `yt.views_of` が「`viewCount` の欄が無い」と「0回」を分け始めた刻（台帳 `views_absent`）。
+# **これより前の `measured` は、欄が無くても 0回 として書かれています** ＝ 門の分母に入れない。
+
+
+def views_absent(rows: list[dict]) -> dict:
+    """**`viewCount` の欄が無い読み**（台帳 `measured` の `views_absent`）を数える。API 0単位。
+
+    **なぜ（2026-09-10 21:0x JST・optimizer・Opus）**: §7 (j) は「**いま 0件**。
+    1度でも立ったら、その本の台帳の 0回 を『配りが来ていない』と読まないこと。
+    **7本 過ぎて 1度も立たなければ、この口は外してよい**」と書いていますが、
+    **その 0件 も 7本 も、どこも数えていませんでした** —— `cli.cmd_status` が
+    その回の読みに印を出すだけで、**台帳に積んだ側を周をまたいで読む口が無い**。
+    ＝ 次の回は手で `grep` するしかなく、(m) が 09/10 16:4x に踏んだのと同じ形です
+    （`channel_video_delta` の註 ＝「覆る条件が、どこも数えていない条件だった」）。
+
+    **`n` は行の数・`books` は本の数**（同じ本が毎周 立ちます ＝ 行で本を数えないこと）。
+
+    **`since_books` は門 7本 の分母**: **この口が在ってから測った、こちらの本**の数。
+    `views_absent` は **False のときは書かれません**（`cli` が truthy のときだけ `extra` に足す）ので、
+    「欄が在った」と「この口より前の読み」を行だけでは分けられません ＝ **刻で分けます**
+    （`VIEWS_ABSENT_SINCE`）。旧作りの本は外します（§7 の「N本目」はこちらの本の数）。
+
+    **覆る条件**: (1) `n` が **1件でも立ったら**、その本の 0回 を `first_view`・`hold`・§7 (c) の
+    数から外すこと（`yt.views_of` の覆る条件 (1) と同じ ＝ ここはその**数える口**）。
+    (2) `since_books` が **7本** を越えて `n` が 0 なら、この口は外してよい。
+    (3) `views_absent` が False でも書かれるように `cli` を変えたら、`since_books` は
+    刻ではなく**欄の有無**で数えること（そのほうが正確 ＝ この定数は消える）。
+    """
+    since = dt.datetime.fromisoformat(VIEWS_ABSENT_SINCE)
+    marks = [r for r in rows
+             if r.get("event") == "measured" and r.get("views_absent")]
+    mine = ours(rows)
+    seen = {r["id"] for r in rows
+            if r.get("event") == "measured" and r.get("id") in mine
+            and _at(r) >= since}
+    return {"n": len(marks), "books": sorted({r["id"] for r in marks}),
+            "since_books": len(seen), "marks": marks}
+
+
+def views_absent_line(rows: list[dict]) -> str:
+    """`views_absent` を1行にする（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
+    a = views_absent(rows)
+    if a["n"] == 0:
+        return ("**`viewCount` の欄が無い読み: 0件**（台帳 `views_absent`・`yt.views_of`）—— "
+                "**1度でも立ったら、その本の台帳の 0回 を「配りが来ていない」と読まないこと**"
+                f"（覆る条件 (1)）。**この口が在ってから測った、こちらの本 {a['since_books']}本**"
+                "（門 **7本** ＝ 7本 過ぎて 1度も立たなければ、この口は外してよい）。")
+    return (f"**`viewCount` の欄が無い読み: {a['n']}件・{len(a['books'])}本** —— "
+            + "・".join(a["books"])
+            + " ＝ **その本の台帳の 0回 を「配りが来ていない」と読まないこと**"
+              "（`yt.views_of` の覆る条件 (1)）。"
+              "**`first_view`・`hold`・§7 (c) は、この本の 0 を数から外すこと。**")
 
 
 CHANNEL_MIN_SPAN_H = 0.5   # これより短い窓では、チャンネルの数の更新の刻みが見えるだけ
