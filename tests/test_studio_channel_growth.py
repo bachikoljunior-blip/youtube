@@ -41,13 +41,67 @@ def test_two_rows_give_the_delta():
     assert abs(g["views_per_h"] - 781 / 6.0) < 1e-9
 
 
-def test_ends_use_only_first_and_last():
-    """途中の点は使わない（チャンネルの `viewCount` は刻みで動く）。"""
+def test_a_lower_middle_point_does_not_move_the_ends():
+    """**低いほうの途中の点は使わない**（遅れた複製・`channel_replicas` の註）。"""
     rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
-            _row("2026-09-10T12:00:00+09:00", 99, 99999),   # 途中の跳ね
+            _row("2026-09-10T12:00:00+09:00", 27, 83000),   # 途中の低い読み ＝ 遅れた複製
             _row("2026-09-10T15:00:00+09:00", 29, 84781)]
     g = trend.channel_growth(rows)
     assert g["d_subs"] == 2 and g["d_views"] == 781
+
+
+def test_a_higher_middle_point_raises_the_last_end():
+    """**高いほうの途中の点は端を上げる**（2026-09-11 04:0x に向きを変えた）。
+
+    もとの形（`test_ends_use_only_first_and_last`）は「途中の点は使わない」で、
+    **跳ねを雑音として捨てて**いた。**この回に実物で外れた** ——
+    チャンネルの `viewCount` は遅れの違う複製から返り（02:12:18 **84,781** →
+    02:12:43 **86,406**・03:24 **84,781** → 03:27 に直に 5回 撃つと **5回 とも 86,406**）、
+    **低いほうが古い**。＝ 途中の高い読みは雑音ではなく、**その時刻に真の値がそこに在った証拠**で、
+    そのあとの低い読みは複製。単調な数なので、端は包絡で読む。
+    **本当の取り消し**（6時間 を越えて戻らない峰）は下の検査が分けている。
+    """
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T12:00:00+09:00", 27, 86406),   # 新しい複製
+            _row("2026-09-10T15:00:00+09:00", 29, 84781)]   # また遅れた複製に当たった
+    g = trend.channel_growth(rows)
+    assert g["d_views"] == 86406 - 84000
+    assert g["views"] == 86406
+
+
+def test_a_peak_that_never_comes_back_falls_out_of_the_ceiling():
+    """**6時間 を越えて戻らない峰は天井にしない**（`ceiling()` と同じ規則 ＝ 数え直し・取り消し）。"""
+    rows = [_row("2026-09-10T00:00:00+09:00", 27, 84000),
+            _row("2026-09-10T01:00:00+09:00", 27, 99999),   # 戻らない峰
+            _row("2026-09-10T09:00:00+09:00", 27, 84500),
+            _row("2026-09-10T15:00:00+09:00", 29, 84781)]
+    g = trend.channel_growth(rows)
+    assert g["views"] == 84781 and g["d_views"] == 781
+
+
+def test_replicas_are_counted_and_named():
+    """同じ周に割れた読みと、周の max の下がりを数える（**1点で「動いた」を読まないため**）。"""
+    rows = [_row("2026-09-11T02:12:18+09:00", 28, 84781),
+            _row("2026-09-11T02:12:43+09:00", 28, 86406),   # 25秒 差で +1,625
+            _row("2026-09-11T03:24:53+09:00", 28, 84781)]   # 72分 後に -1,625
+    r = trend.channel_replicas(rows)
+    assert r["split_laps"] == 1 and r["max_split"] == 1625
+    assert r["drops"] == 1 and r["max_drop"] == 1625
+    assert r["proved"] is True and r["env"] == 86406 and r["raw_last"] == 84781
+    line = trend.channel_replica_line(rows)
+    assert "複製" in line and "86406" in line
+
+
+def test_positive_control_envelope_ends_are_load_bearing():
+    """**陽性対照**: 端を生の読みに戻すと、上の 2件 の答えが変わること。"""
+    rows = [_row("2026-09-10T15:24:00+09:00", 28, 84781),   # 窓の頭（この回の実物と同じ形）
+            _row("2026-09-11T02:12:18+09:00", 28, 84781),
+            _row("2026-09-11T02:12:43+09:00", 28, 86406),   # 25秒 差の新しい複製
+            _row("2026-09-11T03:24:53+09:00", 28, 84781)]   # 端が遅れた複製
+    cs = trend._channel_rows(rows)
+    assert trend._pt_row(trend._channel_env_points(cs)[-1], end=True)["views"] == 86406
+    assert cs[-1]["views"] == 84781            # ＝ 生で読めば +0（門が偽で引かれる側）
+    assert trend.channel_growth(rows)["d_views"] == 1625
 
 
 def test_subs_per_view_is_none_when_views_did_not_move():
@@ -186,8 +240,10 @@ def test_flat_laps_counts_readings_and_draws_the_gate_at_three():
             _row("2026-09-10T12:00:00+09:00", 27, 84781)]
     g = trend.channel_growth(rows)
     assert g["flat_laps"] == 3                                # 84781 が 3周 続いた
-    assert "3周 続けて同じ読み" in trend.channel_line(rows)
-    assert "引かれました" in trend.channel_line(rows)
+    assert abs(g["flat_h"] - 2.0) < 1e-9                      # 10:00 → 12:00
+    line = trend.channel_line(rows)
+    assert "3周（**2.0時間**）続けて同じ読み" in line          # **周と一緒に時間を言う**（04:0x）
+    assert "引かれました" in line
 
 
 def test_flat_laps_resets_when_the_number_moves():

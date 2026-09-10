@@ -2431,19 +2431,156 @@ def _channel_laps(cs: list[dict]) -> list[list[dict]]:
     return laps
 
 
-def _flat_laps(laps: list[list[dict]]) -> int:
+def _channel_env_points(cs: list[dict]) -> list[dict]:
+    """周ごとに畳んで **その周の max** を取り、さらに前から単調にした（包絡）1点ずつを返す
+    （2026-09-11 04:0x・optimizer・Opus。**API 0単位**）。
+
+    **なぜ包絡か —— この回に実物で撃った（`channel_replicas` の註に derivation）**:
+    チャンネルの `viewCount` も **本ごとの `videos.list` と同じく、遅れの違う複製から返ります**。
+    実測 02:12:18 **84,781** → 02:12:43 **86,406**（**25秒 差で +1,625**）→ 03:24:53 **84,781**
+    → 03:27（5回 続けて）**86,406**。**単調に増える数が 72分 で 1,625回 下がることはありません**
+    ＝ 低いほうは**遅れた複製**です（`settle_stats` と同じ規則: **最大がいちばん新しい**）。
+
+    包絡にしないと、次の 2つ が**複製で決まります**:
+      * `channel_growth` の両端（`cs[0]` / `cs[-1]`）—— 端が古い複製に当たった周は
+        `d_views` が 0 や負になり、**(m) の門（合計 ＞ チャンネル）が偽で引かれます**
+        （この回の実測: 端が 84,781 で `d_views` **+0** ・`sum_confirmed` **+11** ＝ `over` True。
+         包絡で読むと `d_views` **+1,625** ＝ **引かれません**）。
+      * `channel_steps` の刻み —— 同じ 1,625 が **+1,625 と -1,625 の 2つの刻み**に見えます。
+
+    返す 1点: `t0`/`t1`（その周の最初と最後の刻）・`hi`（その周の max）・`env`（包絡）・
+    `drop`（前の周の包絡より、その周の max がどれだけ下か ＝ **複製の証拠**）・
+    `n_values`（その周に在った別々の値の数）・`subs`（その周の max）。
+
+    **本当の下がり（無効な再生の取り消し）は隠しません** —— 天井は `ceiling()` と同じ規則で決めます:
+    峰を最後に見てから **`ENVELOPE_LAG_H`（6時間）より長く**下回ったままなら、その峰は
+    遅れ（実測 最大 2.8時間）では説明が付かない ＝ 数え直しなので天井から落ちます。
+    ＝ **6時間 以内の低い読みは複製・6時間 を越えて戻らない高い読みは消える**、の 2つを同じ口で分けます。
+
+    **覆る条件**: (1) 下がったまま戻らない回の**長さ**が 6時間 に届かないのに、
+    次の日も戻らなかった回が出たら、`ENVELOPE_LAG_H` はチャンネルの側では短すぎる
+    （本ごとの複製の遅れから来た数なので、チャンネルの刻みでは引き直すこと）。
+    (2) 同じ周（10分）の中で割れない ＝ `n_values` が 1 のまま 7本 過ぎたら、
+    割れは周をまたいでしか起きない ＝ 畳む幅（`CHANNEL_SAME_ROUND_MIN`）を広げること。
+    """
+    laps = _channel_laps(cs)
+    his = [max(r["views"] for r in lap) for lap in laps]
+    ts = [_at(lap[0]) for lap in laps]
+    out: list[dict] = []
+    prev: int | None = None
+    for i, lap in enumerate(laps):
+        # **支えられている いちばん高い水準**（`ceiling()` と同じ規則を、チャンネルの側に当てる）——
+        # 峰を最後に見てから `ENVELOPE_LAG_H` より長く下回ったままなら、それは遅れでは説明できない
+        # ＝ **数え直し（無効な再生の取り消し）**なので、天井にしない。
+        env = his[i]
+        for v in sorted({h for h in his[:i + 1]}, reverse=True):
+            seen = max(t for t, h in zip(ts[:i + 1], his[:i + 1]) if h >= v)
+            if (ts[i] - seen).total_seconds() / 3600.0 <= ENVELOPE_LAG_H:
+                env = max(v, his[i])
+                break
+        out.append({"rows": lap, "t0": _at(lap[0]), "t1": _at(lap[-1]),
+                    "hi": his[i], "env": env,
+                    "drop": 0 if prev is None else max(0, prev - his[i]),
+                    "n_values": len({r["views"] for r in lap}),
+                    "subs": max(r["subs"] for r in lap)})
+        prev = env
+    return out
+
+
+def _pt_row(p: dict, end: bool = False) -> dict:
+    """包絡の1点を、`_channel_gate` が読む台帳の行の形にする（刻はその周の端の実物）。"""
+    return {"at": (p["rows"][-1] if end else p["rows"][0])["at"],
+            "subs": p["subs"], "views": p["env"]}
+
+
+def channel_replicas(rows: list[dict]) -> dict:
+    """**チャンネルの `viewCount` が複製から返っている証拠**を数える
+    （2026-09-11 04:0x・optimizer・Opus。**API 0単位** —— 台帳の `channel` の行を読むだけ）。
+
+    **この回に踏んだ**: 前の周（02:2x）は 02:12 の **+1,625** を「刻み」と読み、
+    §7 (m) の連なりを切り、刻みの周期（33〜40時間）まで derivation を書きました。
+    **同じ数が 03:24 に -1,625 で戻りました。** 直に撃つと（`channels.list` **5回**・5単位）
+    **5回 とも 86,406** ＝ 84,781 のほうが遅れた複製です。
+    **本ごとの `videos.list` の複製（`settle_stats`・09/09 19:1x）と同じ族が、チャンネルの側にも在る。**
+
+    返すもの: `split_laps`（同じ周に割れた読みが在った周の数）・`max_split`（その最大の幅）・
+    `drops`（周の max が前の周の包絡より下がった回）・`max_drop`・`proved`（どちらか 1度でも出たか）・
+    `env`（いまの包絡 ＝ **これが「いまの総再生」**）・`raw_last`（いちばん新しい生の読み）。
+
+    **効く先**: §7 (m) —— **「総再生が動いた／止まった」を 1点 で読まないこと。**
+    低い読みは遅れた複製で、**「刻み」と見分けられるのは、下がりが在るかどうかだけ**です。
+
+    **覆る条件**: (1) `proved` が False のまま 7本 過ぎたら、この口は外してよい
+    （チャンネルの側には複製が無い ＝ 包絡も要らない）。
+    (2) 下がりの幅が毎回 違う（同じ 2値 の往復ではない）なら、複製は 2つ ではないので
+    「最大がいちばん新しい」も怪しい ＝ そのときは `settle_stats` と同じ **3回 読み**を
+    `cli.record_channel` の側に足すこと（+2単位/周）。
+    """
+    ps = _channel_env_points(_channel_rows(rows))
+    splits = [p for p in ps if p["n_values"] > 1]
+    drops = [p for p in ps if p["drop"] > 0]
+    return {"laps": len(ps),
+            "split_laps": len(splits),
+            "max_split": max((max(r["views"] for r in p["rows"]) - min(r["views"] for r in p["rows"])
+                              for p in splits), default=0),
+            "drops": len(drops), "max_drop": max((p["drop"] for p in drops), default=0),
+            "proved": bool(splits or drops),
+            "env": ps[-1]["env"] if ps else None,
+            "raw_last": ps[-1]["rows"][-1]["views"] if ps else None}
+
+
+def channel_replica_line(rows: list[dict]) -> str:
+    """`channel_replicas` を1行にする（`trend`／`status` が毎周 印字する ＝ 次の回は覚えていなくてよい）。"""
+    r = channel_replicas(rows)
+    if not r["proved"]:
+        return ""
+    parts = []
+    if r["drops"]:
+        parts.append(f"**周の max が下がった回 {r['drops']}回・最大 -{r['max_drop']}回**")
+    if r["split_laps"]:
+        parts.append(f"**同じ周に割れた読み {r['split_laps']}周・最大 {r['max_split']}回**")
+    tail = ""
+    if r["raw_last"] is not None and r["env"] is not None and r["raw_last"] < r["env"]:
+        tail = (f"**いちばん新しい生の読み {r['raw_last']} は包絡 {r['env']} より下 ＝ "
+                "その読みは遅れた複製です**（`status` の 1点 をそのまま「いまの総再生」と読まないこと）。")
+    return ("**チャンネルの `viewCount` も複製から返ります**（" + "・".join(parts)
+            + "）—— 低い読みは遅れた複製で、**最大がいちばん新しい**"
+              "（`trend.channel_replicas` の註・`settle_stats` と同じ規則）。"
+            + tail
+            + "**「総再生が動いた／止まった」を 1点 で読まないこと。**")
+
+
+def _flat_span_h(ps: list[dict]) -> float:
+    """いまの平ら（包絡が同じ）が、**何時間**ぶんか（2026-09-11 04:0x・optimizer・Opus）。
+
+    **なぜ周ではなく時間も要るか**: `CHANNEL_FLAT_LAPS`（3周 ＝ いまの床 36分 で **約 1.2時間**）は、
+    実測の刻みの下端 **10.2時間**（`channel_steps`・02:2x）より**桁で短い**。
+    ＝ 3周 の平らは「チャンネルが止まった」の証拠になりません。**周と一緒に時間を印字すること。**
+    """
+    if not ps:
+        return 0.0
+    n = _flat_laps(ps)
+    if n < 2:
+        return 0.0
+    return (ps[-1]["t1"] - ps[len(ps) - n]["t0"]).total_seconds() / 3600.0
+
+
+def _flat_laps(ps: list[dict]) -> int:
     """**総再生が動かないまま、いま何周 続いているか**（いちばん新しい周を 1 と数える）。
+
+    **読むのは包絡**（`_channel_env_points`）—— 生の読みで数えると、遅れた複製に当たった周が
+    「動いた」に見えます（実測 2026-09-11 03:2x: 86,406 → 84,781 → 86,406）。
 
     **数え方をここに固定します**（次の回が読み直さなくてよいように）:
     `2` は「読みが 2周 続けて同じ ＝ 動かなかった区間が 1つ」。
     §7 (m) の門 `CHANNEL_FLAT_LAPS = 3` は **読みが 3周 続けて同じ**（区間 2つ）で引かれます。
     """
-    if not laps:
+    if not ps:
         return 0
-    last = max(r["views"] for r in laps[-1])
+    last = ps[-1]["env"]
     n = 0
-    for lap in reversed(laps):
-        if max(r["views"] for r in lap) != last:
+    for p in reversed(ps):
+        if p["env"] != last:
             break
         n += 1
     return n
@@ -2498,8 +2635,11 @@ def channel_steps(rows: list[dict]) -> dict:
           この関数は「刻み」ではなく「揺れ」を測っているので、そのときは `drops` の側と並べること。
     """
     cs = _channel_rows(rows)
-    laps = _channel_laps(cs)
-    pts = [(_at(lap[0]), max(r["views"] for r in lap)) for lap in laps]
+    ps = _channel_env_points(cs)
+    laps = [p["rows"] for p in ps]
+    # **包絡で読みます**（2026-09-11 04:0x）—— 生の周の max で読むと、遅れた複製に当たった周が
+    # **同じ 1,625 を「+1,625 と -1,625 の 2つの刻み」**に見せます（`channel_replicas` の註）。
+    pts = [(p["t0"], p["env"]) for p in ps]
     steps: list[dict] = []
     if pts:
         cur_v = pts[0][1]
@@ -2659,17 +2799,19 @@ def channel_over_blocks(rows: list[dict]) -> list[dict]:
     塊の中の点が足りず `sum_confirmed` が `None` になります —— そのときは長さではなく
     **点の数**で切ること。(3) `REPLICA_LAG_H` を動かす回は、この長さも一緒に動きます（定義から）。
     """
-    laps = _channel_laps(_channel_rows(rows))
+    # **端は包絡で読みます**（2026-09-11 04:0x・`channel_replicas` の註）——
+    # 端が遅れた複製に当たった塊は `d_views` が 0 や負になり、**門が偽で引かれます**。
+    ps = _channel_env_points(_channel_rows(rows))
     out: list[dict] = []
-    i = len(laps) - 1
+    i = len(ps) - 1
     while i >= 0:
-        t1 = _at(laps[i][-1])
+        t1 = ps[i]["t1"]
         j = i
-        while j >= 0 and (t1 - _at(laps[j][0])).total_seconds() / 3600 < CHANNEL_BLOCK_MIN_H:
+        while j >= 0 and (t1 - ps[j]["t0"]).total_seconds() / 3600 < CHANNEL_BLOCK_MIN_H:
             j -= 1
         if j < 0:
             break                       # 切り残し ＝ まだ言えない
-        out.append(_channel_gate(rows, laps[j][0], laps[i][-1]))
+        out.append(_channel_gate(rows, _pt_row(ps[j]), _pt_row(ps[i], end=True)))
         i = j - 1
     return out
 
@@ -2722,8 +2864,10 @@ def channel_growth(rows: list[dict]) -> dict:
     （そのときだけ「チャンネルの側」が本の 0回 の説明に使えます）。
     """
     cs = _channel_rows(rows)
-    laps = _channel_laps(cs)
-    base = {"n": len(cs), "laps": len(laps), "flat_laps": _flat_laps(laps),
+    ps = _channel_env_points(cs)
+    laps = [p["rows"] for p in ps]
+    base = {"n": len(cs), "laps": len(laps), "flat_laps": _flat_laps(ps),
+            "flat_h": _flat_span_h(ps),
             "vid_sum": None, "vid_n": None, "vid_fresh": None, "vid_skipped": None,
             "vid_confirmed": None, "vid_unconfirmable": None,
             "mismatch": None, "over": False,
@@ -2732,7 +2876,10 @@ def channel_growth(rows: list[dict]) -> dict:
         return {**base, "span_h": None, "d_subs": None, "d_views": None,
                 "views_per_h": None, "subs_per_view": None,
                 "subs": cs[-1]["subs"] if cs else None, "views": cs[-1]["views"] if cs else None}
-    a, b = cs[0], cs[-1]
+    # **両端も包絡で読みます**（2026-09-11 04:0x・`channel_replicas` の註。
+    # 実測: 端が遅れた複製 84,781 に当たり `d_views` が **+0**、`sum_confirmed` **+11** で
+    # (m) の門が**偽で引かれていました** —— 包絡なら **+1,625** ＝ 引かれません）
+    a, b = _pt_row(ps[0]), _pt_row(ps[-1], end=True)
     # **門に当てるのは `sum_confirmed`（遅れでは説明が付かない伸びだけ）**
     # —— `sum` は「窓の中で見えるようになった再生」で、窓より前に付いたぶんを含みます
     # （`channel_video_delta` の註・2026-09-10 19:3x の実測）。
@@ -2777,6 +2924,7 @@ def channel_line(rows: list[dict]) -> str:
     # **刻みで動く読みの「回/時」は率ではない**（`channel_steps` の註・2026-09-11 02:2x）——
     # 窓の中で総再生が **1度しか動いていない**なら、`views_per_h` の分子は刻み 1つ ぶんです。
     st_ = channel_steps(rows)
+    rep = channel_replica_line(rows)
     step = ""
     if st_["last"] is not None:
         L = st_["last"]
@@ -2789,7 +2937,10 @@ def channel_line(rows: list[dict]) -> str:
                      "（率として読まないこと・`channel_steps` の覆る条件 (2)）。")
     flat = ""
     if g["flat_laps"] >= 2:
-        flat = (f"**総再生は {g['flat_laps']}周 続けて同じ読み**（門 {CHANNEL_FLAT_LAPS}周）"
+        # **周と一緒に時間を言うこと**（`_flat_span_h` の註）—— 3周 は いまの床で 約1.2時間 で、
+        # 実測の刻みの下端（`channel_steps` の `flat_h_lo`）より桁で短い。
+        flat = (f"**総再生は {g['flat_laps']}周（**{g['flat_h']:.1f}時間**）続けて同じ読み**"
+                f"（門 {CHANNEL_FLAT_LAPS}周）"
                 + (("。**引かれましたが、この窓では「チャンネルが止まった」と読めません** ——"
                     f"同じ窓で本ごとの合計は {g['vid_sum']:+d}回 動いており（下）、総再生がそれを受け取っていない ＝"
                     "`record_channel` の覆る条件 (1) の側です（§7 (m)）"
@@ -2798,6 +2949,12 @@ def channel_line(rows: list[dict]) -> str:
                     "（§7 (m)）") if g["flat_laps"] >= CHANNEL_FLAT_LAPS
                    else f" ＝ **まだ引かれません**（あと {CHANNEL_FLAT_LAPS - g['flat_laps']}周）")
                 + "。")
+        # **平らが刻みの下端より短ければ、「止まった」とは読めません**（2026-09-11 04:0x）
+        step_lo = (st_["last"] or {}).get("flat_h_lo")
+        if step_lo is not None and g["flat_h"] < step_lo:
+            flat += (f"**ただし、この平らは {g['flat_h']:.1f}時間 で、直近に実測した刻みの手前の平ら "
+                     f"{step_lo:.1f}時間 より短い ＝ 「チャンネルが止まった」とは読めません**"
+                     "（`trend.channel_steps`・`_flat_span_h` の註）。")
     # **総再生が動かない窓で登録だけが動いたら、応答が丸ごと古いのではない**（`channel_growth` の註 (4)）
     if g["d_views"] == 0 and g["d_subs"]:
         flat += (f"**同じ窓で登録は {g['d_subs']:+d} 動いています** ＝ "
@@ -2844,7 +3001,7 @@ def channel_line(rows: list[dict]) -> str:
                else f"・食い違い **{g['mismatch'] * 100:.0f}%**" + tail))
     return (f"**チャンネル 登録 {g['subs']}（{g['d_subs']:+d}）・総再生 {g['views']}（{g['d_views']:+d}）**"
             f"（{g['laps']}周・点 {g['n']}件・窓 {g['span_h']:.1f}時間 ＝ **{g['views_per_h']:+.1f}回/時**）。"
-            f"{step}{flat}登録率 ＝ {rate}。{cmp_}"
+            f"{rep}{step}{flat}登録率 ＝ {rate}。{cmp_}"
             + ("**この窓では、総再生が動かないことを「チャンネルが止まった」と読まないこと** ——"
                "本ごとの合計のほうが動いており、総再生はそれを受け取っていません"
                "（`cli.record_channel` の覆る条件 (1) が引かれている ＝ 2つは別の刻みで動く）。"
