@@ -171,7 +171,7 @@ def book_sections(lines: list[str]) -> list[dict]:
 
     **見ていない側がいちばん大きくなっていました**（この回の実測・本文の字）:
 
-        §14（09/11 の本・`hourly` が読む側）  **24,292字**   ← 引用 0行
+        §14（09/11 の本・`hourly` が読む側）  **24,125字**   ← 引用 0行
         §4                                   12,969字
         §5 本文                              11,958字
         §13（5本目）                          6,002字   §15（7本目）  3,791字
@@ -181,9 +181,9 @@ def book_sections(lines: list[str]) -> list[dict]:
     §13・§15 はそのとおりに小さいまま ＝ **形が悪いのではなく、§14 でだけ守られていません。**
 
     **なぜ守られなかったか**: §14 が自分に置いた門は **行の門**でした
-    （「この節の伸びを 1周 +5行 以内に」）。行は守られています —— 直近 20周 は
+    （「この節の伸びを 1周 +5行 以内に」）。行は守られています —— 直近の周は
     10:2x の塊へ **1周 1行**ずつ畳み込んでおり、その 1行 が
-    **204〜1,043字**（中央 約 550字）です。
+    **116〜1,288字**（18本・中央 **578字**）です。
     ＝ 冒頭「この文書の読み方」が 11:0x に名指しした形そのもの
     （**「表と長い行に対して、行の門は構造として盲です」**）が、
     **行の門しか置いていない唯一の節**に残っていました。
@@ -380,7 +380,7 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
     return "\n".join(out)
 
 
-def book_report(ps: list[dict]) -> list[str]:
+def book_report(ps: list[dict], now: dict | None = None) -> list[str]:
     """**毎周 読む 4つ目（§9 以降のうち 直近の1本）**の水準と伸び（2026-09-11 06:5x に足した）。
 
     上の 2つ の物差しは「伸び」を見ますが、**ここは水準も印字します** ——
@@ -392,9 +392,18 @@ def book_report(ps: list[dict]) -> list[str]:
         return []
     out = ["**毎周 読むのに、上の 2つ が見ていない 4つ目**（§9 以降のうち **直近の1本**"
            "・冒頭「この文書の読み方」の 4つ目・2026-09-11 06:5x に足した）"]
+    # **「いま」は窓の端の blob ではなく作業ツリー**（2026-09-11 05:1x の `worktree_text` の註と同じ）。
+    # **この回に踏みました** —— 相手の押しを merge した直後に撃つと、`bs[-1]["books"]`（＝ blob）は
+    # **167字 古い数**（24,292）を印字し、実物は 24,125 でした。書いた回に撃つ数は、その回の字であること。
+    if now is None:
+        try:
+            now = measure_books(worktree_text())
+        except (KeyError, ValueError):
+            now = None
+    for sid, c in (now or {}).items():
+        out.append(f"  {sid}  いま 本文 **{c['body_chars']:,}字**"
+                   "（**作業ツリー** ＝ 押していない直しも入る）")
     last = bs[-1]["books"]
-    for sid, c in last.items():
-        out.append(f"  {sid}  いま 本文 **{c['now']:,}字**")
     for p in bs:
         for sid, c in p["books"].items():
             if c["per_lap"] is None:

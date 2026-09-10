@@ -231,7 +231,7 @@ def test_positive_control_作業ツリーを差し替えると_いま_だけが�
 #
 # 冒頭「この文書の読み方」が毎周 読ませているのは 4つ で、4つ目が「§9 以降のうち 直近の1本」。
 # 12:1x（§0〜§6・§8）と 23:5x（§7 の 3塊）の物差しは、**その 4つ目を 1字も見ていなかった**。
-# 実測（この回）: §14 は **24,292字**（§13 6,002・§15 3,791 の 4倍）で、
+# 実測（この回）: §14 は **24,125字**（§13 6,002・§15 3,791 の 4倍）で、
 # 毎周 読む物のどれよりも大きい。**§14 が自分に置いた門は行の門だけ**で、
 # 冒頭が 11:0x に名指しした「行の門は表と長い行に対して構造として盲」に、そのまま当たっている。
 # 覆る条件は `method_growth.book_sections` の註。
@@ -320,3 +320,25 @@ def test_報告に_4つ目_の水準が出ること():
     assert "毎周 読むのに、上の 2つ が見ていない 4つ目" in out
     for sid, c in live.items():
         assert f"{sid}  いま 本文 **{c['body_chars']:,}字**" in out
+
+
+def test_positive_control_4つ目_の_いま_は窓の端の_blob_ではないこと(monkeypatch):
+    """**壊したら落ちるまで撃つ**（§5 の教訓の形3つ目）。**この回に実物で踏んだ形**:
+
+    相手の押しを merge した直後に撃つと、窓の端の blob は **167字 古い数**（24,292）を出し、
+    作業ツリーの実物は 24,125 だった。`points()` の `books` を壊しても「いま」は動かないこと。
+    """
+    out = M.report()
+    real = M.points
+
+    def broken(*a, **k):
+        ps = real(*a, **k)
+        for p in ps:
+            for c in (p.get("books") or {}).values():
+                c["now"] = -1
+        return ps
+
+    monkeypatch.setattr(M, "points", broken)
+    lv = [l for l in M.report().split("\n") if "いま 本文 **" in l]
+    assert lv == [l for l in out.split("\n") if "いま 本文 **" in l]
+    assert all("-1字" not in l for l in lv)
