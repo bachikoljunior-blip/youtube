@@ -184,3 +184,72 @@ def test_門を切っていれば残り周ではなく切った周を言うこ�
     line = quota.margin_line()
     assert "切った周" in line and "2.997" in line
     assert quota.margin_step()["laps_to_gate"] is None
+
+
+# ---------------------------------------------------------------------------
+# **速さも、1周ぶんの点では読めない**（2026-09-11 09:1x・optimizer・Opus）
+#
+# 08:4x は台帳の直近2点から 1周 -0.007 を読み、「門まで あと 3周（10:0x ごろ）」を
+# §7「いまの数」に書きました。**次の周の点は 3.014 ＝ 1周 -0.001** で、同じ口が
+# 「あと 14周」と言います。**列は 1つも書き換わっていません** —— 直近2点の差が
+# 周ごとに **7倍** 振れるだけです。`gate_span` が 帯の比 に当てたのと同じ形。
+# ---------------------------------------------------------------------------
+
+
+def test_振れ幅を出し_門までを帯で言うこと(tmp_path, monkeypatch):
+    """**陽性対照つき**: 帯の片端（速い側 3周／遅い側 14周）だけになったら落ちる。"""
+    _series(tmp_path, monkeypatch, [3.022, 3.015, 3.014])
+    st = quota.margin_step()
+    assert st["steps"] == [pytest.approx(-0.007), pytest.approx(-0.001)]
+    assert st["step_lo"] == pytest.approx(-0.007) and st["step_hi"] == pytest.approx(-0.001)
+    assert (st["laps_few"], st["laps_many"]) == (3, 14)
+    line = quota.margin_line()
+    assert "**振れ幅 -0.007〜-0.001**" in line
+    assert "あと 3〜14周" in line                      # ← 片端だけを点で書かないこと
+    assert "あと 14周**" not in line and "あと 3周**" not in line
+
+
+def test_動きが1つしか無い周は振れ幅を言わないこと(tmp_path, monkeypatch):
+    """**2点 から振れ幅を作らないこと**（08:4x が踏んだ形そのもの）。"""
+    _series(tmp_path, monkeypatch, [3.022, 3.015])
+    st = quota.margin_step()
+    assert st["step_lo"] is None and st["laps_few"] is None
+    line = quota.margin_line()
+    assert "振れ幅はまだ読めません" in line
+    assert "あと 3周" in line                          # 1つしか無いので点のまま
+
+
+def test_上がった周が在れば上端を作らないこと(tmp_path, monkeypatch):
+    """上がった周から外挿した上端は「永遠に切らない」になる ＝ 出さないこと。"""
+    _series(tmp_path, monkeypatch, [3.010, 3.020, 3.013])
+    st = quota.margin_step()
+    assert st["open_top"] is True and st["laps_many"] is None and st["laps_few"] == 2
+    line = quota.margin_line()
+    assert "早くて あと 2周" in line and "上端は無し" in line
+
+
+def test_刻が空いた対は落として言うこと(tmp_path, monkeypatch):
+    """周が抜けた対は **何周ぶんか分けられません** —— 混ぜると振れ幅の上端が伸びる。
+
+    **陽性対照**: 落とさずに混ぜると、この列の上端は 14周 ではなく **68周** に伸びます
+    （2.4時間 空いた対の -0.0002 を 1周ぶんとして読むため。撃って確かめた）。
+    """
+    rows = []
+    for at, v in [("07:00", 3.022), ("07:36", 3.015), ("10:00", 3.0148), ("10:36", 3.0135)]:
+        rows += [_row(f"2026-09-11T{at}:00+09:00", v, "hourly"),
+                 _row(f"2026-09-11T{at}:00+09:00", v, "optimizer")]
+    monkeypatch.setattr(quota, "MODEL_CHOICE_FILE", _write(tmp_path, rows))
+    st = quota.margin_step()
+    assert st["skipped"] == 1
+    assert st["steps"] == [pytest.approx(-0.007), pytest.approx(-0.0013)]
+    assert st["laps_many"] == 11                      # 混ぜていれば 68周 になる
+    assert "刻が空いた対 1つ は落とした" in quota.margin_line()
+
+
+def test_門を切ったあとは帯も言わないこと(tmp_path, monkeypatch):
+    """切ったあとは外挿ではなく掃き直す側（`ceiling_rate()` の覆る条件 (1)）。"""
+    _series(tmp_path, monkeypatch, [3.010, 3.004, 2.997])
+    st = quota.margin_step()
+    assert st["laps_few"] is None and st["laps_many"] is None
+    line = quota.margin_line()
+    assert "切った周" in line and "あと" not in line

@@ -1349,13 +1349,38 @@ def margin_step(xs: list[tuple[str, float]] | None = None) -> dict | None:
     （`margin_series` の註が、その混ざりを止めた当のもの）。
     ＝ **その列で速さを読んではいけません。速さは、台帳が積んだ点でしか読めません。**
 
+    **【2026-09-11 09:1x・optimizer・Opus】その「直近2点」を、次の周が撃ち直したら
+    4.6倍 動きました。振れ幅を出します（`_lap_steps`）。**
+
+    08:4x が台帳から読んだ 1周は **-0.007**（3.022 → 3.015）で、そこから
+    「**門まで あと 3周**・約 114分 ＝ 10:0x ごろ」を §7「いまの数」に書きました。
+    **次の周（08:48）の点は 3.014 ＝ 1周 -0.001** で、同じ口が
+    「**あと 14周**・約 519分」と言います。**列は 1つも書き換わっていません** ——
+    **直近2点の差が、周ごとに 7倍 振れる**だけです（掃きの純粋な時の成分は -0.004/周）。
+
+        3.022（07:34） → 3.015（08:12） → 3.014（08:48）     動き **-0.007 / -0.001**
+
+    ＝ **`gate_span` が 帯の比 に当てたのと同じ形**（METHOD §7「いまの数」の (b-2)・
+    「**この比は 1周ぶんの点で読まないこと**」）。**速さも同じで、点では読めません。**
+    いまは **振れ幅**（いちばん速い周 と いちばん遅い周）と、そこから出る
+    **「あと N〜M周」** を印字します。**08:4x の 3周 は、その帯の速い端**でした
+    （外れてはいません —— **帯の片端だけを点として書いた**のが外し方です）。
+
+    **上端を作らない場合**: 動きの中に **0 以上**（上がった周）が在れば、
+    そこから外挿した上端は「永遠に切らない」になるので、上端は出しません
+    （`open_top` ＝ 「早くて あと N周・上端は無し」と言う）。
+
     **覆る条件**: (1) 実測の 1周 が **3周 続けて 0.000**（＝ 桁の下）なら、
     下がりは残り時間ではなく `per_lap` の引き直しだけで動いている ＝
     この関数ごと外し、門は `--pace` の 1点で読むこと。
     (2) `laps_to_gate` が **2度 続けて外れたら**（言った周を過ぎても切らない）、
     直近2点ではなく列の傾き（最小二乗）へ移すこと。
+    **09:1x に足した振れ幅は、この (2) の代わりではありません** ——
+    帯の**速い端**（`laps_few`）を過ぎても切らない回が **2度** 出たら、(2) を引くこと。
     (3) 床（`pace()` の間隔）を変えた周は、その前後の点をまたいで速さを読まないこと
     —— 実際の速さが変わるので、傾きもそこで折れます。
+    (4) **振れ幅の幅（`step_hi - step_lo`）が 3窓 続けて桁の下（0.000）なら**、
+    列は点で読めている ＝ 振れ幅の印字はやめ、1つの数へ戻してよい。
     """
     xs = margin_series() if xs is None else xs
     if not xs or len(xs) < 2:
@@ -1368,12 +1393,58 @@ def margin_step(xs: list[tuple[str, float]] | None = None) -> dict | None:
         if p and n and n > p:
             gaps.append((n - p).total_seconds() / 60)
     gap_min = median(gaps) if gaps else None
+    steps, skipped = _lap_steps(xs, gap_min)
     laps = eta = None
     if step < 0 and v1 > CEILING_MARGIN_GATE:
         laps = int(math.ceil((v1 - CEILING_MARGIN_GATE) / (-step)))
         eta = laps * gap_min if gap_min else None
-    return {"step": step, "laps_to_gate": laps, "gap_min": gap_min, "eta_min": eta,
-            "last": v1, "at": a1}
+    out = {"step": step, "laps_to_gate": laps, "gap_min": gap_min, "eta_min": eta,
+           "last": v1, "at": a1, "steps": steps, "skipped": skipped,
+           "step_lo": None, "step_hi": None, "laps_few": None, "laps_many": None,
+           "eta_few": None, "eta_many": None, "open_top": False}
+    if len(steps) < 2:
+        return out                                   # 振れ幅は 2つ の動きから
+    out["step_lo"], out["step_hi"] = min(steps), max(steps)
+    down = [s for s in steps if s < 0]
+    if not down or v1 <= CEILING_MARGIN_GATE:
+        return out
+    left = v1 - CEILING_MARGIN_GATE
+    out["laps_few"] = int(math.ceil(left / -min(down)))      # いちばん速い周の速さで
+    out["open_top"] = max(steps) >= 0                        # 上がった周が在る ＝ 上端は無い
+    if not out["open_top"]:
+        out["laps_many"] = int(math.ceil(left / -max(down)))  # いちばん遅い周の速さで
+    if gap_min:
+        out["eta_few"] = out["laps_few"] * gap_min
+        out["eta_many"] = out["laps_many"] * gap_min if out["laps_many"] else None
+    return out
+
+
+def _lap_steps(xs: list[tuple[str, float]],
+               gap_min: float | None) -> tuple[list[float], int]:
+    """**隣り合う点の「1周ぶんの動き」**と、**数えられずに落とした対の数**。
+
+    刻が中央の **2倍** を越える対は落とします —— そこは周が抜けている（親が穴埋めで
+    片方だけ立てた回・鎖が待った回）ので、**何周ぶんの動きか分けられません**。
+    黙って 1周ぶんとして混ぜると、**いちばん浅い動き**として振れ幅の上端に入り、
+    「門まで あと N周」の上端を伸ばします。落とした数は `margin_line` が言います。
+
+    **実物のどの形が通るかを、台帳から列挙して確かめた**（METHOD §5 の教訓の形4つ目・
+    2026-09-11 09:1x）: `data/rounds.jsonl` の 437刻・436窓 は 中央 **36.6分** で、
+    **中央の 2倍 を越えた対が 130** 在ります（最大 **407.9分** ＝ 床が 150分・6時間 だった頃と、
+    鎖が待った回）。**直近12窓 は 35.4〜37.9分 ＝ いまは 1つも落ちません。**
+    ＝ この門は「起きない事を見張っている」側ではなく、**床を変えた周に効きます**
+    （覆る条件 (3) の機械の側）。
+    """
+    steps: list[float] = []
+    skipped = 0
+    for (p_at, p_v), (n_at, n_v) in zip(xs, xs[1:]):
+        p, n = _parse_iso(p_at), _parse_iso(n_at)
+        if gap_min and p and n and n > p:
+            if (n - p).total_seconds() / 60 > gap_min * 2:
+                skipped += 1
+                continue
+        steps.append(n_v - p_v)
+    return steps, skipped
 
 
 def margin_line(n: int = 8) -> str:
@@ -1392,10 +1463,28 @@ def margin_line(n: int = 8) -> str:
     words = ""
     if st is not None:
         words = f" —— 1周 **{st['step']:+.{d}f}**"
-        if st["laps_to_gate"] is not None:
+        if st["step_lo"] is not None:
+            words += (f"（**振れ幅 {st['step_lo']:+.{d}f}〜{st['step_hi']:+.{d}f}**"
+                      f"・動き {len(st['steps'])}つ"
+                      + (f"・刻が空いた対 {st['skipped']}つ は落とした" if st["skipped"] else "")
+                      + "。**この 1点で速さを読まないこと**）")
+        elif len(xs) >= 2:
+            words += "（**振れ幅はまだ読めません** ＝ 動きが 1つ）"
+        if st["laps_few"] is not None:
+            if st["open_top"]:
+                eta = f"・約 {st['eta_few']:.0f}分 後から" if st["eta_few"] else ""
+                words += (f" ＝ 門まで **早くて あと {st['laps_few']}周**{eta}"
+                          "（**上端は無し** ＝ 上がった周が在る）")
+            else:
+                eta = (f"・約 {st['eta_few']:.0f}〜{st['eta_many']:.0f}分 後"
+                       if st["eta_few"] and st["eta_many"] else "")
+                words += (f" ＝ 門まで **あと {st['laps_few']}〜{st['laps_many']}周**{eta}"
+                          if st["laps_many"] != st["laps_few"]
+                          else f" ＝ 門まで **あと {st['laps_few']}周**{eta}")
+        elif st["laps_to_gate"] is not None:
             eta = f"・約 {st['eta_min']:.0f}分 後" if st["eta_min"] else ""
             words += f" ＝ 門まで **あと {st['laps_to_gate']}周**{eta}"
-        elif st["step"] >= 0:
+        elif st["step"] >= 0 and not [s for s in st["steps"] if s < 0]:
             words += "（下がっていません ＝ 門は当分 切りません）"
     return (f"      余裕の列（周ごと・その周が見た数・`quota.margin_series`）: **{body}**"
             f"（{len(xs)}周・門 {CEILING_MARGIN_GATE:.1f}倍）"
