@@ -2751,6 +2751,60 @@ def _flat_span_h(ps: list[dict]) -> float:
     return (ps[-1]["t1"] - ps[len(ps) - n]["t0"]).total_seconds() / 3600.0
 
 
+def _flat_window(ps: list[dict]) -> tuple | None:
+    """**いまの平ら（包絡が同じ）の、両端の刻。** 無ければ None（2026-09-11 13:2x・optimizer・Opus）。
+
+    `_flat_span_h` が返す「長さ」と**同じ区間**を、刻で返すだけの口です
+    （2つの実装を持たないため —— `_channel_gate` の註と同じ族）。
+    """
+    if not ps:
+        return None
+    n = _flat_laps(ps)
+    if n < 2:
+        return None
+    return (ps[len(ps) - n]["t0"], ps[-1]["t1"])
+
+
+def flat_video_gain(rows: list[dict]) -> dict:
+    """**いまの平らの「中で」、本が伸びたか**（包絡・遅れで説明が付かない分だけ・**API 0単位**）。
+
+    2026-09-11 13:2x・optimizer・Opus。**§7 (m) の当て所を、時間の門より強い証拠で塞ぐ口**です。
+
+    **踏んだ形（この回の実物）**: 総再生は **20周・10.8時間** 同じ読みで、
+    `flat_readable`（平らが手本の挟みの上端 10.793時間 を越えたか）が **初めて True** になり、
+    道具は「**引かれました ＝ 本の題や形を疑う前に、チャンネルの側が止まっていないかを外すこと**」と
+    印字しました。**ところが、その同じ平らの中で 6本目 `mja40GJ-GHU` が 0 → 176回 に伸びています。**
+    ＝ **チャンネルは止まっていません。平らなのは `viewCount` の読みのほうです。**
+
+    **時間の門（`flat_h` 対 `step_flat_h_hi`）は、手本 1例 からの挟みで引く弱い門**ですが、
+    この口は**同じ台帳の中の反証**で、n＝1 の手本を要りません
+    ＝ **平らの中に確かめられた伸びが 1回でも在れば、その平らは「止まった」と読めない**。
+    （向きは片側だけ: 伸びが **0** でも「止まった」の証拠にはなりません —— `measure` が触るのは
+    公開 7日 以内の 19本 だけで、残り 250本 は見ていないからです。`channel_video_delta` の註と同じ。）
+
+    返すもの: `t0`/`t1`（平らの両端）・`h`（長さ）・`sum`（見えるようになった分）・
+    `confirmed`（**遅れで説明が付かない分** ＝ 門に当てるのはこちら）・`n`（読み直した本）・
+    `proves_alive`（`confirmed` が 0 より大きいか。`None` ＝ まだ言えない）。
+
+    **覆る条件**: (1) `confirmed` が正なのに、そのあとチャンネルの総再生が
+    **その分を受け取らないまま刻みを 2つ 跨いだ**回が出たら、そのときは伸びの側（`measure`）の
+    包絡を疑うこと（いまは「チャンネルの読みが遅い」と読んでいる）。
+    (2) 平らの長さが `REPLICA_LAG_H` より短い回では `confirmed` は `None` になります ——
+    **その回に「伸びが無い」と読まないこと。**
+    """
+    ps = _channel_env_points(_channel_rows(rows))
+    win = _flat_window(ps)
+    if win is None:
+        return {"t0": None, "t1": None, "h": None, "sum": None,
+                "confirmed": None, "n": None, "proves_alive": None}
+    t0, t1 = win
+    vd = channel_video_delta(rows, t0, t1)
+    conf = vd["sum_confirmed"]
+    return {"t0": t0, "t1": t1, "h": (t1 - t0).total_seconds() / 3600.0,
+            "sum": vd["sum"], "confirmed": conf, "n": vd["n"],
+            "proves_alive": None if conf is None else conf > 0}
+
+
 def _flat_laps(ps: list[dict]) -> int:
     """**総再生が動かないまま、いま何周 続いているか**（いちばん新しい周を 1 と数える）。
 
@@ -3077,7 +3131,8 @@ def channel_growth(rows: list[dict]) -> dict:
             "vid_confirmed": None, "vid_unconfirmable": None,
             "mismatch": None, "over": False,
             "over_streak": 0, "over_blocks": 0, "over_ready": False, "over_drawn": False,
-            "step_flat_h": None, "step_flat_h_hi": None, "flat_readable": True}
+            "step_flat_h": None, "step_flat_h_hi": None, "flat_readable": True,
+            "flat_vid_confirmed": None, "flat_alive": None}
     if len(cs) < 2:
         return {**base, "span_h": None, "d_subs": None, "d_views": None,
                 "views_per_h": None, "subs_per_view": None,
@@ -3101,6 +3156,7 @@ def channel_growth(rows: list[dict]) -> dict:
     st_last = channel_steps(rows)["last"] or {}
     step_lo, step_hi = st_last.get("flat_h_lo"), st_last.get("flat_h_hi")
     flat_h = _flat_span_h(ps)
+    fv = flat_video_gain(rows)
     return {**base, "span_h": g["span_h"], "d_subs": g["d_subs"], "d_views": g["d_views"],
             "views_per_h": (g["d_views"] / g["span_h"]) if g["span_h"] >= CHANNEL_MIN_SPAN_H else None,
             "subs_per_view": (g["d_subs"] / g["d_views"]) if g["d_views"] > 0 else None,
@@ -3112,7 +3168,11 @@ def channel_growth(rows: list[dict]) -> dict:
             "over_streak": st["streak"], "over_blocks": st["blocks"],
             "over_ready": st["ready"], "over_drawn": st["drawn"],
             "step_flat_h": step_lo, "step_flat_h_hi": step_hi,
-            "flat_readable": step_hi is None or flat_h >= step_hi}
+            # **時間の門**（手本 1例 の挟みの上端）と、**平らの中の反証**は別の口です
+            # （`flat_video_gain` の註・2026-09-11 13:2x）。反証のほうが強い ＝
+            # 平らの中に確かめられた伸びが在れば、上端を越えていても「止まった」とは読めません。
+            "flat_readable": step_hi is None or flat_h >= step_hi,
+            "flat_vid_confirmed": fv["confirmed"], "flat_alive": fv["proves_alive"]}
 
 
 def channel_line(rows: list[dict]) -> str:
@@ -3175,6 +3235,16 @@ def channel_line(rows: list[dict]) -> str:
             flat += (f"**この平らは手本の挟みの上端 {step_hi:.1f}時間 を越えました** ——"
                      "**ただし手本は 1例**なので、これは「刻みの周期より長い」ではありません"
                      "（`channel_steps` の覆る条件 (1)）。")
+        # **平らの中の反証は、時間の門より強い**（`flat_video_gain` の註・2026-09-11 13:2x）——
+        # 手本 1例 の挟みを要らず、同じ台帳の中だけで決まります。**向きは片側だけ。**
+        if g["flat_alive"]:
+            flat += (f"**そして この平らの中で、本は {g['flat_vid_confirmed']:+d}回 伸びています**"
+                     "（遅れでは説明が付かない分・`trend.flat_video_gain`）＝ "
+                     "**チャンネルは止まっていません。平らなのは `viewCount` の読みのほうです** ——"
+                     "**この平らを『本の 0回』の説明に使わないこと**（§7 (m)）。")
+        elif g["flat_vid_confirmed"] == 0:
+            flat += ("**この平らの中で確かめられた本の伸びは 0回 です**（`trend.flat_video_gain`）——"
+                     "**「だから止まった」とは読めません**（`measure` が触るのは 19本 だけ・向きは片側）。")
     # **総再生が動かない窓で登録だけが動いたら、応答が丸ごと古いのではない**（`channel_growth` の註 (4)）
     if g["d_views"] == 0 and g["d_subs"]:
         flat += (f"**同じ窓で登録は {g['d_subs']:+d} 動いています** ＝ "
