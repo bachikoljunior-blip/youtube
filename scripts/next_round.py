@@ -942,6 +942,24 @@ def gap_ratios(limit: int = 10, got: list[dict] | None = None) -> list[float]:
     この分母は黙って GO の床へ落ちて 1.37 が戻ります —— 検査
     `tests/test_next_round_gap_ratio_aim.py` の 1件目がその日に落ちて教えます。
     """
+    return [r for (_a, _b, r) in gap_windows(limit=limit, got=got)]
+
+
+def gap_windows(limit: int = 10,
+                got: list[dict] | None = None) -> list[tuple[datetime, datetime, float]]:
+    """`gap_ratios` と**同じ数**を、**その比がどの区間のものか**と一緒に返す。
+
+    返り: `(区間の始まり, 区間の終わり ＝ その周の刻, 比)` の並び（古い順）。
+    比の作り方・分母の決め方・刻ずれの話は **`gap_ratios` の docstring**（1字も動かしていません）。
+
+    **なぜ分けたか（2026-09-11 14:2x・optimizer・Opus。この回に踏んだ）**:
+    §7 (d) の門は「**2つ 続いたら**」で、越えた窓の出どころ（立て直し・起こしの落ち）は
+    **窓ごとに違います**。ところが `gap_over_gate` は `gap_ratios` の**裸の比**しか持たず、
+    **どの窓が越えたのかを言えませんでした** ＝ 「続いたか」も「その窓が立て直しを抱えているか」も、
+    次の回が `parent_wakes.jsonl` と `model_choice.jsonl` を**手で突き合わせる**しかない形です
+    （§7 (d) が「手で突き合わせないこと」と書いている、その当のもの）。
+    実測はこの回に出ました —— 下の `gap_over_gate` の註。
+    """
     if got is None:
         got = wake_rows()
     marks: list[tuple[datetime, float]] = []
@@ -963,7 +981,7 @@ def gap_ratios(limit: int = 10, got: list[dict] | None = None) -> list[float]:
         if aim:
             aims.append((at, float(aim)))
     starts = round_starts()
-    out: list[float] = []
+    out: list[tuple[datetime, datetime, float]] = []
     for a, b in zip(starts, starts[1:]):
         near = min(marks, key=lambda m: abs((m[0] - b).total_seconds()))
         if abs((near[0] - b).total_seconds()) / 60.0 > _GO_MATCH_MIN:
@@ -971,7 +989,7 @@ def gap_ratios(limit: int = 10, got: list[dict] | None = None) -> list[float]:
         # **分母は、その区間で親が実際に狙った先**（`aim_min`）。無ければ GO の `floor_min`。
         # 註は `gap_ratios` の docstring の「4つ目の刻ずれ」。
         want = [v for (t, v) in aims if a < t < near[0]]
-        out.append(((b - a).total_seconds() / 60.0) / (want[-1] if want else near[1]))
+        out.append((a, b, ((b - a).total_seconds() / 60.0) / (want[-1] if want else near[1])))
     return out[-limit:] if limit else out
 
 
@@ -1071,18 +1089,82 @@ def respawn_rounds(marks: list[datetime] | None = None,
 
 
 def gap_over_gate(limit: int = 10, gate: float = GAP_RATIO_GATE) -> dict:
-    """**門を越えた窓を、立て直しを抱えているかどうかと一緒に**返す（§7 (d) の読む口）。
+    """**門を越えた窓を、その窓の出どころと一緒に**返す（§7 (d) の読む口）。
 
-    返り: `{"ratios": [...], "over": [比], "n_over": int, "respawn": [(刻, 役, 回数)]}`。
-    **`over` が 2つ 続いたときだけ (d) は引かれます**（`respawn_rounds` の註）。
+    返り:
+      `ratios` 見ている窓の比（古い順）／`over` 越えた比だけ（**後方互換**）／`n_over`／`gate`
+      `respawn` いま見ている周の立て直し（古い順・**窓に付いていないものも含む**）
+      `windows` **越えた窓ごとに 1つ**:
+          `{"at": 周の刻(iso), "from": 区間の始まり(iso), "ratio": 比,
+            "respawn": [[役, 回数], …]（**その窓の中の立て直しだけ**）,
+            "wake_missed": bool（**その窓の中で起こしが 15分 以上 落ちたか**）,
+            "explained": bool（上の 2つ のどちらかが在る）}`
+      `consecutive` **越えた窓が 2つ 続いたか**（§7 (d) の門そのもの）
+      `n_unexplained` 立て直しも起こしの落ちも無い窓の数
+
+    **なぜ書き直したか（2026-09-11 14:2x・optimizer・Opus。この回に実物で踏んだ）**:
+    11:2x の形は `over` に**裸の比**（`[1.309, 1.717]`）だけを入れ、`respawn` には
+    **いま見ている周ぜんぶの立て直し**を入れていました。印字の側はそれを
+
+        「＊同じ窓の中に**立て直し**が在ります: … ＝ **上限ではなく、その周が長かった理由**です」
+
+    と、**窓と突き合わせずに** 1行 出します ＝ **言っている所と、している所が別**
+    （§5 の教訓の形・09/11 03:0x の `settle_stats` と同じ族）。
+
+    **実物**（この回・`gap_windows` で撃った。API 0単位）:
+
+        09/11 01:00 → 01:46 UTC   **1.309**   立て直し 01:00:49 `hourly` 2回（429）  ← 口が在る
+        09/11 02:58 → 03:59 UTC   **1.717**   **立て直しも 起こしの落ちも 無い**      ← 口が無い
+
+    ＝ §7 (d) が「**次に見るのは、429 の無い周で 1.25 を越えるか**」と書いた、その窓が来ていました。
+    ところが 11:2x の印字は、**立て直しを 1行 出すだけ**なので、次の回はこれを
+    「2つ とも立て直しで説明が付く」と読みます —— **(d) が待っていた当の事実が、印字で消えます。**
+
+    **そして「2つ 続いたら」も、どこも数えていませんでした**（上の 2つ は**続いていません**
+    ——あいだに 1.014・1.012 が在る）。＝ 門の字は `GAP_RATIO_GATE` に在るのに、
+    **門の「続いたら」の側だけが、次の回の手作業に残っていた**。
+
+    **2つ目の窓の中身**（`parent_wakes.jsonl`・手で引いた）: 02:59:52 に親が起き、
+    `live 2` で **WAIT・`wait_min` 25.5**（狙い 03:25）。**その行には `wake_placed` の欄が在りません**
+    ＝ 起こしを置いていないので、`wake_missed` の分母（**置いた起こしだけ**）にも入りません。
+    次に親が起きたのは **03:59:41**（+59.8分）＝ 心拍も 1本 も来ていない。
+    ＝ **越えた窓の 3つ目の出どころ**（1つ目 立て直し・2つ目 届かなかった起こし・
+    **3つ目 置かれなかった起こし**）。**ここでは数えるだけにします** ——
+    `wake_placed` の欄が無い WAIT は 09/09 19:2x 以降 **15回** 在り、そのうち
+    **14回 は心拍が ±11分 で拾って**います（この 1回 だけが 34.3分 遅れた）＝
+    **n=1 で「置かない側が悪い」とは読めません**（覆る条件 (3)）。
+
+    **覆る条件**: (1) `explained` が偽の窓が **2つ 続いた**ら、そのとき初めて「上限が在る」側
+    （`respawn_rounds` の覆る条件 (1) と同じ）。(2) `wake_missed` が名指しする窓が
+    `explained` に入っているのに、印字が立て直しの側だけを言う回が出たら、分けているのは
+    出どころではなく**名前**なので、窓ごとの行を出どころで割ること。
+    (3) **`wake_placed` の欄が無い WAIT のあとの遅れ**が 15分 を越える回が **2回目**を数えたら、
+    そのとき初めて「WAIT でも起こしを置く」を `decide()` の側へ入れること
+    （いまは 15回 中 1回 ＝ 心拍で足りている）。
     """
-    got = gap_ratios(limit=limit)
-    over = [round(v, 3) for v in got if v > gate]
+    got = gap_windows(limit=limit)
+    over = [round(r, 3) for (_a, _b, r) in got if r > gate]
     # **立て直しは、いま見ている窓のぶんだけ**（区間 `limit` 本 ＝ 周 `limit + 1` つ）。
     # 全部 返すと、周の台帳が薄かった日の古い塊が毎回 出て、読む側が門と結び付けられません。
-    return {"ratios": [round(v, 3) for v in got], "over": over,
-            "n_over": len(over), "gate": gate,
-            "respawn": respawn_rounds(last=limit + 1)}
+    spawn = respawn_rounds(last=limit + 1)
+    missed = [t for (t, _lag) in wake_missed()["missed"]]
+    flags = [r > gate for (_a, _b, r) in got]
+    windows: list[dict] = []
+    for a, b, r in got:
+        if r <= gate:
+            continue
+        # **その窓の中に在るものだけ**（`a < 刻 <= b`）。立て直しの刻は「周の刻」なので、
+        # 区間を開いた周（`a`）の立て直しは**その区間を伸ばした側**です ＝ 下端も含めます。
+        mine = [[role, n] for (m, role, n) in spawn if a <= m < b]
+        late = [t for t in missed if a <= t < b]
+        windows.append({"at": b.isoformat(), "from": a.isoformat(), "ratio": round(r, 3),
+                        "respawn": mine, "wake_missed": bool(late),
+                        "explained": bool(mine or late)})
+    consecutive = any(flags[i] and flags[i + 1] for i in range(len(flags) - 1))
+    return {"ratios": [round(r, 3) for (_a, _b, r) in got], "over": over,
+            "n_over": len(over), "gate": gate, "respawn": spawn,
+            "windows": windows, "consecutive": consecutive,
+            "n_unexplained": sum(1 for w in windows if not w["explained"])}
 
 
 def rounding_evidence(rows: list[dict] | None = None) -> tuple[int, int]:
@@ -1419,6 +1501,11 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     base["gap_over_gate_n"] = _gate["n_over"]
     base["gap_over_gate"] = _gate["over"]
     base["respawn_rounds"] = [[m.isoformat(), r, n] for m, r, n in _gate["respawn"]]
+    # **窓ごと**（2026-09-11 14:2x・`gap_over_gate` の註）。裸の比と全部の立て直しでは、
+    # 「続いたか」も「その窓に口が在るか」も言えません ＝ 次の回の手作業に残っていた側。
+    base["gap_over_windows"] = _gate["windows"]
+    base["gap_over_consecutive"] = _gate["consecutive"]
+    base["gap_over_unexplained"] = _gate["n_unexplained"]
     group = current_round(span_min=round_span(floor))
 
     # **0体 は「間隔を見ない」ではなく「起こしを置いて待つ」**（2026-09-03・上の節）。
@@ -1854,15 +1941,29 @@ def main() -> int:
     # §7 (d) は「2つ 続いたら」なので、1つ では何も起きません ——
     # けれど **名指しが無いと、次の回は在りもしない上限を探しに行きます**（§7 21:4x の型）。
     if d.get("gap_over_gate"):
+        _con = d.get("gap_over_consecutive")
         print(f"  [?] 区間 ÷ 狙い先が 門 {GAP_RATIO_GATE} を越えた窓: "
               f"{'・'.join(f'{v:.3f}' for v in d['gap_over_gate'])}"
-              f"（10窓 中 {d['gap_over_gate_n']}つ・**2つ 続いたら** §7 (d) が引かれます）")
-        for at, role, n in d.get("respawn_rounds") or []:
-            print(f"      ＊同じ窓の中に**立て直し**が在ります: {at} に `{role}` を {n}回"
-                  "（429 など）＝ **上限ではなく、その周が長かった理由**です")
-        if not d.get("respawn_rounds"):
-            print("      ＊立て直しは在りません ＝ 起こしの側を見ること"
-                  f"（`wake_missed` いま {d.get('wake_missed')}本 / {d.get('wake_missed_n')}本）")
+              f"（10窓 中 {d['gap_over_gate_n']}つ・**2つ 続いたか: "
+              f"{'はい ＝ §7 (d) が引かれました' if _con else 'いいえ ＝ (d) は引かれません'}**）")
+        # **窓ごとに、その窓の中の出どころだけを言う**（2026-09-11 14:2x）。
+        # 11:2x はここで「同じ窓の中に立て直しが在ります」と、窓と突き合わせずに出していた
+        # ＝ **口の無い窓が、口の在る窓の説明で消えます**（(d) が待っていた当の事実）。
+        for w in d.get("gap_over_windows") or []:
+            head = f"      ＊{w['from'][:16]} → {w['at'][:16]} UTC  {w['ratio']:.3f}"
+            if w["respawn"]:
+                who = "・".join(f"`{r}` を {n}回" for r, n in w["respawn"])
+                print(f"{head}  ← **立て直し**（{who}・429 など）"
+                      "＝ 上限ではなく、その周が長かった理由です")
+            elif w["wake_missed"]:
+                print(f"{head}  ← **起こしが届かなかった窓**（`wake_missed`）"
+                      "＝ 上限ではなく、届きの側です")
+            else:
+                print(f"{head}  ← **口が在りません**（立て直し 無し・起こしの落ち 無し）"
+                      "＝ §7 (d) が「次に見る」と書いた側の窓です。"
+                      "**WAIT で起こしを置かなかった回**も見ること（`gap_over_gate` の覆る条件 (3)）")
+        print(f"      ＊口の無い窓 {d.get('gap_over_unexplained')}つ"
+              f"（`wake_missed` いま {d.get('wake_missed')}本 / {d.get('wake_missed_n')}本）")
     # **旧道具の読み出し（種別の下読み・枠の機会費用・立っている決め）は、ここから出さない**
     #     （2026-09-06 17:xx JST・optimizer・Fable）。09/04〜05 にここへ足した3つの塊は
     #     `src/run_marker`・`src/slot_cost`・`src/daily_pick` を読んで印字していた。手法は 09/05 に

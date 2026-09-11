@@ -91,9 +91,21 @@ def test_last_で見る窓のぶんだけに絞れること():
         "直近 2周 だけに絞れること（古い塊を毎回 出さない）"
 
 
+def _windows(*ratios, day=11):
+    """比の並びを `gap_windows` の形（区間の始まり, 終わり, 比）へ。1区間 1時間 ずつ置く。"""
+    out = []
+    for i, r in enumerate(ratios):
+        a = datetime(2026, 9, day, 1 + i, 0, tzinfo=JST)
+        out.append((a, a + timedelta(minutes=45), r))
+    return out
+
+
 def test_門は_1か所で_越えた窓だけを返すこと(monkeypatch):
-    monkeypatch.setattr(nr, "gap_ratios", lambda limit=10: [1.0, 1.25, 1.26, 0.99])
+    monkeypatch.setattr(nr, "gap_windows",
+                        lambda limit=10, got=None: _windows(1.0, 1.25, 1.26, 0.99))
     monkeypatch.setattr(nr, "respawn_rounds", lambda **kw: [])
+    monkeypatch.setattr(nr, "wake_missed", lambda **kw: {"missed": [], "placed": 0,
+                                                        "lags": [], "median_lag": None})
     g = nr.gap_over_gate()
     assert g["gate"] == nr.GAP_RATIO_GATE == 1.25
     assert g["over"] == [1.26], "門ちょうど（1.25）は越えていません"
@@ -102,12 +114,18 @@ def test_門は_1か所で_越えた窓だけを返すこと(monkeypatch):
 
 def test_decide_が毎周_台帳へ書くこと(tmp_path, monkeypatch):
     """**手で突き合わせないこと** —— 次の回は撃つだけで読めること。"""
-    monkeypatch.setattr(nr, "gap_ratios", lambda limit=10: [1.0, 1.4])
+    monkeypatch.setattr(nr, "gap_windows", lambda limit=10, got=None: _windows(1.0, 1.4))
     monkeypatch.setattr(nr, "respawn_rounds",
-                        lambda **kw: [(datetime(2026, 9, 11, 10, 0, 49, tzinfo=JST), "hourly", 2)])
+                        lambda **kw: [(datetime(2026, 9, 11, 2, 0, 49, tzinfo=JST), "hourly", 2)])
+    monkeypatch.setattr(nr, "wake_missed", lambda **kw: {"missed": [], "placed": 0,
+                                                        "lags": [], "median_lag": None})
     d = nr.decide(live=1)
     assert d["gap_over_gate"] == [1.4] and d["gap_over_gate_n"] == 1
     assert d["respawn_rounds"][0][1:] == ["hourly", 2]
+    # **窓ごとの行も、同じ周に台帳へ書くこと**（2026-09-11 14:2x）。
+    assert [w["ratio"] for w in d["gap_over_windows"]] == [1.4]
+    assert d["gap_over_windows"][0]["respawn"] == [["hourly", 2]]
+    assert d["gap_over_consecutive"] is False and d["gap_over_unexplained"] == 0
 
 
 def test_台帳が無くても落ちないこと(tmp_path, monkeypatch):
