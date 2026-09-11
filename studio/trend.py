@@ -2007,7 +2007,8 @@ def analytics_line(rows: list[dict], now: dt.datetime | None = None) -> str:
 def curve_state(rows: list[dict]) -> dict:
     """台帳の `analytics_curve` を新／旧に分けてまとめる（**API 0単位**）。
 
-    **決めに使うのは 10% の刻**（**そこが新旧でいちばん離れている**・この口を足した回の実測）。
+    **刻（`p10`…）は割合であって秒ではありません** —— 新旧で尺が 3倍 違うので、
+    同じ刻は同じ秒ではありません（2026-09-11 11:4x・hourly・Opus。下の `curve_seconds` の註）。
     """
     latest: dict[str, dict] = {}
     for r in sorted((r for r in rows if r.get("event") == "analytics_curve"),
@@ -2018,6 +2019,93 @@ def curve_state(rows: list[dict]) -> dict:
                 if bool(r.get("studio")) is want and r.get("marks")]
     empty = [r["id"] for r in latest.values() if not r.get("marks")]
     return {"new": _side(True), "old": _side(False), "empty": empty}
+
+
+def curve_seconds(rows: list[dict]) -> dict[str, float]:
+    """本ごとの**尺（秒）**を台帳から出す（**API 0単位**）: `analytics_video` の
+    `avg_seconds / avg_percent × 100`。`avg_percent` が 0 の本は出しません（割れないので）。
+
+    **なぜ要るか**（2026-09-11 11:4x・hourly・Opus が足した）: `analytics_curve` の刻は
+    **割合**（`elapsedVideoTimeRatio`）なので、**尺の違う本を同じ刻で比べると、違う秒を比べます**。
+    実測: 旧作り 5本 は **25.1〜32.5秒**・新しい作り 2本 は **90.3〜92.7秒**（**3倍**）＝
+    `p10` は 旧 **2.5〜3.2秒**・新 **9.0〜9.3秒**。
+    """
+    out: dict[str, float] = {}
+    for r in sorted((r for r in rows if r.get("event") == "analytics_video"),
+                    key=lambda r: r["at"]):
+        pct = r.get("avg_percent") or 0
+        if pct > 0:
+            out[r["id"]] = round((r.get("avg_seconds") or 0) / pct * 100, 1)
+    return out
+
+
+def curve_at(marks: dict, dur: float, sec: float) -> float | None:
+    """刻を秒に直して、その秒を**挟む2点の直線**で読む（挟めなければ `None`）。
+
+    **直線は上に外します** —— 維持率カーブは下に凸（はじめが急で、あとは平ら）なので、
+    2点を結ぶ弦は**カーブの上**を通ります。＝ ここで出る値は**上限**です。
+    刻が 5つ しか台帳に無いあいだは、この向きを憶えて読むこと（`analytics.CURVE_MARKS`）。
+    """
+    if not marks or not dur:
+        return None
+    pts = sorted((float(k[1:]) / 100 * dur, v) for k, v in marks.items())
+    if sec < pts[0][0] or sec > pts[-1][0]:
+        return None
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if x0 <= sec <= x1:
+            return y0 + (sec - x0) / (x1 - x0) * (y1 - y0) if x1 > x0 else y0
+    return None
+
+
+def curve_secs(rows: list[dict], n: int = 2) -> tuple[float, ...]:
+    """同じ秒で読む**秒の選び方**: 新しい作りの刻そのもの（いちばん後ろの本に合わせる）。
+
+    **なぜ新の刻に寄せるか**: そこでは新の側が**実測の刻**で、挟むのは旧の側だけになります
+    （`curve_at` の弦は上に外すので、**旧が上限・新が実測** ＝ 差は控えめに出ます）。
+    """
+    c = curve_state(rows)
+    dur = curve_seconds(rows)
+    per = []
+    for i, m in c["new"]:
+        if i in dur:
+            per.append(sorted(float(k[1:]) / 100 * dur[i] for k in m))
+    if not per:
+        return ()
+    return tuple(round(max(p[j] for p in per), 1) for j in range(min(n, min(len(p) for p in per))))
+
+
+def curve_aligned(rows: list[dict], secs: tuple[float, ...] | None = None) -> list[dict]:
+    """**同じ秒**で新旧を読む（**API 0単位**・`curve_at` と `curve_seconds` だけ）。
+
+    **2026-09-11 11:4x・hourly・Opus の判定**（§5 の「判定は `hourly`」の当のもの）:
+    **`10%` の比べは、新 9秒 と 旧 3秒 を比べていました。** 同じ秒に直すと向きが逆です ——
+
+        9.3秒   新 **0.71・0.81**   旧 **0.50〜0.75**（上限）   ＝ **束は重なる**
+        15秒    新 0.68・0.70       旧 0.36〜0.51（上限）      ＝ 新が上
+        23.2秒  新 **0.53・0.64**   旧 **0.15〜0.35**（上限）   ＝ **新が上・重ならない**
+
+    **旧の側だけが上限**（`curve_at` の註 ＝ 弦はカーブの上）なので、**差は実際にはもっと大きい**。
+    旧が 3秒 で `1.00` を越えるのは**ループ**です（25〜30秒 のショートは1周して頭へ戻る・
+    90秒 の本は戻らない）＝ **`p10` の「旧が上」はループと尺で、作りではありません。**
+
+    **＝ 維持率カーブは「新しい作りの出だしが人を落としている」の根拠になりません。**
+    §3 の (1)（1文目で誰に向けた何の話か）を、この数で書き換えないこと。
+
+    **覆る条件**: (1) `analytics.CURVE_MARKS` に刻を足して**挟まずに**読める回が来たら、
+    その値でこの表を撃ち直すこと（いまは 5刻 ＝ 旧の側は挟みの上限）。
+    (2) 新しい作りが 3本 以上 になって、同じ秒でも旧の束の**下**に入ったら、この判定は外れ。
+    (3) 尺が 30秒 台の本を新しい作りで出したら、その本は同じ刻で比べてよい（尺がそろう）。
+    """
+    c = curve_state(rows)
+    dur = curve_seconds(rows)
+    out = []
+    for sec in (curve_secs(rows) if secs is None else secs):
+        row = {"sec": sec}
+        for name, side in (("new", c["new"]), ("old", c["old"])):
+            got = [(i, curve_at(m, dur.get(i, 0.0), sec)) for i, m in side]
+            row[name] = sorted(v for _, v in got if v is not None)
+        out.append(row)
+    return out
 
 
 def curve_line(rows: list[dict]) -> str:
@@ -2033,12 +2121,29 @@ def curve_line(rows: list[dict]) -> str:
         return (f"{name} {len(side)}本 **10% で {p10[0]:.2f}〜{p10[-1]:.2f}**"
                 f"・95% で {p95[0]:.2f}〜{p95[-1]:.2f}")
     tail = (f"・**空 {len(c['empty'])}本**（`analytics.curve` の覆る条件 (1)）" if c["empty"] else "")
+    dur = curve_seconds(rows)
+    def _dur(side, name):
+        got = sorted(dur[i] for i, _ in side if i in dur)
+        return f"{name} {got[0]:.0f}〜{got[-1]:.0f}秒" if got else f"{name} 尺 不明"
+    al = []
+    for r in curve_aligned(rows):
+        if r["new"] and r["old"]:
+            al.append(f"**{r['sec']:.0f}秒 新 {'・'.join(f'{v:.2f}' for v in r['new'])}"
+                      f" 対 旧 {r['old'][0]:.2f}〜{r['old'][-1]:.2f}**")
+    aligned = ("。**同じ刻は同じ秒ではありません**（尺 " + _dur(c["new"], "新") + "・"
+               + _dur(c["old"], "旧") + " ＝ `10%` は 新 9秒 対 旧 3秒）。"
+               "**同じ秒で読むと向きは逆**: " + "／".join(al)
+               + "（**旧の側は挟みの上限** ＝ 差はもっと大きい・`curve_at` の註）。"
+               "**旧が 3秒 で 1.00 を越えるのはループ**（30秒 の本は1周して頭へ戻る）"
+               " ＝ **`10%` の差はループと尺で、作りではありません**。"
+               "**§3 の (1) を、この数で書き換えないこと**"
+               "（覆る条件は `curve_aligned` の註・2026-09-11 11:4x）"
+               if al else
+               "。**同じ秒では読めていません**（尺か刻が足りない ＝ `curve_aligned` の註）")
     return ("**維持率カーブ**（どこで落ちるか・台帳から・**Data API 0単位**）: "
             + _fmt(c["new"], "新しい作り") + " 対 " + _fmt(c["old"], "旧作り")
-            + "。**1.00 より上は見直しで人が戻った側**。"
-            "**新旧がいちばん離れるのは 10%（＝ 90秒 の本なら最初の 9秒）で、"
-            "そこは §3 の (1)（1文目で誰に向けた何の話かを言う）の当のもの** ——"
-            "**判定は `hourly`・§5**（optimizer は数を並べるまで）" + tail)
+            + "。**1.00 より上は見直しで人が戻った側**" + aligned
+            + " —— **判定は `hourly`・§5**（optimizer は数を並べるまで）" + tail)
 
 
 def report(within_h: float = 24 * 3) -> list[str]:
