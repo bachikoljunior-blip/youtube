@@ -1356,6 +1356,13 @@ def main(argv=None):
     rp = sub.add_parser("reply"); rp.add_argument("comment_id"); rp.add_argument("--text", required=True)
     rp.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
+    # **道で呼ばれた `id` を、ここで 1度だけ id へ戻す**（2026-09-12 02:1x・hourly・Opus）。
+    # `script.path_for` は 09/06 から道を通しますが、この下の 20か所 は `a.id` を id として使います
+    # （`image_for` / `workdir` / `render.built_sig` / `ledger(..., a.id)` / `f"{a.id}-bg"`）。
+    # 実物: 道で撃った `build` が**絵が在るのに単色で焼き**、台帳の id に道を書きました。
+    # 理由と覆る条件は `script.norm_id` の註。
+    if getattr(a, "id", None):
+        a.id = script.norm_id(a.id)
     fn = globals()["cmd_" + a.cmd.replace("-", "_")]
     return fn(a) or 0
 
