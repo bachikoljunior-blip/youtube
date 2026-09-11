@@ -265,6 +265,51 @@ def test_positive_control_平らの中の伸びが枠を決めている():
     assert "チャンネルは止まっていません" not in short
 
 
+# ---- `over_drawn` は `over` とは別の決め（2026-09-11 17:4x・optimizer・Opus）
+# **同じ族の 3件目を、実物で出る前に塞いだ側**: `over` の枝は短い行にも在ったが、
+# **塊が 3つ 続いた（`over_drawn`）ときの決め**「(m) の当て所ごと作り直すこと」と、
+# 続いていないときの「1周ぶんと数え足さないこと」は、**full にしか在りませんでした**。
+
+
+def _over_rows(hours: int) -> list[dict]:
+    """総再生は動かず、本だけが伸び続ける並び（塊 ＝ `CHANNEL_BLOCK_MIN_H` ごと）。
+
+    `hours` を伸ばすと塊が増える（1塊 5.6時間 ＋ 切り目 1点 ＝ 約 6.6時間）。
+    18時間 で 2塊（門に届かない）・26時間 で 3塊（`over_drawn` True）。
+    """
+    import datetime as dt
+    t0 = dt.datetime(2026, 9, 10, 6, 0, tzinfo=dt.timezone(dt.timedelta(hours=9)))
+    out: list[dict] = []
+    for k in range(hours + 1):
+        at = (t0 + dt.timedelta(hours=k)).isoformat()
+        out.append(_row(at, 28, 84781))
+        out.append(_m(at, "aaa", 100 + 10 * k, 10.0 + k))
+    return out
+
+
+def test_短い行も塊が門に届いたら当て所ごと作り直すと言う():
+    rows = _over_rows(26)
+    g = trend.channel_growth(rows)
+    assert g["over"] is True and g["over_drawn"] is True
+    full, short = trend.channel_line(rows), trend.channel_line_short(rows)
+    assert "当て所ごと作り直すこと" in full
+    assert "当て所ごと作り直すこと" in short
+    assert f"{g['over_streak']}/{trend.CHANNEL_FLAT_LAPS} 塊" in short
+
+
+def test_positive_control_塊が届かない回は短い行も作り直すと言わない():
+    """**陽性対照**: 同じ形で塊が 2つ しか無い回は、短い行が `over_drawn` の決めを言わないこと。
+
+    ＝ 上の検査が通るのは `over_drawn` を読んでいるからで、文の書き換えではない。
+    """
+    rows = _over_rows(18)
+    g = trend.channel_growth(rows)
+    assert g["over"] is True and g["over_drawn"] is False
+    short = trend.channel_line_short(rows)
+    assert "当て所ごと作り直すこと" not in short
+    assert "1周ぶん" in short          # 続いていない側の決めは言うこと
+
+
 # ---- 反証は時間の門と独立（2026-09-11 17:4x・optimizer・Opus。**同じ欄で 2度目**）
 # **踏んだ形**: 14:0x は `flat_alive` の枝に `and flat_readable` を残した ＝
 # **上端に届いていない平らの中で本が伸びている回**は、full が「チャンネルは止まっていません」、

@@ -157,3 +157,66 @@ def test_取り込みの型は台帳の行にできる(tmp_path):
     row = {"reports": 1, "rows": 1, "last_day": "20260909",
            "lag_h": fr["lag_h"], "made_h": fr["made_h"]}
     assert json.loads(json.dumps(row))["lag_h"] == 26.0
+
+
+# ---- 1日は 1行 ではない（2026-09-11 17:5x・optimizer・Opus。**最初の CSV が届いた回に撃った**）
+# **踏んだ形（実物）**: `channel_basic_a3` の 1行 は（日・本・**国・登録の有無・生か収録か**）で割れる。
+# `latest_rows` が (日・本) で 1行 に畳んでいたので、`lQHX9LJ80Sg` の 09/08 は
+# **ZZ の 0回** だけが残り、**JP の 232回** が落ちていた（台帳の側は 692回）。
+
+def _a3(date, vid, views, country, created="2026-09-11T08:00:00Z", subscribed="not_subscribed"):
+    return {"date": date, "video_id": vid, "views": str(views), "country_code": country,
+            "subscribed_status": subscribed, "live_or_on_demand": "on_demand",
+            "_report_id": "r" + created[-3:], "_created": created}
+
+
+def _split_day():
+    """実物の形（1本・1日 が 6行）。"""
+    return [_a3("20260908", "v1", 0, "ZZ"), _a3("20260908", "v1", 232, "JP"),
+            _a3("20260908", "v1", 1, "US"), _a3("20260908", "v1", 1, "HK"),
+            _a3("20260908", "v1", 1, "BR"),
+            _a3("20260908", "v1", 3, "JP", subscribed="subscribed")]
+
+
+def test_同じ日の次元の行は足すこと():
+    assert reporting.views_by_day(_split_day(), "v1") == [("20260908", 238)]
+
+
+def test_positive_control_1行に畳むと2桁小さくなる():
+    """**陽性対照**: (日・本) で 1行 に畳むと、`ZZ` の 0回 だけが残ること。
+
+    ＝ 上の検査が通るのは足しているからで、数の書き換えではない。
+    """
+    rows = _split_day()
+    one = {}
+    for r in rows:
+        one.setdefault((r["date"], r["video_id"]), r)
+    assert [int(r["views"]) for r in one.values()] == [0]        # 先に来た行が残る
+    assert sum(int(r["views"]) for r in rows) == 238             # 本当は 238
+
+
+def test_同じ次元の行が二重に積まれても畳むこと():
+    """store は追記しかしないので、同じ報告が 2度 積まれることが在る（`_dim_key`）。"""
+    rows = _split_day() + _split_day()
+    assert reporting.views_by_day(rows, "v1") == [("20260908", 238)]
+
+
+def test_置き直された報告の行だけを足すこと():
+    """古い報告と新しい報告が同じ日に在ったら、**新しいほうの行だけ**を足すこと（註の (4)）。"""
+    old = [_a3("20260908", "v1", 100, "JP", created="2026-09-10T08:00:00Z")]
+    new = [_a3("20260908", "v1", 232, "JP", created="2026-09-11T08:00:00Z"),
+           _a3("20260908", "v1", 6, "US", created="2026-09-11T08:00:00Z")]
+    assert reporting.views_by_day(old + new, "v1") == [("20260908", 238)]
+
+
+def test_面のCTRはインプレッションで重みを付けること():
+    """行ごとの %をそのまま平均しないこと（`reach_by_day`）。"""
+    rows = [{"date": "20260909", "video_id": "v1", "country_code": "JP",
+             "video_thumbnail_impressions": "100", "video_thumbnail_impressions_ctr": "0.10",
+             "_created": "2026-09-10T09:00:00Z"},
+            {"date": "20260909", "video_id": "v1", "country_code": "US",
+             "video_thumbnail_impressions": "900", "video_thumbnail_impressions_ctr": "0",
+             "_created": "2026-09-10T09:00:00Z"}]
+    (day, imp, ctr), = reporting.reach_by_day(rows, "v1")
+    assert (day, imp) == ("20260909", 1000)
+    assert abs(ctr - 1.0) < 1e-9      # 重み付け 1.0%（そのまま平均すると 5.0%）

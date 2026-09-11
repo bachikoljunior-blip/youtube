@@ -236,18 +236,46 @@ def load_rows(path: Path | None = None) -> list[dict]:
     return out
 
 
+#: **この報告は「1日1本 1行」ではありません。** `channel_basic_a3` の 1行 は
+#: **（日・本・国・登録の有無・生か収録か）** で割れており、1本1日 が **6行** になることが在ります
+#: （実測 2026-09-11 17:5x: `lQHX9LJ80Sg` の 09/08 は ZZ 0回 / JP 232回 / US 1回 / HK 1回 /
+#:   BR 1回 / JP(登録者) 3回 の **6行**）。**読む側は、その日のぶんを足すこと。**
+DIMS = ("country_code", "subscribed_status", "live_or_on_demand",
+        "traffic_source_type", "traffic_source_detail", "device_type",
+        "operating_system", "playback_location_type")
+
+
+def _dim_key(r: dict) -> tuple:
+    """同じ報告の中で行を見分ける鍵（**次元の組**）。無い欄は空で埋める。"""
+    return tuple(str(r.get(d, "")) for d in DIMS)
+
+
 def latest_rows(rows: list[dict]) -> list[dict]:
     """同じ（日・本）が 2度 置かれていたら、**いちばん新しい報告のほうを採る**（註の (4)）。
 
     数の訂正で報告は置き直されます。**古いほうを混ぜて足すと、その日が二重になります。**
+
+    **【2026-09-11 17:5x・optimizer・Opus】(日・本) で 1行 に畳んでいました ＝ 次元の行を捨てていた。**
+    18:0x の形は `best[(date, video)] = r` で、**同じ日の残りの行を黙って落とします**。
+    実測（この回に初めて a3 の CSV が届いて撃った）: `lQHX9LJ80Sg` の 09/08 は
+    **JP 232回** が在るのに、道具は**先に来た `ZZ` の行（0回）**だけを返し、
+    `views_by_day` は「**0908 0回 → 0909 1回**」と印字していました（台帳の側は 692回）
+    ＝ **2桁 小さい側へ、しかも「止まっている」向きへ外れます。**
+    §7 (o-4)(3) は「**複製から返らない唯一の口で、(m) を外から当てられるのはここだけ**」と
+    言っている当のものなので、ここが外れると当て先ごと狂います。
+    いまは**いちばん新しい報告の行を全部**返し、**足すのは読む側**（`views_by_day` / `reach_by_day`）。
+    同じ次元の行が二重に積まれていても `_dim_key` で 1つ に畳みます。
     """
-    best: dict[tuple[str, str], dict] = {}
+    best: dict[tuple[str, str], tuple[str, dict[tuple, dict]]] = {}
     for r in rows:
         key = (r.get("date", ""), r.get("video_id", ""))
+        created = str(r.get("_created", ""))
         cur = best.get(key)
-        if cur is None or str(r.get("_created", "")) > str(cur.get("_created", "")):
-            best[key] = r
-    return list(best.values())
+        if cur is None or created > cur[0]:
+            best[key] = (created, {_dim_key(r): r})
+        elif created == cur[0]:
+            cur[1][_dim_key(r)] = r
+    return [r for _, d in best.values() for r in d.values()]
 
 
 def pt_day(when: dt.datetime) -> str:
@@ -268,15 +296,33 @@ def reach_by_day(rows: list[dict], video_id: str) -> list[tuple[str, int, float]
     使える所は 1つ だけ: **再生 0回 の本に、この面の数が付いているか** ——
     付いていれば「見せたのに押されない」側の証拠が 1つ、0 なら「この面には出ていない」までです
     （**「配られていない」ではありません** —— この面は配りの 1/10〜1/20 しか見ていない）。
+
+    **次元で割れた行は日ごとに足します**（`latest_rows` の註）——
+    CTR は**インプレッションで重みを付けた平均**（行ごとの %をそのまま平均しないこと）。
     """
-    out = [(r.get("date", ""), int(float(r.get("video_thumbnail_impressions") or 0)),
-            float(r.get("video_thumbnail_impressions_ctr") or 0) * 100)
-           for r in latest_rows(rows) if r.get("video_id") == video_id]
-    return sorted(out)
+    imp: dict[str, float] = {}
+    clicks: dict[str, float] = {}
+    for r in latest_rows(rows):
+        if r.get("video_id") != video_id:
+            continue
+        d = r.get("date", "")
+        i = float(r.get("video_thumbnail_impressions") or 0)
+        imp[d] = imp.get(d, 0.0) + i
+        clicks[d] = clicks.get(d, 0.0) + i * float(r.get("video_thumbnail_impressions_ctr") or 0)
+    return sorted((d, int(v), (clicks[d] / v * 100 if v else 0.0)) for d, v in imp.items())
 
 
 def views_by_day(rows: list[dict], video_id: str) -> list[tuple[str, int]]:
-    """1本の「報告の日 → 再生」。**`videos.list` の複製とは別の口**（§7 の「割れた読み」を外から当てられます）。"""
-    out = [(r.get("date", ""), int(float(r.get("views") or 0)))
-           for r in latest_rows(rows) if r.get("video_id") == video_id]
-    return sorted(out)
+    """1本の「報告の日 → 再生」。**`videos.list` の複製とは別の口**（§7 の「割れた読み」を外から当てられます）。
+
+    **1日は 1行 ではありません** —— 国・登録の有無・生か収録か で割れた行を**足します**
+    （`latest_rows` の註・2026-09-11 17:5x に直した。それまでは 1行 だけを採り、
+    `lQHX9LJ80Sg` の 09/08 を **232回 → 0回** と読んでいました）。
+    """
+    tot: dict[str, int] = {}
+    for r in latest_rows(rows):
+        if r.get("video_id") != video_id:
+            continue
+        d = r.get("date", "")
+        tot[d] = tot.get(d, 0) + int(float(r.get("views") or 0))
+    return sorted(tot.items())
