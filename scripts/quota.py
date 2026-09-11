@@ -871,6 +871,11 @@ def _births_from_runs(start: datetime, end: datetime) -> int:
 
     1行ごとの `session` は `session_XXX#agent_YYY` の形で、**回ごとに別**です。
     ここは重複を潰して数えるだけ。読めなければ 0（呼ぶ側が `max()` するので害はない）。
+
+    **2026-09-11 09:4x から、生きている呼び手は 1つも在りません**（検査だけが呼ぶ）——
+    `data/runs.jsonl` は旧 `run_marker.py` の帳簿で **09/05 16:46 から増えていない**ので、
+    ここを新しい門の分母にすると**その門は生まれた瞬間に死にます**。
+    サブを数えるなら `_subs_from_choices()`（`data/model_choice.jsonl`）を使うこと。
     """
     if not RUNS_LOG.exists():
         return 0
