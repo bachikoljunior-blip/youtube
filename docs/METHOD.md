@@ -1495,9 +1495,9 @@ critique が real を出しても、その本は Fable が閉じたものなの�
                    （8周・門 3.0倍・**切った周 3つ**（09-11T10:46・11:22・11:57）・1周 **+0.085**・
                    振れ幅 **-0.026〜+0.085**・`quota.margin_line()`）。
                    **掃き直しは要りません** —— `per_lap` **0.567%** ≦ **1.0%** ＝ `sweep_verdict`（(1-a)）。
-    検査           `pytest -m live` **1,090 passed / 12 skipped・赤 0**（**この回に +13件** ＝
+    検査           `pytest -m live` **1,093 passed / 12 skipped・赤 0**（**この回に +16件** ＝
                    `test_quota_short_verdict.py` +7・`test_studio_flat_video_gain.py` +6・
-                   **どちらも陽性対照つき**）
+                   `test_spawn_quota_gate_side.py` +3・**どれも陽性対照つき**）
     この回の赤     **0**。この回に出した欠陥は 2つ とも「**門が METHOD の字の中にしか無い**」型
                    （§5 教訓の形 7つ目）: (1) **§5 15:1x の門 98% を `quota.short_verdict` へ移した**
                    —— 40周 手で引き比べていた。**同じ回に「どちらの着地に当てるか」を撃って分けた**
