@@ -142,6 +142,33 @@ class Script(BaseModel):
     def total_chars(self) -> int:
         return sum(len(s.say) for s in self.segments)
 
+    def loop_sig(self) -> str:
+        """**輪（§4 (1)）が実際に読んだ本の指紋**（2026-09-11 12:3x・hourly・Opus が足した）。
+
+        なぜ: §4 (1) は「直す → **最初から評価し直す**」と書いていますが、**その順を見ている道具が
+        1つもありませんでした**。09/12 の本で実際に踏んだ —— 11:0x の回は コマ8・9・11 を直したあと
+        **read も critique も撃たずに** build → hear → sheet → crosscheck へ進み、METHOD §15 に
+        「輪を開け直して閉じた」と書いています。台帳の刻で出ます（最後の `critique` 10:58:51・
+        最後の `cold_read` 10:59:59・直しの commit 11:01）。12:0x に**その最後の本文**へ
+        critique を当てたら **real 2件**（どちらも直した当の コマ11）で、輪は閉じていませんでした。
+        ＝ **§4 (0-b) と同じ族**（あとの手の直しが、前の手の答えを古くする）。ただしこちらは
+        **輪が自分の答えを古くする**形で、(0-b) のように手を1つ足しても直りません
+        —— 要るのは「この答えは、いまの本文のものか」を機械が持つことです。
+
+        指紋は `critique` が読む物ぜんぶ（`critique_screen` ＝ say/show/sub/tag/board。
+        `cold_read` の say はその部分集合）。`notes`・`description` は輪に渡らないので入れません
+        —— 入れると §4 (0) の説明欄の直しで輪が古い扱いになり、**鳴らない印字**（狼少年）になります。
+
+        覆る条件: (1) この印字が「古い」と言った回に、**say/show/sub が 1字も変わっていなかった**
+        ことが 1度 でもあれば、指紋の範囲が広すぎる（tag・board を外すこと）。
+        (2) 逆に、指紋が同じまま輪の答えが古くなった回が出たら（例: `critique` の問い文を変えた回）、
+        指紋に `critic.critique` のプロンプトの版を足すこと。
+        """
+        import hashlib
+        body = "\n".join(f"{s.say}\x1f{s.show}\x1f{s.sub}\x1f{s.tag}\x1f{'|'.join(s.board)}"
+                         for s in self.segments)
+        return hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+
     def problems(self) -> list[str]:
         out = []
         if not re.fullmatch(r"[a-z0-9-]+", self.id):
