@@ -3851,3 +3851,13 @@
 {"subs": 28, "views": 86446, "videos": 270, "at": "2026-09-12T00:16:05+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-12T00:16:06+09:00", "id": "4l3DDCLIRxg", "event": "ready_checked"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-12T00:16:06+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"subs": 28, "views": 86446, "videos": 270, "at": "2026-09-12T00:25:51+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-12T00:25:51+09:00", "id": "4l3DDCLIRxg", "event": "ready_checked"}
+{"views_live": 925, "views_ledger": 919, "over": 6, "age_h": 14.4, "src": "status", "at": "2026-09-12T00:25:51+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-12T00:25:51+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"n": 0, "kinds": [], "at": "2026-09-12T00:33:40+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
+{"video_id": "4l3DDCLIRxg", "what": "説明欄: 「1年ふえる人は枠が40万円（すでに勤続20年をこえている人は70万円）変わります」→ 「ふえたあとの勤続年数が20年までなら40万円、20年をこえるなら70万円ふえます」（+例2つ）。条件を『いまの年数』・額を『ふえたあとの年数』で書いており、切り上げ後20年の人（実19年超〜20年）に 40万円 と言っていた（本当は 70万円）。声・板は不変・再アップロード無し・yt.update_meta 50単位", "at": "2026-09-12T00:34:13+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "meta_updated"}
+{"subs": 28, "views": 86446, "videos": 270, "at": "2026-09-12T00:34:27+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-12T00:34:27+09:00", "id": "4l3DDCLIRxg", "event": "ready_checked"}
+{"views_live": 925, "views_ledger": 919, "over": 6, "age_h": 14.6, "src": "status", "at": "2026-09-12T00:34:27+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-12T00:34:27+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
