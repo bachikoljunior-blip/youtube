@@ -1549,13 +1549,9 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    **判定は `hourly`・§5**
     1回目が付いた齢  1回目が付いた **5本** は **どれも 齢 5.0h まで**・0回 のまま門を越えたのは **2本**
                    （5本目 と `fMlY_uzHOMw`）。`trend.first_view`
-    0回 の本の尺    **その 2本 は同じ列ではありません** —— **Shorts の尺 1本**（5本目 90秒）・
-                   **下敷きの外（180秒 超）1本**（旧 `fMlY_uzHOMw` **1580秒 ＝ 26分20秒**）・
-                   尺の分からない **0本**。**`trend` が毎周 割って印字する**
-                   （`trend.durations` / `first_view` の `zero_short` / `zero_long` / `zero_unknown`。
-                   **09/12 06:5x に `trend` へ入れた** —— それまで毎周 混ぜて 2本 と数えていた。
-                   **長尺の 0回 は §1 の「長尺は 1〜25回」で説明が付く側** ＝
-                   **形を変える判定に使うのは `zero_short` のほう**・判定は `hourly`・§5）
+    0回 の本の尺    **Shorts の尺 1本**（5本目 90秒）・**下敷きの外 1本**（旧 `fMlY_uzHOMw` 1580秒）・
+                   尺の分からない **0本**（`trend.first_view` の `zero_short` / `zero_long` /
+                   `zero_unknown`・09/12 06:5x に割った ＝ 「次に見る所」(l-2)）
     齢の割合        帯の中 **0本**・帯の外 **4本**・分けられない **1本**（`trend.hold_verdict`・覆る条件 (2)）
     48h の後        門（**3本 続けて 5% 未満**）は **引かれません**（新しいほうから続いているのは **0本**）。
                    **数は `trend.late_gain` の行**（写さない ＝ 04:3x に口を足した理由そのもの）
@@ -1606,14 +1602,11 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    当たった回の印字は `short_words` の 3行目・(1') は §5 13:1x・
                    derivation は JOURNAL 03:5x）。
                    **この回も短く終わっていません**（持ち場に (a)(b)(c)(e) が在った）。
-                   **リセットは 09/12 07:00 JST ＝ 残り 0.3時間**（`forward_rate` **0.000 %/時** ＝
-                   **余裕（`reach_ceiling_margin`）はこの刻には在りません**・`None`。
-                   **この 0 が、上の「この回の赤」の当のものです**）。
+                   **`forward_rate` 0.000 %/時**（残り 0.3時間）＝ **余裕は `None`**（上の「この回の赤」の当のもの）。
                    **またいだ後の枠は 05:3x が撃って読んであります**（この回は撃ち直していません）。
                    **この周に立った模型は 2役 とも opus**（`quota.sub_model` ＝ §5 10:3x の読み方）。
-                   **余裕**: **この周は `None`**（枠を使い切った ＝ 分母が 0。列は `quota.margin_line()` が
-                   **`None` の周を点にしません**）。直前まで **門 3.0倍 を切ったまま**・
-                   数と振れ幅は `quota.margin_line()` が毎周 印字する。
+                   **余裕**: **この周は `None`**（分母 0・列は `margin_line()` が `None` を点にしない）。
+                   直前まで **門 3.0倍 を切ったまま**・数は `quota.margin_line()` が毎周 印字する。
                    **1点で速さを読まないこと** —— 枠の終わりは要る速さの分母（残り時間）が
                    縮むので、必ず落ちます）。
                    **掃き直しは要りません**（`per_lap` 0.546% ≦ 1.0% ＝ `sweep_verdict` (1-a)）
@@ -1627,11 +1620,9 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    **数は `python scripts/method_growth.py --split` を撃って読むこと。**
     検査           `pytest -m live` **1,340 passed / 12 skipped・赤 0**（06:5x の回に全部 撃った。
                    **+7件** ＝ `tests/test_trend_first_view_length.py`）
-    この回の赤     **1件 出て、直しました** —— `test_quota_ceiling_rate.py::test_pace_exposes_the_margin` が
-                   **リセットの手前（`forward_rate == 0`）で必ず ZeroDivisionError**。
-                   **道具の赤ではありません**（`pace()` は `reach_ceiling_margin` を `None` で返す側が正しい）
-                   ＝ 09/12 06:1x の「走る順で出る赤」と同じ**本物の赤を隠す形**。
-                   **覆る条件はその検査の註**（derivation は JOURNAL 06:5x）。
+    この回の赤     **1件 出て、直しました**（`test_quota_ceiling_rate::test_pace_exposes_the_margin` が
+                   `forward_rate == 0` で割っていた ＝ **道具の赤ではない**・06:1x の「走る順で出る赤」と同じ形）。
+                   **覆る条件はその検査の註・derivation は JOURNAL 06:5x**。
                    **この回の仕事は (a) measure → trend ＋ (b) §7 の覆る条件（**1つも引かれていません**）
                    ＋ (c) `trend.first_view` が 0回 の列に尺を混ぜていたのを割った
                    ＋ (e) リセットの手前で必ず赤になる検査を直した**（どちらも derivation は JOURNAL 06:5x）。
@@ -1759,13 +1750,10 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                     (l) **公開ずみで 0回 の本の処理**（`cli.zero_probe_target`）—— **`ok` でない回が
                         1度でも出たら**、その本の 0回 を「配りが来ていない」と読まないこと。
                         **7本 過ぎて 1度も出なければ、この口は外してよい**
-                    (l-2) **0回 の本は、数える前に尺で割ること**（2026-09-12 06:5x・`trend.durations`）——
-                        **毎周 印字される `first_view` が 09/12 06:5x まで混ぜていました**
-                        （90秒 の Short と **1580秒 の長尺**を「0回 のまま 2本」と 1つの列に）。
+                    (l-2) **0回 の本は、数える前に尺で割ること**（`trend.durations`・09/12 06:5x）——
                         **形を変える判定に使うのは `zero_short` の数**（長尺の 0回 は §1 の
                         「長尺は 1〜25回」で説明が付く）。**次に見るのは `zero_unknown` が 1本 でも立つ回**
-                        ＝ そのとき初めて 3つ目の口（`videos.list` の `duration` を台帳へ）を足すこと。
-                        **覆る条件 4つ は JOURNAL 06:5x と `trend.durations` の註。**
+                        ＝ そのとき 3つ目の口を足すこと。**覆る条件 4つ は JOURNAL 06:5x と `durations` の註。**
                     (m) **チャンネル全体の登録と総再生**（`trend.channel_growth`）——
                         **本ごとの 0回 を読む前に、この行を見ること。ただし「チャンネルの側が止まっている」で
                         本の 0回 を説明しないこと**（外せるのは「総再生の数がこの窓で読めない」まで）。
