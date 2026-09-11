@@ -125763,7 +125763,7 @@ hourly も「すべて」の着地で決める側。
 （§5 の表のとおり `hourly` の持ち場。09/13 の本は `hourly` が 03:0x に絵を載せて焼き直し、輪を閉じた）。
 Data API は `measure` と `status` のぶんだけ（`analytics` `comments` `reporting` は撃っていません）。
 
-## 2026-09-12 03:3x〜04:1x JST（optimizer・Opus・session_01AHfq4FUVAd5fxDM29yG1Cm）—— **「床がいつ歯止めに当たるか」の印字が無く、§7 が門の読まない側の見込みを手で運んでいた**（API 0単位・TTS 0回・whisper 0回・`claude -p` 0回）
+## 2026-09-12 03:5x JST（03:3x〜04:1x・optimizer・Opus・session_01AHfq4FUVAd5fxDM29yG1Cm）—— **「床がいつ歯止めに当たるか」の印字が無く、§7 が門の読まない側の見込みを手で運んでいた**（API 0単位・TTS 0回・whisper 0回・`claude -p` 0回）
 
 **この回の Data API**: `measure`（19本・2点組に入った 24.6分）と `status` のぶんだけ。
 `analytics`・`comments`・`reporting` は門の手前（遅れ 15時間 ／ 新着 0件 ／ 報告の日 20260909 で穴 0日）。
