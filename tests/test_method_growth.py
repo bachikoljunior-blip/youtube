@@ -130,12 +130,54 @@ def test_毎周読むのに_measure_が見ていない_3塊_を挟めること()
     （2026-09-10 23:5x に足した・`section7_spans` の註）。"""
     lines = _S7.split("\n")
     spans = M.section7_spans(lines)
-    assert len(spans) == 3
+    assert len(spans) == 4                                     # 「いまの数」は 2つ に割れる（`_now_cut`）
     got = M.measure7_split(_S7)
     assert set(got) == set(M.SPAN7_NAMES)
     assert got["読み方"]["body_lines"] == 1                    # 「読み方」だけ（`## 0.` の手前まで）
     assert got["いまの数"]["body_lines"] == 2                  # 見出し ＋ 本文1行
+    assert got["次に見る所"]["body_lines"] == 0                # この下敷きには書き出しの語が無い ＝ 空
     assert got["末尾の一覧"]["body_lines"] == 2                # `- **形**` と `- **声**`
+
+
+_S7N = _S7.replace("いまの数の本文\n", "いまの数の本文\n    次に見る所      (a) 見る所\n(b) もう1つ\n")
+
+
+def test_いまの数は_数の表_と_次に見る所_に割れること():
+    """**門が名指しする先を、実際に伸びている側まで降ろす**（`_now_cut` の註・2026-09-11 12:0x）。
+
+    実測 09/11 08:12 → 11:58（6周）: 塊は 1周 +652字 で、内訳は
+    **数の表 +22 ／ 次に見る所 +630** ＝ 伸びの 96% は下側。
+    塊のままだと、既に形の効いている上の表を畳みに行きます。
+    """
+    got = M.measure7_split(_S7N)
+    assert got["いまの数"]["body_lines"] == 2                  # 見出し ＋ 本文1行（割る前と同じ）
+    assert got["次に見る所"]["body_lines"] == 2                # 書き出しの行 ＋ その続き
+
+
+def test_割りは足し算を変えないこと():
+    """**合計は `measure7` と同じ** —— 割りで数が増えたり減ったりしないこと。"""
+    for text in (_S7, _S7N):
+        sp = M.measure7_split(text)
+        assert sum(v["body_chars"] for v in sp.values()) == M.measure7(text)["body_chars"]
+
+
+def test_positive_control_次に見る所_を太らせると_その名だけが動くこと():
+    """**陽性対照** —— 割りが効いていなければ（＝ 2つ目が常に空なら）この検査は落ちます。"""
+    太 = _S7N.replace("(b) もう1つ", "Z" * 500)
+    a, b = M.measure7_split(_S7N), M.measure7_split(太)
+    assert b["次に見る所"]["body_chars"] - a["次に見る所"]["body_chars"] == 500 - len("(b) もう1つ")
+    for name in ("読み方", "いまの数", "末尾の一覧"):
+        assert b[name]["body_chars"] == a[name]["body_chars"]
+
+
+def test_書き出しの語が変わったら黙って_0_を配らずに_2つ目を空にすること():
+    """**覆る条件 (1)** —— 割りが外れても**塊の合計は割る前と同じ**（門は割る前と同じに鳴る）。
+    `section7_spans` の「止める」（塊そのものが外れる側）とは別の扱いです。"""
+    外れ = _S7N.replace("次に見る所", "次にみるところ")
+    sp = M.measure7_split(外れ)
+    assert sp["次に見る所"]["body_chars"] == 0
+    assert sp["いまの数"]["body_chars"] == M.measure7_split(_S7N)["いまの数"]["body_chars"] \
+        + M.measure7_split(_S7N)["次に見る所"]["body_chars"] + len("次にみるところ") - len("次に見る所")
 
 
 def test_日付つきの節は_3塊_に入らないこと():
