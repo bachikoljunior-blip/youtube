@@ -439,9 +439,9 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
     out += ["  " + v for v in verdict(ps)]
     s7 = [p for p in ps if p["s7_per_lap"] is not None]
     if s7:
-        out.append("**毎周 読むのに、上の物差しが見ていない 3塊**（冒頭「この文書の読み方」＋"
-                   "§7 の「いまの数」＋§7 末尾の覆る条件の一覧。日付つきの節は入れない・"
-                   "2026-09-10 23:5x に足した）")
+        out.append("**毎周 読むのに、上の物差しが見ていない 4塊**（冒頭「この文書の読み方」＋"
+                   "§7 の「**数の表**」＋「**次に見る所**」＋§7 末尾の覆る条件の一覧。"
+                   "日付つきの節は入れない・2026-09-10 23:5x に足し、**12:0x に「いまの数」を 2つ に割った**）")
         for p in s7:
             out.append(f"  {p['from'].astimezone(JST):%m/%d %H:%M} → {p['to'].astimezone(JST):%m/%d %H:%M} JST"
                        f"   本文 {p['s7_body']:+d}字  ＝ 1周 **{p['s7_per_lap']:+.0f}字**")
