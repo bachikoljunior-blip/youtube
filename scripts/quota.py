@@ -168,6 +168,26 @@ FLOOR_MIN_CLAMP, FLOOR_MAX_CLAMP = 10.0, 720.0
 #: `margin_line` が 3.0 を別々に持っていた ＝ 片方だけ動かせる形でした）。
 CEILING_MARGIN_GATE = 3.0
 
+#: **掃き直しが要るかの門**（1周の重さ `per_lap`・%）。
+#: **余裕が 3.0倍 を切っただけでは、掃き直す理由になりません**
+#: —— `ceiling_rate()` の覆る条件 (1)（2026-09-09 23:5x に 144点 を掃き、
+#: **2026-09-11 08:5x に「切る刻の状態」でもう一度 掃いてある**）が言っているのは 2つ で、
+#: **どちらも `per_lap` の側が主語**です:
+#:   (1-a) 余裕が門を切り、**かつ** `per_lap` がこの数を越えていたら 掃き直す
+#:         （`per_lap` が軽いままなら、08:5x の掃きの行を読むだけでよい
+#:          ＝ **余裕は着地を順序づけません**。余裕 3.06〜3.38倍 で 97.2% の点が在り、
+#:          余裕 1.3倍 で 99.3% の点より悪い）
+#:   (1-b) `per_lap` がこの数を越えた回は、**余裕の数に関わらず 1度 掃くこと**
+#:         （重い側は 余裕 3倍 でも 97% に着く）
+#: **2026-09-11 11:2x（optimizer・Opus）に足しました** —— それまで `margin_line()` と
+#: `pace_report` の印字は **余裕だけを見て「掃き直すこと」と言っており**、
+#: (1-a) の後半（軽いままなら読むだけ）も (1-b)（重ければ門の上でも掃く）も 印字に出ていませんでした。
+#: 実測: この回に列が **2.985** で門を切り、`per_lap` は **0.552%**（この門の半分）＝
+#: **掃き直さなくてよい回**なのに、道具は「掃き直すこと」と言いました。
+#: **覆る条件**: `ceiling_rate()` の覆る条件 (1) の数（1.0%）が動いたら、ここも一緒に動かすこと
+#: （**2か所に持たない** —— 上の `CEILING_MARGIN_GATE` が 07:5x に踏んだのと同じ形）。
+SWEEP_PER_LAP_GATE = 1.0
+
 # **オーナー指示（2026-09-02 18:4x JST・原文。一字も変えないこと）**:
 #
 # > **「使用量は定期的に画面送るからとりあえず最初は今までの最高速度の二分の一の速度でやって」**
@@ -1618,10 +1638,66 @@ def _lap_steps(xs: list[tuple[str, float]],
     return steps, skipped
 
 
-def margin_line(n: int = 8) -> str:
+def sweep_verdict(margin: float | None, per_lap: float | None) -> dict:
+    """**この回、掃き直しが要るか。** `ceiling_rate()` の覆る条件 (1) の、印字の側。
+
+    2026-09-11 11:2x・optimizer・Opus。**足したのは数ではなく、印字と覆る条件の食い違いを閉じる口**です。
+
+    それまで `margin_line()` と `pace_report` は **余裕（`reach_ceiling_margin`）だけ**を見て
+    「門を切っています ＝ 掃き直すこと」と印字していました。
+    けれど `ceiling_rate()` の覆る条件 (1) は **`per_lap` の側が主語**で、言っているのは 2つ です:
+
+        (1-a) 余裕が門を切り、**かつ** `per_lap` > `SWEEP_PER_LAP_GATE` → 掃き直す
+              （軽いままなら **08:5x の掃きの行を読むだけでよい**）
+        (1-b) `per_lap` > `SWEEP_PER_LAP_GATE` → **余裕の数に関わらず 1度 掃く**
+
+    ＝ **道具は、要らない回に「掃け」と言い、要る回に黙っていました。**
+    実測（この回・09/11 11:2x）: 列が **2.985** で門を切り、`per_lap` は **0.552%** ＝
+    **(1-a) の「軽いまま」の側**なのに、印字は「掃き直すこと」でした。
+
+    返すもの: `sweep`（掃くか）・`why`（どちらの枝か: `heavy` / `gate_light` / `none`）。
+    `per_lap` が無い（None）回は、**判断できないので掃く側**に倒します
+    （`margin_line(n)` を `per_lap` 無しで呼ぶ古い呼び口は、いままでどおりの文になります）。
+
+    **覆る条件**: (1) 掃き直した回が 3回 続けて 08:5x の盤と同じ数（着地 99.7%）を出したら、
+    (1-b) の「1度 掃く」も台帳の数で置き換えてよい（掃きは `per_lap` と遅れの盤なので、
+    同じ盤を撃ち直すだけになる）。
+    (2) `ceiling_rate()` の覆る条件 (1) が書き換わったら、この関数も一緒に書き換えること。
+    """
+    heavy = per_lap is not None and float(per_lap) > SWEEP_PER_LAP_GATE
+    cut = margin is not None and float(margin) < CEILING_MARGIN_GATE
+    if heavy:
+        return {"sweep": True, "why": "heavy"}
+    if cut and per_lap is None:
+        return {"sweep": True, "why": "unknown"}
+    if cut:
+        return {"sweep": False, "why": "gate_light"}
+    return {"sweep": False, "why": "none"}
+
+
+def sweep_words(margin: float | None, per_lap: float | None) -> str:
+    """`sweep_verdict` を、印字に足す1句にする（`margin_line` と `pace_report` が同じ口を使う）。"""
+    v = sweep_verdict(margin, per_lap)
+    if v["why"] == "heavy":
+        return (f" ＝ **掃き直すこと**（`per_lap` {per_lap:.2f}% ＞ {SWEEP_PER_LAP_GATE:.1f}% ＝ "
+                f"`ceiling_rate()` の覆る条件 (1-b)。**余裕の数に関わらず 1度**）")
+    if v["why"] == "unknown":
+        return " ＝ 掃き直すこと（`per_lap` が読めません）"
+    if v["why"] == "gate_light":
+        return (f" ＝ **掃き直さなくてよい**（`per_lap` {per_lap:.2f}% ≦ {SWEEP_PER_LAP_GATE:.1f}% ＝ "
+                f"`ceiling_rate()` の覆る条件 (1-a)。**08:5x の掃きの行を読むだけ** —— "
+                f"**余裕は着地を順序づけません**）")
+    return ""
+
+
+def margin_line(n: int = 8, per_lap: float | None = None) -> str:
     """`margin_series` を1行にする（`--pace` が印字する。**手で並べないこと**）。
 
     桁は `MARGIN_DIGITS`（**2桁 では 1周ぶんの動きが消えます** —— その註）。
+
+    `per_lap` を渡すと、**門を切った回に「掃き直すか」まで言います**（`sweep_verdict` の註・
+    2026-09-11 11:2x）。渡さない呼びは、いままでどおり「掃き直すこと」と言います
+    —— **判断できない側に倒してあります**。
     """
     xs = margin_series(n)
     if not xs:
@@ -1659,7 +1735,8 @@ def margin_line(n: int = 8) -> str:
             words += "（下がっていません ＝ 門は当分 切りません）"
     return (f"      余裕の列（周ごと・その周が見た数・`quota.margin_series`）: **{body}**"
             f"（{len(xs)}周・門 {CEILING_MARGIN_GATE:.1f}倍）"
-            + (f" —— **切った周: {'・'.join(hit)}** ＝ 掃き直すこと" if hit else " ＝ **門の上**")
+            + (f" —— **切った周: {'・'.join(hit)}**" + sweep_words(xs[-1][1], per_lap)
+               if hit else " ＝ **門の上**" + sweep_words(None, per_lap))
             + words)
 
 
@@ -1819,6 +1896,11 @@ def ceiling_rate(per_lap: float, lag_min: float = 0.0,
     着地の数を信じずに掃き直すこと**（`per_lap` が軽いままなら、上の掃きの行を読むだけでよい）。
     **`per_lap` が 1.0% を越えた回は、余裕の数に関わらず 1度 掃くこと** ——
     重い側は 余裕 3倍 でも 97% に着きます。
+    **この (1) は 2026-09-11 11:2x に道具の側へ移りました**（`sweep_verdict` / `sweep_words`・
+    門は `SWEEP_PER_LAP_GATE`）—— それまで `margin_line()` と `pace_report` の印字は
+    **余裕だけ**を見て「掃き直すこと」と言っており、**この 1.0% は 註の中にしか在りませんでした**
+    （実測: 余裕 2.985・`per_lap` 0.552% ＝ 掃かなくてよい回に「掃け」と印字した）。
+    **次の回は、この行ではなく `--pace` の印字を読んでよい。**
     (2) `FLOOR_MIN_CLAMP` を動かしたら天井も動きます。
     (3) 遅れ（`wake_latency_minutes()`）が **10分** を越えたら、いまの `per_lap` でも
     余裕は 2.1倍 まで落ちます —— そのときは遅れを削る手が初めて着地に効きます
@@ -2381,9 +2463,10 @@ def pace_report(now: datetime | None = None) -> None:
                   f"閉じた輪が出せる最速 **{p['reach_ceiling_rate']:.2f} %/時**"
                   f"（1周の最短 {FLOOR_MIN_CLAMP:.0f}分 ＋ 遅れ {p['reach_lag_min']:.1f}分）に対し、"
                   f"要るのは **{p['forward_rate']:.2f} %/時** ＝ **{m:.2f}倍 の余裕**"
-                  + (f"（門 {CEILING_MARGIN_GATE:.1f}倍 を切っています ＝ **着地を信じずに掃き直すこと**）"
-                     if m < CEILING_MARGIN_GATE else f"（門 {CEILING_MARGIN_GATE:.1f}倍）"))
-            print(margin_line())
+                  + (f"（門 {CEILING_MARGIN_GATE:.1f}倍 を切っています）"
+                     if m < CEILING_MARGIN_GATE else f"（門 {CEILING_MARGIN_GATE:.1f}倍）")
+                  + sweep_words(m, p.get("per_lap")))
+            print(margin_line(per_lap=p.get("per_lap")))
         print(f"      いまの間隔のまま **{p['reach_carry']:.1f}%**"
               f"（＝ 直近の区間の {p['carry_rate']:.3f} %/時。"
               f"**残す {100.0 - p['reach_carry']:.0f}% は、リセットで消えます**）")
