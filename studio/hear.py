@@ -29,7 +29,7 @@ import pykakasi
 from janome.tokenizer import Tokenizer
 
 from .common import probe_duration, run
-from .script import Script
+from .script import Script, sentence_lens
 
 _kks = pykakasi.kakasi()
 _tok = Tokenizer()
@@ -510,6 +510,54 @@ def tail_gap(exp: str, diffs: list[tuple[str, str]]) -> str | None:
     e, g = diffs[-1]
     return e if g == "" and len(e) >= 4 and exp.endswith(e) else None
 
+HEAD_PROBE_SEC = 4.0   # 頭だけを聞き直すときに切り出す長さ（実測 2026-09-11 10:3x: コマ6 は 8.32秒 で、頭 4秒 に欠けた 13字 が全部 入る）
+
+
+def head_gap(exp: str, diffs: list[tuple[str, str]]) -> str | None:
+    """差が「予定の**頭**が丸ごと音に無い」形なら、その並びを返す（そうでなければ None）。
+
+    **切り落としは末尾だけではありません**（実測 2026-09-11 10:3x・`hourly`・Opus。09/12 の本 コマ6・43字 8.32秒）:
+    `予定「けさんするとさんじゅねんのち」 聞こえた「」` ＝ **頭の 13字（約2.4秒）が丸ごと無い**。
+    そのとき `tail_gap`/`tail_probe`/`tail_rate`/`tail_voice` は **4つ とも末尾を見る**ので、1行も印字されませんでした。
+    手で撃った頭の窓（先頭 4秒・small）は `けいさんすると30…` と書き、
+    字/秒 は 43/8.32 = 5.17（帯の中）・頭が無いなら 30/8.32 = 3.61（帯の外）＝ **音は在り、切ったのは whisper**。
+    同じ 43字 のまま第1文を 27 → 20字 に割ると 12/12。
+
+    **`e != exp` を要ります** —— 聞き取りが丸ごと空の行は「頭が無い」ではなく「何も書かなかった」で、
+    そちらは `degenerate` と `tail_gap` が既に持っています（**頭の側を足したことで、
+    同じ行を 2つ の口が数えることがあってはいけません**）。
+
+    **覆る条件**: 頭が 4字 未満 で切れた回が出たら、門（`len(e) >= 4`）を下げること
+    —— いまの 4字 は `tail_gap` に合わせただけで、頭の実測は 13字 の 1例 だけです。"""
+    if not diffs:
+        return None
+    e, g = diffs[0]
+    return e if g == "" and len(e) >= 4 and e != exp and exp.startswith(e) else None
+
+
+def head_probe(h: "Hearer", wav: Path, missing: str, yomi: dict[str, str], sec: float = HEAD_PROBE_SEC) -> dict:
+    """コマの**頭 sec 秒だけ**を聞き直して、`missing`（予定に在って音に無かった頭の並び）がそこに在るかを見る。
+
+    `tail_probe` の鏡です（2026-09-11 22:4x・optimizer・Opus。§15 の申し送り (2)）。
+    **足す前に、元の手と違う物を見ることを確かめてあります** —— 09/11 10:3x の実測で、
+    段を上げる側（small → medium）は同じ所で切れ、**頭 4秒 を渡した側だけが `けいさんすると30…` と書きました**。
+
+    **`tail_probe` が 06:5x に自分で踏んだ穴は、こちらにも在ります** ——
+    **窓の中の頭も切られることが在る**ので、`rate`（字/秒）と**並べて**読むこと
+    （`ok` でない ＝ 「TTS を疑え」ではなく、「この手では分けられなかった」側に倒れます）。
+
+    返すもの: `{"heard": 頭の仮名, "diffs": 残った差, "ok": 差が無いか}`。
+    `ok` でも**一致の数には入れません**（決めるのは Fable・§4 (2)）。
+    **覆る条件**: 頭の窓で「在る」と出たコマが、耳で聞いて欠けていた回が 1度でも出たら、この手ごと外すこと。"""
+    clip = wav.with_name(wav.stem + "-head.wav")
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-t", str(sec), str(clip)])
+    heard = h.transcribe(clip)
+    got = loose(heard_kana(heard, yomi))
+    # 切り出した末に次の語が入り込むが、それは **exp 側が空の差**になるので落とすだけでよい（`tail_probe` と同じ）。
+    diffs = [(e, g) for e, g in diff_spans(missing, got) if e]
+    return {"heard": got, "diffs": diffs, "ok": not diffs}
+
+
 def degenerate(heard: str, exp: str) -> bool:
     """漢字を禁じると whisper が崩れることがある（実測 09/06: 「、、、、」の連打・空）。短すぎる／同じ片の連打で見る。"""
     k = to_kana(heard)
@@ -558,21 +606,38 @@ VOICE_GAP_PRESENT = 0.4 # これ以上 空いていれば「音は在る」（5�
 VOICE_GAP_ABSENT = 0.2  # これ未満なら「音が無い」。あいだは**分けない**
 
 
-def energy_end(wav: Path, thresh: float = ENERGY_THRESH, win: float = ENERGY_WIN) -> float:
-    """音のエネルギーが最後に閾を越えた時刻（秒）。**聞き取りを1度もしません。**"""
+def _loud_windows(wav: Path, thresh: float, win: float) -> list[int]:
+    """閾を越えた窓の番号（`energy_end` / `energy_start` の共通の土台）。**聞き取りを1度もしません。**"""
     import numpy as np
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(wav), "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
                          check=True, capture_output=True).stdout
     x = np.frombuffer(raw, dtype="<i2").astype("float32") / 32768.0
     n = max(1, int(16000 * win))
     if len(x) < n:
-        return 0.0
+        return []
     x = x[: len(x) // n * n].reshape(-1, n)
     rms = np.sqrt((x * x).mean(axis=1))
     if not rms.max():
-        return 0.0
-    loud = np.nonzero(rms >= thresh * rms.max())[0]
-    return float((loud[-1] + 1) * win) if len(loud) else 0.0
+        return []
+    return [int(i) for i in np.nonzero(rms >= thresh * rms.max())[0]]
+
+
+def energy_end(wav: Path, thresh: float = ENERGY_THRESH, win: float = ENERGY_WIN) -> float:
+    """音のエネルギーが最後に閾を越えた時刻（秒）。**聞き取りを1度もしません。**"""
+    loud = _loud_windows(wav, thresh, win)
+    return float((loud[-1] + 1) * win) if loud else 0.0
+
+
+def energy_start(wav: Path, thresh: float = ENERGY_THRESH, win: float = ENERGY_WIN) -> float:
+    """音のエネルギーが**最初に**閾を越えた時刻（秒）。**聞き取りを1度もしません。**
+
+    `energy_end` の鏡（2026-09-11 22:4x・optimizer・Opus。§15 の申し送り (2)）。
+    **同じ窓・同じ閾**を使うので、頭と末尾で物差しが変わりません
+    （閾は「その wav のいちばん大きい窓に対する割合」なので、位置を見ていません）。
+    **`energy_end` と違って +win しません** —— 末尾は「越えた窓の終わり」が音の終わりで、
+    頭は「越えた窓の始まり」が音の始まりです。"""
+    loud = _loud_windows(wav, thresh, win)
+    return float(loud[0] * win) if loud else 0.0
 
 
 def tail_voice(h: "Hearer", wav: Path, prompt: str | None = None) -> dict:
@@ -610,8 +675,38 @@ def tail_voice(h: "Hearer", wav: Path, prompt: str | None = None) -> dict:
     end = words[-1][2] if words else 0.0
     e = energy_end(wav)
     gap = e - end
-    verdict = "音は在る" if gap >= VOICE_GAP_PRESENT else ("音が無い" if gap < VOICE_GAP_ABSENT else "分けられない")
-    return {"energy_end": round(e, 2), "word_end": round(end, 2), "gap": round(gap, 2), "verdict": verdict}
+    return {"energy_end": round(e, 2), "word_end": round(end, 2), "gap": round(gap, 2),
+            "verdict": voice_verdict(gap)}
+
+
+def voice_verdict(gap: float) -> str:
+    """音と聞き取りの差（秒）→ `音は在る` / `音が無い` / `分けられない`。**頭と末尾で同じ閾**（`tail_voice` の註）。"""
+    return "音は在る" if gap >= VOICE_GAP_PRESENT else ("音が無い" if gap < VOICE_GAP_ABSENT else "分けられない")
+
+
+def head_voice(h: "Hearer", wav: Path, prompt: str | None = None) -> dict:
+    """**音の始まり**と、**仮名モードが最初に書いた語の始まり**を比べる（`tail_voice` の鏡・
+    2026-09-11 22:4x・optimizer・Opus。§15 の申し送り (2)）。
+
+    `gap = 聞き取りが始まった時刻 − 音が始まった時刻`。**大きいほど「模型が書かなかった所に音が在る」**
+    ＝ 切ったのは whisper。**閾は末尾と同じ**（0.4／0.2秒 ＝ 5モーラ・`voice_verdict`）。
+
+    **この 3つ目だけが、判定の片側に模型を通しません**（`energy_start` は聞き取りを1度もしない）。
+    `head_probe`（頭 4秒 をもう一度 聞き取る）と `rate`（字/秒）は、どちらも聞き取りか予定の字数の側です。
+
+    **語が 1つ も返らない回は `分けられない`** —— そこは「頭が無い」ではなく「何も書かなかった」で、
+    `head_gap` の `e != exp` が先に落としています（この行は取りこぼしの保険）。
+
+    **覆る条件**: `音は在る` と出たコマを耳で聞いて欠けていた回が 1度でも出たら、この手を外すこと。
+    逆に 3本 続けて当たったら、`head_probe` の「TTS 側を疑う」の印字をやめ、こちらに寄せること。"""
+    words = h.transcribe_words(wav, prompt)
+    e = energy_start(wav)
+    if not words:
+        return {"energy_start": round(e, 2), "word_start": None, "gap": None, "verdict": "分けられない"}
+    start = words[0][1]
+    gap = start - e
+    return {"energy_start": round(e, 2), "word_start": round(start, 2), "gap": round(gap, 2),
+            "verdict": voice_verdict(gap)}
 
 
 def tail_rate(exp_len: int, gap_len: int, dur: float, band: tuple[float, float]) -> dict:
@@ -709,19 +804,30 @@ def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = Tru
                # ここは選ばれたあとの `got` に当てる ＝ 1字差が多い段が採られることはある（§7 で数えるのはその後）
                "near": near_spans(loose(exp), loose(got))}
         gap = tail_gap(loose(exp), diffs) if escalate else None
+        head = head_gap(loose(exp), diffs) if escalate else None
         row["_gap"] = gap
+        row["_head"] = head
         row["_wav"] = wav
-        if gap:   # 末尾が丸ごと無い ＝ 段を上げても分けられない型。末尾だけを聞き直して 切り落とし と 誤読 を分ける
+        if gap or head:
             h2 = h2 or Hearer("medium" if size != "medium" else size)
-            row["tail"] = tail_probe(h2, wav, gap, s.yomi)
-            # 音の側から見る3つ目（`tail_voice` の註）。**その行を書いた模型で**時刻を引く
+            # 音の側から見る3つ目（`tail_voice` / `head_voice` の註）。**その行を書いた模型で**時刻を引く
             # —— 段が上がった行の語の終わりを、既定の段で引き直すと、比べている物がずれる。
             hw = h2 if "medium" in how else h
-            row["voice"] = tail_voice(hw, wav, _PROMPT if "prompt" in how else None)
+            prompt = _PROMPT if "prompt" in how else None
+            # 末尾/頭で鳴ったコマには、**そのコマの文の字数**を並べる（§15 の申し送り (1)・
+            # 切り落としが見ているのはコマの長さではなく文の長さ・`script.sentence_lens` の註）
+            row["sent"] = sentence_lens(seg.say)
+        if gap:   # 末尾が丸ごと無い ＝ 段を上げても分けられない型。末尾だけを聞き直して 切り落とし と 誤読 を分ける
+            row["tail"] = tail_probe(h2, wav, gap, s.yomi)
+            row["voice"] = tail_voice(hw, wav, prompt)
+        if head:  # 頭が丸ごと無い型（2026-09-11 10:3x に実物で出た。末尾の 4つ は 1行も印字しない）
+            row["head"] = head_probe(h2, wav, head, s.yomi)
+            row["head_voice"] = head_voice(hw, wav, prompt)
         rows.append(row)
     _add_rates(rows)
     for r in rows:
         r.pop("_gap", None)
+        r.pop("_head", None)
         r.pop("_wav", None)
     return rows
 
@@ -733,7 +839,7 @@ def _add_rates(rows: list[dict]) -> None:
     鳴っていない回にまで撃つと、そのぶん遅くなるし、音が無い所で落ちる）。
     帯は**一致したコマだけ**から作る —— 差の在るコマを分母に入れると、測ろうとしている物で物差しを作ることになる。
     """
-    if not any(r.get("_gap") for r in rows):
+    if not any(r.get("_gap") or r.get("_head") for r in rows):
         return
     durs: dict[int, float] = {}
     for r in rows:
@@ -746,8 +852,13 @@ def _add_rates(rows: list[dict]) -> None:
         return
     band = (min(ok_rates), max(ok_rates))
     for r in rows:
-        if r.get("_gap") and durs.get(r["i"]):
-            r["rate"] = tail_rate(len(r["exp"]), len(r["_gap"]), durs[r["i"]], band)
+        cut = r.get("_gap") or r.get("_head")
+        if cut and durs.get(r["i"]):
+            r["rate"] = tail_rate(len(r["exp"]), len(cut), durs[r["i"]], band)
+            # **`tail_rate` は位置を見ません**（字数と長さの比だけ）＝ 頭の切り落としにもそのまま当たります
+            # （2026-09-11 10:3x の実測: 43字/8.32秒 5.17 は帯の中・頭 13字 が無いなら 3.61 で帯の外）。
+            # 印字の側が「末尾／頭」を言い分けるために、どちらで鳴ったかだけを足す。
+            r["rate"]["where"] = "末尾" if r.get("_gap") else "頭"
 
 
 def escalations(rows: list[dict]) -> dict[str, str]:

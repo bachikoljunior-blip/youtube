@@ -423,6 +423,17 @@ def long_sentences(say: str) -> list[str]:
     return [x for x in _SENT_END.split(say) if len(x.strip()) > MAX_SENTENCE]
 
 
+def sentence_lens(say: str) -> list[int]:
+    """say を 。？！ で切った文の字数（頭から順）。
+
+    **`hear` が末尾／頭で鳴ったコマに並べて印字します**（§15 の申し送り (1)・2026-09-11 22:4x）——
+    切り落としが見ているのは**コマの長さではなく文の長さ**だから
+    （実測 09/11 11:1x: 55字/文[21,34] は欠け、56字/文[21,23,12] は通った ＝ コマは 1字 長く 0.2秒 長いのに通った。
+    頭の側も同じで、43字 のまま第1文 27 → 20字 で 11/12 → 12/12）。
+    **`long_sentences` と同じ切り方**（`_SENT_END`）なので、`lint` の `[?]` と数が食い違いません。"""
+    return [len(x.strip()) for x in _SENT_END.split(say) if x.strip()]
+
+
 def path_for(vid: str) -> Path:
     """id → 台本のファイル。**ファイルの道をそのまま渡されても通す**（2026-09-06）。
 

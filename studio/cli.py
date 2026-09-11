@@ -568,20 +568,30 @@ def cmd_hear(a):
             print(f"      音  : {r['got']}")
             for e, g in r["diffs"]:
                 print(f"      予定「{e}」 聞こえた「{g}」")
+            if r.get("sent"):   # 切り落としが見ているのは**文の長さ**（§15 の申し送り (1)・script.sentence_lens の註）
+                print(f"      文 {r['sent']}・いちばん長い文 {max(r['sent'])}字"
+                      "（**割るのはいちばん長い文** —— コマの字数ではありません・METHOD §4 (2)）")
             t = r.get("tail")
             if t:   # 末尾が丸ごと無い型。末尾 5秒 だけを聞き直した答え（studio/hear.tail_probe の註）
                 print(f"      末尾5秒: {t['heard']}")
                 print("      → 音には在る（whisper が長いコマの末尾を切り落とした側）。通してよいかを決めるのは Fable"
                       if t["ok"] else
                       f"      → 末尾を聞き直しても差が残る: {t['diffs']}")
+            hd = r.get("head")
+            if hd:   # 頭が丸ごと無い型。頭 4秒 だけを聞き直した答え（studio/hear.head_probe の註）
+                print(f"      頭4秒: {hd['heard']}")
+                print("      → 音には在る（whisper が頭を切り落とした側）。通してよいかを決めるのは Fable"
+                      if hd["ok"] else
+                      f"      → 頭を聞き直しても差が残る: {hd['diffs']}（**窓の中の頭も切られることが在る** ＝ 秒数と並べて読むこと）")
             rt = r.get("rate")
             if rt:   # 秒数の側（studio/hear.tail_rate）。聞き取りとは別の物を見る second opinion
+                where = rt.get("where", "末尾")
                 print(f"      秒数: {rt['rate']} 字/秒（この本の帯 {rt['band'][0]}〜{rt['band'][1]}）・"
-                      f"末尾が音に無いなら {rt['without']} 字/秒")
-                print("      → 秒数の側は「音には在る」（末尾を落とすと帯の外）。"
-                      "**`tail_probe` と食い違うときは、両方を並べて Fable が決める**"
+                      f"{where}が音に無いなら {rt['without']} 字/秒")
+                print(f"      → 秒数の側は「音には在る」（{where}を落とすと帯の外）。"
+                      "**聞き直しと食い違うときは、両方を並べて Fable が決める**"
                       if rt["present"] else
-                      "      → 秒数の側でも末尾が無い側に付く（TTS を疑う根拠が2つ）")
+                      f"      → 秒数の側でも{where}が無い側に付く（TTS を疑う根拠が2つ）")
             v = r.get("voice")
             if v:   # 音の側（studio/hear.tail_voice）。**聞き取りを通らない片側**を持つ 3つ目
                 print(f"      音の終わり {v['energy_end']}秒 − 聞き取りが止まった {v['word_end']}秒 "
@@ -589,6 +599,14 @@ def cmd_hear(a):
                 if v["verdict"] == "音は在る":
                     print("      → 切ったのは whisper（この 3つ目だけが音そのものを見ます・hear.tail_voice の註）")
                 elif v["verdict"] == "分けられない":
+                    print("      → 5モーラ 未満の差は、この手では分けません（在るほうへ丸めないこと）")
+            hv = r.get("head_voice")
+            if hv:  # 頭の側の 3つ目（studio/hear.head_voice）。**聞き取りを通らない片側**を持つ
+                print(f"      聞き取りが始まった {hv['word_start']}秒 − 音の始まり {hv['energy_start']}秒 "
+                      f"＝ {hv['gap']}秒 → {hv['verdict']}")
+                if hv["verdict"] == "音は在る":
+                    print("      → 切ったのは whisper（この 3つ目だけが音そのものを見ます・hear.head_voice の註）")
+                elif hv["verdict"] == "分けられない":
                     print("      → 5モーラ 未満の差は、この手では分けません（在るほうへ丸めないこと）")
     print(f"一致 {len(rows) - len(bad)}/{len(rows)}")
     near_n = sum(len(r.get("near", ())) for r in rows)
@@ -610,6 +628,9 @@ def cmd_hear(a):
            escalated=[r["i"] for r in rows if "→" in r["how"]],   # small で差が出て medium が予定どおりに聞いたコマ
            tail={str(r["i"]): r["tail"]["ok"] for r in rows if r.get("tail")},   # 末尾が丸ごと無いコマ → 末尾5秒に在ったか（hear.tail_probe の覆る条件を数えるため）
            voice={str(r["i"]): r["voice"]["verdict"] for r in rows if r.get("voice")},   # 音の側の答え（hear.tail_voice の覆る条件「3本 続けて当たったら寄せる」を数えるため）
+           head={str(r["i"]): r["head"]["ok"] for r in rows if r.get("head")},   # 頭が丸ごと無いコマ → 頭4秒に在ったか（hear.head_probe の覆る条件を数えるため）
+           head_voice={str(r["i"]): r["head_voice"]["verdict"] for r in rows if r.get("head_voice")},
+           sent={str(r["i"]): r["sent"] for r in rows if r.get("sent")},   # 鳴ったコマの文の字数（§15 の申し送り (1)。「いちばん長い文が 25字 以下で切れたら外れ」を次の回が数えるため）
            how=hear.escalations(rows))   # どの段で通ったか（medium／medium+prompt）。§7 の「prompt の段が採られたか」を台帳で数えるため
     return 1 if bad else 0
 
