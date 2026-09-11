@@ -1605,7 +1605,7 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    数は `next_round.gap_over_gate` / `wake_sources` の行で読むこと
     伸びの門        **3つ とも引かれません**（§0〜§6・§8 ／ 4塊 ／ 直近の1本）。
                    **数は `python scripts/method_growth.py --split` を撃って読むこと。**
-    検査           `pytest -m live` **赤 0**（**この回の optimizer は +6件**
+    検査           `pytest -m live` **1,330 passed / 12 skipped・赤 0**（**この回の optimizer は +6件**
                    ＝ `tests/test_next_round_aim_on_live_wait.py`。**陽性対照 3つ を撃って落とした** ——
                    `aim_min` を `if idle:` の中へ戻すと 1件目／拾いの枝を外すと 3件目と**実物の台帳の 6件目**／
                    `not row.get("go")` を外すと 4件目。**`.pyc` を消してから撃った**・§5 教訓の形 6つ目）

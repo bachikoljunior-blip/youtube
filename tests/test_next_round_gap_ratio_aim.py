@@ -79,7 +79,13 @@ def test_GO_の床で割ると_37パーセント_超過に見える(monkeypatch)
 
 
 def test_aim_が無い古い区間は_GO_の床へ落ちる(monkeypatch):
-    """`aim_min` より前の台帳の数は 1つも動かないこと。"""
+    """**区間の中に WAIT の行が 1つ も無ければ** GO の床で割ること（`aim_min` より前の台帳）。
+
+    2026-09-12 05:3x に言い直した —— この検査のデータには WAIT の行が 1行 も無く、
+    見ているのは「欄が古い」ではなく「**区間の中に狙い先の行が無い**」側です
+    （`live >= 1` の WAIT は欄が空でも `floor_min` を持つので、いまはそちらが分母になります・
+    `tests/test_next_round_aim_on_live_wait.py`）。
+    """
     mod = _mod()
     _starts(mod, monkeypatch)
     got = mod.gap_ratios(got=_wakes(None))
