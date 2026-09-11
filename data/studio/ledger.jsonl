@@ -3874,3 +3874,13 @@
 {"views": 191, "likes": 0, "comments": 1, "age_h": 158.5, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-12T00:28:48+09:00", "id": "a23e696j0f8", "event": "measured"}
 {"views": 190, "likes": 0, "comments": 1, "age_h": 159.5, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-12T00:28:48+09:00", "id": "kzefG44_APU", "event": "measured"}
 {"publish_at": "2026-09-12T10:00:00+09:00", "title": "退職金の税金 30年はたらけば1500万円までゼロ 退職所得控除 #Shorts", "at": "2026-09-12T00:28:48+09:00", "id": "4l3DDCLIRxg", "event": "pending"}
+{"subs": 28, "views": 86446, "videos": 270, "at": "2026-09-12T00:25:51+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-12T00:25:51+09:00", "id": "4l3DDCLIRxg", "event": "ready_checked"}
+{"views_live": 925, "views_ledger": 919, "over": 6, "age_h": 14.4, "src": "status", "at": "2026-09-12T00:25:51+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-12T00:25:51+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"n": 0, "kinds": [], "at": "2026-09-12T00:33:40+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
+{"video_id": "4l3DDCLIRxg", "what": "説明欄: 「1年ふえる人は枠が40万円（すでに勤続20年をこえている人は70万円）変わります」→ 「ふえたあとの勤続年数が20年までなら40万円、20年をこえるなら70万円ふえます」（+例2つ）。条件を『いまの年数』・額を『ふえたあとの年数』で書いており、切り上げ後20年の人（実19年超〜20年）に 40万円 と言っていた（本当は 70万円）。声・板は不変・再アップロード無し・yt.update_meta 50単位", "at": "2026-09-12T00:34:13+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "meta_updated"}
+{"subs": 28, "views": 86446, "videos": 270, "at": "2026-09-12T00:34:27+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-12T00:34:27+09:00", "id": "4l3DDCLIRxg", "event": "ready_checked"}
+{"views_live": 925, "views_ledger": 919, "over": 6, "age_h": 14.6, "src": "status", "at": "2026-09-12T00:34:27+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-12T00:34:27+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
