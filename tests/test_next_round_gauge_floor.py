@@ -62,7 +62,14 @@ def _patch(monkeypatch, *, floor, gauge):
     fake.recommended_floor_minutes = lambda *a, **k: floor
     fake.gauge_floor_minutes = lambda base=90.0, *a, **k: gauge
     pkg = sys.modules.get("scripts") or types.ModuleType("scripts")
-    pkg.quota = fake
+    # **属性の側も monkeypatch で当てること**（2026-09-12 06:2x・optimizer・Opus）。
+    # 素の `pkg.quota = fake` は `monkeypatch.setitem` で戻りません ——
+    # `sys.modules["scripts.quota"]` は戻っても、**`scripts` パッケージの `quota` 属性は
+    # 偽のまま残り**、あとから `from scripts import quota` で読む側が全部 偽を掴みます
+    # （この回に実測: 全検査 1回で **赤 41件**・どれも
+    #  `module 'scripts.quota' has no attribute 'round_marks'`）。
+    # ＝ §5 教訓の形 11つ目「走る順で色が変わる検査」の作り手の側。
+    monkeypatch.setattr(pkg, "quota", fake, raising=False)
     monkeypatch.setitem(sys.modules, "scripts", pkg)
     monkeypatch.setitem(sys.modules, "scripts.quota", fake)
 

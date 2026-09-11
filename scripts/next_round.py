@@ -955,6 +955,26 @@ def gap_ratios(limit: int = 10, got: list[dict] | None = None) -> list[float]:
     （実測: 直近20区間のうち動いたのは床が動いた 2区間だけ・1.374→1.060・0.999→0.996）。
     **なぜ `aim` か**: (d) が訊いているのは「起こしの機械が狙いに当たっているか」で、
     狙いは `aim_min` に書いてある。**床は毎周 引き直されるので、問いの側の定数ではありません。**
+    **【2026-09-12 06:0x】この分母を、もう 1つ 先へ動かそうとして撃ち、外しました**（optimizer・Opus。
+    **書き残すのは、次の回が同じ所へ行かないため**）。05:3x の拾いで落ちる区間は **40 → 8** になり、
+    残った 8 は **WAIT の行が 1つも無い区間**（GO は起こしを置かないので、親が次の GO まで
+    1度も起きない回）。**§7 (d) の門を越えたいちばん大きい窓 2.360 が その側**だったので、
+    「区間を**開いた** GO の床（27.05）で割れば 2.100」と直しかけました。
+
+    **外れた理由**: `tests/test_parent_round_gaps.py` の「**この検査が本体**」が、
+    **同じ形の逆向き**を実測で押さえています —— 09/09 09:5x に `pace()` が床を 75.0 → 53.0 に
+    落とし、親は **56分** で回しました（＝ **新しい床の 1.04倍**）。開いた GO の床（75）で割ると
+    **0.75** ＝ 「25% 早く出た」と鳴りますが、**親は早く出ていません。床が下がったので出られた**のです。
+
+    ＝ **WAIT の行が在るかどうかで、意味が変わります**:
+      * WAIT が在る回 → その行の `aim_min` は**親が起こしを置いて約束した先**。分母はそれ（05:3x）。
+      * WAIT が 1つも無い回 → 親は何も約束していません。区間を閉じた **GO の床が、親が実際に
+        読んで GO を出した数**です ＝ **`near[1]` が正しい落ち先**（動かさないこと）。
+    **2.360 は刻ずれではありません** —— 床は 27.05 → 24.07 と 3分 しか動いておらず、
+    **56.6分 のうち 32分 は「親が 1度も起きなかった」ぶん**です（＝ (d) が待っている側の数）。
+    **この穴に 4つ目の口はありません。05:3x の覆る条件 (3) のとおりです。**
+    derivation は JOURNAL 06:0x。
+
     **覆る条件**: `decide()` が `aim_min` を書かなくなったら（欄名が変わったら）、
     この分母は黙って GO の床へ落ちて 1.37 が戻ります —— 検査
     `tests/test_next_round_gap_ratio_aim.py` の 1件目がその日に落ちて教えます。
@@ -1035,6 +1055,44 @@ def gap_ratio_median(limit: int = 10) -> tuple[float | None, int]:
 GAP_RATIO_GATE = 1.25
 
 
+def _quota_mod():
+    """`scripts/quota.py` を、**呼ばれ方に関係なく**読む（`sys.path` に頼らない）。
+
+    2026-09-12 06:1x・optimizer・Opus。それまで `respawn_rounds` だけが裸の
+    `import quota` で、**`scripts/` が `sys.path` に居る呼ばれ方でしか動きませんでした** ——
+    親は `python scripts/next_round.py` で撃つので本番は通りますが、
+    `import scripts.next_round` で読んだ側（検査・この repo の他の script・手で撃つ回）は
+    `decide()` が **`ModuleNotFoundError` で落ちます**（`decide` → `gap_over_gate` → `respawn_rounds`）。
+
+    **実測**: `tests/test_parent_round_gaps.py` は、**同じ日に緑にも赤にもなります** ——
+    `scripts/` を `sys.path` に挿す別の検査（`test_next_round_aim_on_live_wait.py`）が
+    先に走った回だけ緑。**この回の 2度の全検査で、片方だけが赤 1件**でした
+    （＝ 赤の出どころは道具でも検査でもなく、**走る順**）。**同じ穴は `floor_minutes` /
+    `gauge_floor_minutes` / `spawn_prompt` では 3か所 とも塞がっており、ここだけが残っていました。**
+
+    **覆る条件**: `quota.py` が `scripts/` の外へ出たら、この 2段の落ち先を書き直すこと。
+    見張りは `tests/test_next_round_quota_import.py`。
+    """
+    try:
+        import importlib                                        # noqa: PLC0415
+        # **`from scripts import quota` ではなく `import_module`** ——
+        # 前者は `scripts` パッケージの **属性**を読むので、検査が偽を貼ったまま
+        # 戻し忘れた回に、そちらを掴みます（2026-09-12 06:2x に実測・赤 41件）。
+        return importlib.import_module("scripts.quota")
+    except Exception:                                           # noqa: BLE001
+        pass
+    try:
+        import quota as mod                                     # noqa: PLC0415
+        return mod
+    except Exception:                                           # noqa: BLE001
+        import importlib.util                                   # noqa: PLC0415
+        spec = importlib.util.spec_from_file_location(
+            "quota", ROOT / "scripts" / "quota.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+
 #: 模型を選んだ行を周へ寄せるときの、離れてよい幅（分）。これより遠い行は**どの周にも付けません**。
 #: 周の刻が無い時期の行を、いちばん近いというだけで遠くの周へ押し込まないため
 #: （実物で踏んだ: 寄せる幅を置かないと、周の台帳が薄い日の行が端の周へ積まれます）。
@@ -1079,7 +1137,7 @@ def respawn_rounds(marks: list[datetime] | None = None,
     (3) 1周に 3行 以上 の役が当たり前になったら（いまは 429 の回だけ）、この口は
     「立て直し」ではなく「片肺の埋め」を数えているので、`patch` の列と突き合わせ直すこと。
     """
-    import quota as _quota                                       # noqa: PLC0415
+    _quota = _quota_mod()
 
     marks = list(marks if marks is not None else _quota.round_marks())
     if last is not None and marks:
