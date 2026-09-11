@@ -515,6 +515,35 @@ def sentence_lens(say: str) -> list[int]:
     return [len(x.strip()) for x in _SENT_END.split(say) if x.strip()]
 
 
+def norm_id(vid: str) -> str:
+    """道で呼ばれた `id` を **id に戻す**（2026-09-12 02:1x・hourly・Opus）。
+
+    `path_for` は 2026-09-06 から**ファイルの道をそのまま通し**ますが、`cli` の側は
+    `a.id` を**そのあとも id として使い続けます** —— `image_for(a.id)`・`workdir(a.id)`・
+    `render.built_sig(a.id)`・`ledger(..., a.id)`・`f"{a.id}-bg"`。
+    ＝ **道で呼ぶと、台本は読めるのに その本の付属物が 1つも見つかりません。**
+
+    **この回に実物を踏んだ**: `build data/studio/scripts/2026-09-13-….json` が
+    **絵が在るのに「背景: 無し（単色）」で焼き**、台帳へ
+    `{"id": "data/studio/scripts/2026-09-13-….json", "image": false}` を書きました。
+    印字も返り値も **0 でなく正常** ＝ §4 (0-b) の族（「出ていないのを 0件 と読む」）の
+    **5つ目の型: 道で呼ぶと、黙って別の物を作る**。
+    しかも台帳の id が道なので、`trend.image_orders` の `restale` からも消え、
+    **「焼き直し待ち」の名指しが、焼き直した回に消えません**（＝ 次の回も同じ所を踏みます）。
+
+    **直す場所をここにした理由**: `cli` の `a.id` は **20か所** で使われており、
+    呼ぶ側を1つずつ直すと**次に足した1か所が同じ穴を開けます**。
+    入口で 1度 だけ正規化すれば、`path_for` の「道でも通す」（09/06 の決め）も残ります。
+
+    **覆る条件**: (1) 台本のファイル名（stem）と中身の `id` が食い違う本が出たら、
+    ここは stem ではなく**中身の `id`** を読むこと（`save()` は `path_for(s.id)` へ書くので、
+    いまは必ず一致します）。(2) `id` を取るコマンドが**台本を持たない物**へ広がったら
+    （例: video_id で呼ぶ口）、正規化の入口を そのコマンドの外へ出すこと。
+    """
+    vid = str(vid)
+    return Path(vid).stem if (vid.endswith(".json") or "/" in vid) else vid
+
+
 def path_for(vid: str) -> Path:
     """id → 台本のファイル。**ファイルの道をそのまま渡されても通す**（2026-09-06）。
 
