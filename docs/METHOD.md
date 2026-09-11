@@ -1559,8 +1559,8 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    derivation と 21:0x の直し（「次に見る所」の閉じた項に §5／§6 の形を当てた）は JOURNAL 21:0x
     検査           `pytest -m live` **1,246 passed / 12 skipped・赤 0**（この回の optimizer は **+16件**
                    ＝ `tests/test_studio_hear_head.py`。**陽性対照 3つ を撃って落とした**・
-                   既存の書き換えは 1件（`tests/test_studio_hear_rate_wiring.py` は 1字も変えていません ——
-                   `_add_rates` を `_gap` だけから `_gap or _head` へ広げても通る形でした））
+                   **既存の書き換えは 0件** —— `_add_rates` を `_gap` だけから `_gap or _head` へ
+                   広げても、`tests/test_studio_hear_rate_wiring.py` は 1字も直さずに通りました）
     この回の赤     **0**（走らせた時点でも 0）。
                    **この回に閉じた申し送りは 2つ**（どちらも §15 の `optimizer`・`hear.py`）:
                    **頭の切り落としを見る口**（`head_gap` / `head_probe` / `head_voice` /
