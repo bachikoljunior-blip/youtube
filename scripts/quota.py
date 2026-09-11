@@ -2741,8 +2741,22 @@ def pace(now: datetime | None = None) -> dict | None:
         "reach_ceiling_margin": ((ceiling_rate(per_lap, lag_min) / forward_rate)
                                  if forward_rate and forward_rate > 0
                                  and ceiling_rate(per_lap, lag_min) else None),
-        "dead_hours": ((resets - exhaust).total_seconds() / 3600
-                       if exhaust and exhaust < resets else 0.0),
+        # **分母は「いまの枠」のリセット（`win_reset`）です** ——
+        # 目盛りの枠（`resets`）ではありません（2026-09-12 05:0x・optimizer・Opus）。
+        # 枠をまたいだ後、`resets` は**もう過ぎた刻**なので `exhaust < resets` は
+        # 必ず偽 ＝ `dead_hours` は 0 に貼りつき、`pace_report` は
+        # 「**その時刻は来ません・鎖は止まりません**」と、**逆の向き**を印字していました
+        # （2026-09-09 21:1x に語を直したのと同じ行が、またいだ枠では中身の側で裏返る）。
+        # `left_hours` も `forward_rate` も `win_reset` で数えているので、ここだけが残っていた。
+        # **覆る条件**: (1) この数は `exhaust_at`（＝ `carry_rate` のまま走った側）の話です ——
+        #   **床に従う側（`reach_floor`）が 100% に着く回**が出たら、止まる時間は 2つ の側で
+        #   別の数になる ＝ そこで `dead_hours` も 2つ に割ること。
+        #   (2) `dead_hours > 0` と出たのに実際には鎖が止まらなかった回が出たら、疑うのは
+        #   分母ではなく `carry_rate`（前の枠の区間の速さを新しい枠へ運んでいる）。
+        #   (3) 枠を分母に使う行がもう 1行 見つかったら、`resets` を `gauge_resets` へ改名すること。
+        #   derivation は JOURNAL 2026-09-12 05:0x・検査 `tests/test_pace_window_rollover.py`。
+        "dead_hours": ((win_reset - exhaust).total_seconds() / 3600
+                       if exhaust and exhaust < win_reset else 0.0),
         "over": (rate / forward_rate - 1.0) if forward_rate > 0 else 0.0,
         "over_flat": rate / SUSTAIN_PCT_PER_HOUR - 1.0,
         "stale_hours": (now - at).total_seconds() / 3600,

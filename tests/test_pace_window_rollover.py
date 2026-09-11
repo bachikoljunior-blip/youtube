@@ -189,3 +189,72 @@ def test_報告が閉じた枠だと言う(tmp_path, capsys):
     assert "残り%を理由に作業を見送らないこと" in out
     assert "いまの枠" in out
     assert "残り -" not in out          # 残り時間が負のまま出ていた行
+
+
+# ---------------------------------------------------------------------------
+# **枠をまたいだあと、「鎖が止まる時間」だけが古い枠を見ていた**
+# （2026-09-12 05:0x・optimizer・Opus）。
+#
+# `pace()` は 2026-08-22 の直しで `window_start` / `window_reset` / `left_hours` /
+# `forward_rate` を**いまの枠**へ送りました。**`dead_hours` だけが残っていました** ——
+# 分母が目盛りの枠（`resets`）のままで、またいだ後はその刻がもう過ぎているので
+# `exhaust < resets` は**必ず偽** ＝ `dead_hours` は 0 に貼りつきます。
+#
+# 実害は印字の向きです（`pace_report`）:
+#
+#     dead_hours > 0  → 「このままなら 100% は … → **リセットまで N時間、鎖が止まります**」
+#     dead_hours == 0 → 「100% には**リセットまでに届きません**（… **その時刻は来ません**）。
+#                        **鎖は止まりません**」
+#
+# ＝ **止まる枠で「止まりません」と出ます。** 撃って見た実物（この回の目盛りで
+# `pace(2026-09-12 07:05 JST)`・リセットの 2時間 後）: 100% は 09/17 22:05 JST ＝
+# **いまの枠のリセット 09/19 07:00 より 33時間 前**なのに、画面は「その時刻は来ません」。
+#
+# §5 教訓の形 7つ目（覆る条件を註に書いたら、その条件を読む印字も一緒に作ること）の裏側で、
+# **同じ行の語は 2026-09-09 21:1x に直っていました** —— 直したのは語で、**分母は見ていなかった**。
+# **型: 「枠を送る」直しをしたら、その枠を分母に使っている行を全部 数えること**（ここは 1行 残っていた）。
+# ---------------------------------------------------------------------------
+
+# 速い区間（92% → 95% を 1時間 で）。またいだ直後の `carry_rate` が 3 %/時 になり、
+# 100% は 新しい枠の中（頭から 33時間 ごろ）に来る ＝ **鎖が止まる側**。
+FAST_ANCHORS = [("2026-08-21T20:10:00+09:00", 92), ("2026-08-21T21:10:00+09:00", 95)]
+
+
+def test_またいだ枠でも鎖が止まる時間はいまの枠で数える(tmp_path):
+    """**またいだ後に `dead_hours` が 0 へ貼りつくと、画面は逆を言う。**"""
+    _write(tmp_path, FAST_ANCHORS)
+    now = RESET + timedelta(minutes=22)
+    p = quota.pace(now)
+
+    assert p["rolled"] == 1
+    assert p["carry_rate"] == pytest.approx(3.0, rel=0.01)
+    # 100% に着くのは、いまの枠の中（リセットの手前）
+    assert p["exhaust_at"] is not None
+    assert p["exhaust_at"] < p["window_reset"]
+    # そこからリセットまでが「鎖が止まる時間」。**古い枠で数えると 0 になる。**
+    assert p["dead_hours"] > 0
+    assert p["dead_hours"] == pytest.approx(
+        (p["window_reset"] - p["exhaust_at"]).total_seconds() / 3600, abs=0.01)
+
+
+def test_またいだ枠で届かない回は今までどおり0(tmp_path):
+    """**巻き添えを塞ぐ。** 遅い区間なら、またいだ後も 100% には届かない ＝ 0 のまま。"""
+    _write(tmp_path, ANCHORS)                       # 0.230 %/時
+    p = quota.pace(RESET + timedelta(minutes=22))
+
+    assert p["rolled"] == 1
+    assert p["exhaust_at"] > p["window_reset"]
+    assert p["dead_hours"] == 0.0
+
+
+def test_またいでいない回のdead_hoursは1つも動かない(tmp_path):
+    """枠の中では `win_reset == resets` ＝ この直しは 1つも触っていないこと。"""
+    _write(tmp_path, FAST_ANCHORS)
+    now = RESET - timedelta(hours=5)                # まだ枠の中
+    p = quota.pace(now)
+
+    assert p["rolled"] == 0
+    assert p["window_reset"] == RESET
+    assert p["dead_hours"] == pytest.approx(
+        (RESET - p["exhaust_at"]).total_seconds() / 3600, abs=0.01)
+    assert p["dead_hours"] > 0
