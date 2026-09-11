@@ -749,9 +749,17 @@ def wake_missed(rows: list[dict] | None = None,
     落ちた側だけが立ちます。
 
     **いまは「口を直す」側ではありません**（同じ回の判定）: 落ちても**心拍が拾う**ので、
-    損は**心拍が次に来るまで**で頭打ちです。**その頭打ちを、決める前に撃って確かめました**
+    損は**心拍が次に来るまで**で頭打ちです。~~**その頭打ちを、決める前に撃って確かめました**
     （09/09 00:00 UTC 以降の親の起き **126区間**）: **中央 17.2分・最大 39.6分・30分 超 12区間**
-    ＝ **頭打ちは中央値ではなく 40分（心拍 2つ ぶん）で読むこと**。
+    ＝ **頭打ちは中央値ではなく 40分（心拍 2つ ぶん）で読むこと**。~~
+
+    **【2026-09-11 15:0x・optimizer・Opus】その 40分 は、心拍を数えていませんでした。頭打ちは 60分 です。**
+    上の 126区間 は**親の起きの間隔**で、その大半は**心拍ではありません**
+    （`wake_sources`: 心拍 45本 / 置いた起こし 67本 / **サブの終わりの届き 107本**）。
+    **心拍は毎時 :59 の 1本**（`docs/trigger_parent.md`）なので、
+    置いた起こしもサブの終わりの届きも落ちた回の頭打ちは **60分** ＝ 心拍 1本ぶん。
+    実測もこの回に **39.6分 → 59.8分** へ伸びました（`beat_only_gaps` の 3窓 ＝ 60.0/58.7/59.8分）。
+    **(1) の 20% は、この 1.5倍 を見込んで読み直すこと**（着地の見積りも同じだけ甘い側）。
     25本 に 1本・残り 33時間（約 55周）で **2本** ＝ 悪くて **80分**・並で 35分 ＝
     着地で **0.3〜0.7 ポイント**。
     起こしを2本 置く形は 04:5x が「壊れていない物を直すことになる」と閉じた側なので、
@@ -1088,6 +1096,206 @@ def respawn_rounds(marks: list[datetime] | None = None,
                   key=lambda x: x[0])
 
 
+#: **心拍（cron）の「分の位」**。**写しは持ちません** —— `heartbeat_minutes()` と同じ形で、
+#: 台帳の行が `BEAT_MIN_ROWS` 本 たまれば `beat_minute()` が数え直します
+#: （オーナーが心拍を張り替えたら、こちらが先に動く）。
+BEAT_MINUTE_FALLBACK = 59
+#: 分の位を数え直してよい、**置いた起こし以外**の起きの数。
+BEAT_MIN_ROWS = 20
+#: 同じ刻とみなす幅（分）。心拍は秒までは揃いません（実測 :59:13〜:00:39）。
+BEAT_MINUTE_SLACK = 1
+#: **置いた起こしが「届いた」とみなす窓**（分・頼んだ刻の後ろ側）。
+#: 実測（2026-09-11 15:0x・置いた起こし 76本）: 届きは **0.65〜7.9分**（中央 1.76分）で、
+#: 7.9 の先には点が在りません ＝ この 8分 は**測った穴の中**に置いてあります。
+#: **`WAKE_MISS_MIN`（15分・`wake_missed` の門）を使い回さないこと** —— あちらは
+#: 「届かなかった」を数える門で、問いが別です（同じ数を 2つ の問いに当てると、片方が動いた回に両方が動く）。
+#: **この窓を 2〜15分 で振っても `beat_only_gaps` の答えは 3窓 のまま**（下の掃き）。
+WAKE_LAND_MIN = 8.0
+#: 頼んだ刻より**手前**に来た起きも同じ届きに数える幅（秒）。実測の最小は -1.34分。
+WAKE_LAND_EARLY_SEC = 120.0
+
+
+def _near_minute(at: datetime, minute: int, slack: int = BEAT_MINUTE_SLACK) -> bool:
+    """`at` の分の位が `minute` から `slack` 以内か（60分 で回して読む）。"""
+    d = (at.minute - minute) % 60
+    return d <= slack or d >= 60 - slack
+
+
+def _wake_kinds(own: list[dict], minute: int | None = None) -> list[str]:
+    """親の起きを分ける（`wake_sources` の中身。`beat_minute` からも呼ぶ）。
+
+    `minute` が `None` の回は心拍の分の位をまだ数えていない ＝ `placed` 以外を
+    `other` で返します（`beat_minute` が最頻値を採る側）。
+
+    **心拍は 1刻に 1本だけ**です（毎時 1回 の cron）。分の位が合う起きが同じ刻に 2本 在ったら、
+    **狙いの刻に近いほう**だけを `beat` にします —— そうしないと、心拍の直後に
+    サブが終わった回（実測 09/10 19:59:53 と 20:00:36 ＝ 43秒 差）が
+    **「心拍 2本」に化け、`beat_only_gaps` が 0.7分 の窓を数えます**（この回に踏んだ）。
+    """
+    ats = [_at(r) for r in own]
+    landed: set[int] = set()
+    for i, row in enumerate(own):
+        # **置いた起こし**。`wake_placed` が False の行は撃っていない（`wake_is_fresh` の門）。
+        if row.get("wake_placed") is False or not row.get("wake_at"):
+            continue
+        try:
+            want = datetime.fromisoformat(str(row["wake_at"]))
+        except (TypeError, ValueError):
+            continue
+        if want.tzinfo is None:
+            want = want.replace(tzinfo=timezone.utc)
+        for j in range(i + 1, len(own)):
+            at = ats[j]
+            if at is None or j in landed:
+                continue
+            gap = (at - want).total_seconds()
+            if gap > WAKE_LAND_MIN * 60.0:
+                break                      # 届く窓を過ぎた ＝ この起こしは落ちた（`wake_missed`）
+            if gap >= -WAKE_LAND_EARLY_SEC:
+                landed.add(j)              # 頼んだ刻の**あと**に来た最初の起き
+                break
+    beats: dict[datetime, int] = {}
+    if minute is not None:
+        for i, at in enumerate(ats):
+            if i in landed or at is None or not _near_minute(at, minute):
+                continue
+            want = at.replace(minute=minute, second=0, microsecond=0)
+            if (at - want).total_seconds() < -30 * 60:
+                want -= timedelta(hours=1)
+            elif (at - want).total_seconds() > 30 * 60:
+                want += timedelta(hours=1)
+            near = beats.get(want)
+            if near is None or abs((at - want).total_seconds()) < abs(
+                    (ats[near] - want).total_seconds()):
+                beats[want] = i
+    keep = set(beats.values())
+    out: list[str] = []
+    for i, at in enumerate(ats):
+        if i in landed:
+            out.append("placed")
+        elif at is None:
+            out.append("sub")
+        elif minute is None:
+            out.append("other")
+        elif i in keep:
+            out.append("beat")
+        else:
+            out.append("sub")
+    return out
+
+
+def beat_minute(rows: list[dict] | None = None) -> tuple[int, str]:
+    """**心拍の分の位**（0〜59）と、その出どころ。
+
+    **置いた起こしで説明の付かない起き**だけを集めて、**分の位の最頻値**を採ります。
+    実測（2026-09-11 15:0x・optimizer・Opus・API 0単位）: 171本 のうち
+    **:59 が 36本・:00 が 12本**（3番目は :22 の 6本）＝ 毎時 :59 の心拍そのもの。
+    `docs/trigger_parent.md`（`trig_01CTzKURfdS5LLHPGepXRwvt`・**毎時59分**）と一致します。
+
+    **写しを持たない形にしてあるのは `heartbeat_minutes()` と同じ理由**です ——
+    心拍が張り替われば台帳の分の位が先に動き、この関数は自分で乗り換えます。
+    """
+    got = rows if rows is not None else wake_rows()
+    own = [r for r in got if r.get("who") == "owner" and _at(r) is not None]
+    own.sort(key=lambda r: str(r.get("at")))
+    kinds = _wake_kinds(own)
+    mins: dict[int, int] = {}
+    for row, kind in zip(own, kinds):
+        if kind == "placed":
+            continue
+        at = _at(row)
+        if at is not None:
+            mins[at.minute] = mins.get(at.minute, 0) + 1
+    if sum(mins.values()) < BEAT_MIN_ROWS:
+        return BEAT_MINUTE_FALLBACK, (
+            f"`docs/trigger_parent.md` の写し（数えられる起き "
+            f"{sum(mins.values())}本 < {BEAT_MIN_ROWS}本）")
+    best = max(mins.items(), key=lambda kv: (kv[1], -kv[0]))
+    return best[0], (f"`data/parent_wakes.jsonl` の実測"
+                     f"（置いた起こし以外 {sum(mins.values())}本 の分の位の最頻値・{best[1]}本）")
+
+
+def wake_sources(rows: list[dict] | None = None) -> list[dict]:
+    """**親の起きを、出どころで 3つ に分ける**（2026-09-11 15:0x・optimizer・Opus）。
+
+    返り: `[{"at": iso, "kind": "placed"|"beat"|"sub"}, …]`（古い順）
+
+        `placed` 親が自分で置いた起こしが届いた（前の行の `wake_at` から `WAKE_LAND_MIN` 以内）
+        `beat`   毎時の心拍（`beat_minute()` の分の位 ± 1分・**1刻に 1本だけ**）
+        `sub`    **サブの終わりの届き**（残り ＝ 上の 2つ で説明の付かない起き）
+
+    **なぜ要るか（この回に実物で踏んだ）**: `heartbeat_minutes()` は
+    「親の起きの間隔」の中央値を返し、`decide()` も `wake_missed` の註も
+    それを**心拍**と呼んでいます（いま 17.5分）。**台帳の実物は違いました** ——
+    親の起き 219本 のうち **心拍は 45本 だけ**で、残りは 置いた起こし 67本 と
+    **サブの終わりの届き 107本** です。
+    ＝ **17.5分 は「起こしの鎖が回っているときの刻み」で、鎖が落ちたときの刻みではありません。**
+    鎖が落ちた回の刻みは **心拍 1本 ぶん ＝ 60分**（`docs/trigger_parent.md`・毎時59分・
+    `trig_01CTzKURfdS5LLHPGepXRwvt`）。
+
+    **効き目**（`beat_only_gaps` が数える）: `wake_missed` の註は「落ちても心拍が拾うので、
+    損は **頭打ち 40分（心拍 2つ ぶん）**」と書いて口を直さない判断をしていますが、
+    **その 40分 は「親の起きの間隔の中央値 ×2」**でした。本物の頭打ちは **60分** です
+    （実測の最大も、この回に 39.6分 → **59.8分** へ伸びています）。
+
+    **覆る条件**: (1) `placed` が、`wake_at` を持つ行の数（いま 76本）から **10本 以上**
+    離れたら、届きの窓（`WAKE_LAND_MIN`）が狭すぎるか広すぎる側 ＝ 実測の届きを数え直すこと。
+    (2) `beat` が 1刻に 2本 以上 立つ回が出たら、心拍が 2本 走っています
+    （`docs/trigger_parent.md`「心拍を増やすときは、必ず1本消してから」）。
+    (3) `sub` が減って `beat` が増える向きに動いたら、**サブの終わりで親が起きなくなった**側 ——
+    そのときは `beat_only_gaps` の窓が増えるので、下の覆る条件 (1) が先に鳴ります。
+    """
+    got = rows if rows is not None else wake_rows()
+    own = [r for r in got if r.get("who") == "owner" and _at(r) is not None]
+    own.sort(key=lambda r: str(r.get("at")))
+    minute, _src = beat_minute(got)
+    kinds = _wake_kinds(own, minute)
+    return [{"at": _at(r).isoformat(), "kind": k} for r, k in zip(own, kinds)]
+
+
+def beat_only_gaps(rows: list[dict] | None = None) -> list[dict]:
+    """**心拍から心拍まで、ほかの起きが 1つも無かった窓**（＝ 起こしの鎖が落ちた窓）。
+
+    返り: `[{"from": iso, "at": iso, "gap_min": 分}, …]`（古い順）
+
+    **門を置いていません** —— 「前も心拍・次も心拍」は**数える形そのもの**で、
+    大きさで切っていないからです（§5 の教訓の形 4つ目・6つ目: n=1 の実物から門を作らない）。
+
+    **実測**（2026-09-11 15:0x・台帳 219本・API 0単位）: **3窓 だけ**で、長さは
+    **60.0分・59.8分・58.7分** ＝ どれも**心拍 1本ぶん**（09/08 08:59→09:59・
+    09/08 13:00→13:59・09/11 02:59→03:59）。
+    ほかの「大きい間隔」（45.9分・38.8分・35.4分…）は**どれも `sub` か `placed` で終わって**おり、
+    この形には入りません ＝ **長さの門では分けられないものを、出どころで分けています。**
+
+    **掃いて確かめてあります**（この回・API 0単位）: 届きの窓 `WAKE_LAND_MIN` を
+    **2・5・8・10・12・15分** と振っても、**答えは 3窓・60.0／58.7／59.8分 のまま**です
+    （動くのは `placed` と `sub` の数だけ ＝ 46〜73本）。
+    ＝ **この窓の取り方に、答えは乗っていません。**
+
+    **この口が答えるもの**: §7 (d) の「口の無い窓」1.717（09/11 02:58→03:59 UTC）は、
+    **この 59.8分 の窓をそのまま含みます**。＝ **口が無かったのではなく、
+    こちらが 3つ目の口を持っていなかっただけ**でした。
+
+    **覆る条件**: (1) この形の窓が **2窓 続けて同じ周の中に**出たら、
+    そのとき初めて「WAIT でも起こしを置く」を `decide()` へ入れること
+    （いまは 47周 に 1窓 ＝ 心拍で足りている）。
+    (2) 長さが **心拍 1本ぶんより長い**窓が出たら、落ちているのは鎖ではなく**心拍そのもの**
+    ＝ `docs/trigger_parent.md` の口（`list_triggers`）を見ること。
+    (3) `sub` の側が 0本 になったら（サブの終わりで親が起きなくなったら）、
+    この分け方の前提が消えるので、`wake_sources` ごと数え直すこと。
+    """
+    src = wake_sources(rows)
+    out: list[dict] = []
+    for a, b in zip(src, src[1:]):
+        if a["kind"] != "beat" or b["kind"] != "beat":
+            continue
+        t0 = datetime.fromisoformat(a["at"])
+        t1 = datetime.fromisoformat(b["at"])
+        out.append({"from": a["at"], "at": b["at"],
+                    "gap_min": round((t1 - t0).total_seconds() / 60.0, 1)})
+    return out
+
+
 def gap_over_gate(limit: int = 10, gate: float = GAP_RATIO_GATE) -> dict:
     """**門を越えた窓を、その窓の出どころと一緒に**返す（§7 (d) の読む口）。
 
@@ -1098,9 +1306,11 @@ def gap_over_gate(limit: int = 10, gate: float = GAP_RATIO_GATE) -> dict:
           `{"at": 周の刻(iso), "from": 区間の始まり(iso), "ratio": 比,
             "respawn": [[役, 回数], …]（**その窓の中の立て直しだけ**）,
             "wake_missed": bool（**その窓の中で起こしが 15分 以上 落ちたか**）,
-            "explained": bool（上の 2つ のどちらかが在る）}`
+            "beat_only": bool（**その窓の中で、起こしの鎖が落ちて心拍が拾ったか**・
+                              2026-09-11 15:0x に足した 3つ目の口。`beat_only_gaps`）,
+            "explained": bool（上の 3つ のどれかが在る）}`
       `consecutive` **越えた窓が 2つ 続いたか**（§7 (d) の門そのもの）
-      `n_unexplained` 立て直しも起こしの落ちも無い窓の数
+      `n_unexplained` 出どころが 3つ とも無い窓の数
 
     **なぜ書き直したか（2026-09-11 14:2x・optimizer・Opus。この回に実物で踏んだ）**:
     11:2x の形は `over` に**裸の比**（`[1.309, 1.717]`）だけを入れ、`respawn` には
@@ -1138,9 +1348,32 @@ def gap_over_gate(limit: int = 10, gate: float = GAP_RATIO_GATE) -> dict:
     （`respawn_rounds` の覆る条件 (1) と同じ）。(2) `wake_missed` が名指しする窓が
     `explained` に入っているのに、印字が立て直しの側だけを言う回が出たら、分けているのは
     出どころではなく**名前**なので、窓ごとの行を出どころで割ること。
-    (3) **`wake_placed` の欄が無い WAIT のあとの遅れ**が 15分 を越える回が **2回目**を数えたら、
+    ~~(3) **`wake_placed` の欄が無い WAIT のあとの遅れ**が 15分 を越える回が **2回目**を数えたら、
     そのとき初めて「WAIT でも起こしを置く」を `decide()` の側へ入れること
-    （いまは 15回 中 1回 ＝ 心拍で足りている）。
+    （いまは 15回 中 1回 ＝ 心拍で足りている）。~~
+
+    **【2026-09-11 15:0x・optimizer・Opus】(3) を撃って、名前を取り替えました。
+    3つ目の出どころは「置かれなかった起こし」ではなく、`beat_only_gaps`（心拍が拾った窓）です。**
+
+    **数えた**（台帳から・API 0単位・上の 15回 を道具で数え直した）:
+    `wake_placed` の欄が無い WAIT は **15回 とも `live >= 1`** ——
+    `decide()` は **0体 の枝でしか起こしを置きません**（走っているサブの終わりが親を起こすから）
+    ＝ **欄が無いのは落ち度ではなく、設計どおり**です。
+    そして **14回 は 区間 ÷ 床 が 0.98〜1.06**（狙いからの遅れ 8.5〜10.9分 は、
+    **サブがまだ走っていた**ぶんで、周の間隔には出ていません）。
+    ＝ **「置かない側が悪い」は n=1 で読めないのではなく、14回 ぶんの反証が在りました。**
+
+    **残る 1回**（09/11 02:59・区間 ÷ 床 **1.72**）だけが別の形で、
+    そこで落ちていたのは**起こし**ではなく **サブの終わりの届き**でした ——
+    親の起きは 02:59:52（心拍）→ 03:59:41（心拍）の **59.8分** で、
+    そのあいだに `placed` も `sub` も 1本 も在りません（`beat_only_gaps`）。
+    ＝ **その窓は「口が無い」のではなく、こちらが 3つ目の口を持っていなかっただけ**です。
+
+    **新しい (3)**: `beat_only_gaps()` の窓が **2つ 続けて** 門を越えた窓に入ったら、
+    そのとき初めて「WAIT でも起こしを置く」を `decide()` へ入れること
+    （いま 47周 に 1窓・実測 3窓/219本。**長さは 3つ とも 心拍 1本ぶん**）。
+    (4) `beat_only` の窓なのに `explained` が偽で印字される回が出たら、
+    窓の突き合わせ（`a <= from` かつ `at <= b`）が刻ずれしている側です。
     """
     got = gap_windows(limit=limit)
     over = [round(r, 3) for (_a, _b, r) in got if r > gate]
@@ -1148,6 +1381,9 @@ def gap_over_gate(limit: int = 10, gate: float = GAP_RATIO_GATE) -> dict:
     # 全部 返すと、周の台帳が薄かった日の古い塊が毎回 出て、読む側が門と結び付けられません。
     spawn = respawn_rounds(last=limit + 1)
     missed = [t for (t, _lag) in wake_missed()["missed"]]
+    # **3つ目の出どころ**（2026-09-11 15:0x・`beat_only_gaps` の註）。
+    beats = [(datetime.fromisoformat(g["from"]), datetime.fromisoformat(g["at"]))
+             for g in beat_only_gaps()]
     flags = [r > gate for (_a, _b, r) in got]
     windows: list[dict] = []
     for a, b, r in got:
@@ -1157,9 +1393,13 @@ def gap_over_gate(limit: int = 10, gate: float = GAP_RATIO_GATE) -> dict:
         # 区間を開いた周（`a`）の立て直しは**その区間を伸ばした側**です ＝ 下端も含めます。
         mine = [[role, n] for (m, role, n) in spawn if a <= m < b]
         late = [t for t in missed if a <= t < b]
+        # **心拍が拾った窓**は、その窓の中に丸ごと入っているものだけ数えます
+        # （またいでいる窓は、その周を伸ばした側とは言えない）。
+        beat = [(f, t) for (f, t) in beats if a <= f and t <= b]
         windows.append({"at": b.isoformat(), "from": a.isoformat(), "ratio": round(r, 3),
                         "respawn": mine, "wake_missed": bool(late),
-                        "explained": bool(mine or late)})
+                        "beat_only": bool(beat),
+                        "explained": bool(mine or late or beat)})
     consecutive = any(flags[i] and flags[i + 1] for i in range(len(flags) - 1))
     return {"ratios": [round(r, 3) for (_a, _b, r) in got], "over": over,
             "n_over": len(over), "gate": gate, "respawn": spawn,
@@ -1497,6 +1737,13 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     # §7 (d) は「門 1.25・**2つ 続いたら**」で、越えた窓には出どころが 2つ 在ります:
     # 起こしが届かなかった側（`wake_missed` が名指しする）と、**429 の立て直し**（この 2つ）。
     # 名指しが無いと、次の回は **在りもしない上限を探しに行きます**（§7 21:4x の型）。
+    # **起こしの鎖が落ちて心拍が拾った窓**（2026-09-11 15:0x・`beat_only_gaps` の註）。
+    # §7 (d) の 3つ目の出どころ。**数を台帳に置かないと、次の回がまた手で数えます**
+    # （14:2x の「置かれなかった起こし」が、その形で 1周 手作業に残っていました）。
+    _beats = beat_only_gaps()
+    base["beat_only_gaps"] = len(_beats)
+    base["beat_only_max_min"] = max((g["gap_min"] for g in _beats), default=None)
+    base["wake_beats"] = sum(1 for s in wake_sources() if s["kind"] == "beat")
     _gate = gap_over_gate()
     base["gap_over_gate_n"] = _gate["n_over"]
     base["gap_over_gate"] = _gate["over"]
@@ -1958,12 +2205,17 @@ def main() -> int:
             elif w["wake_missed"]:
                 print(f"{head}  ← **起こしが届かなかった窓**（`wake_missed`）"
                       "＝ 上限ではなく、届きの側です")
+            elif w.get("beat_only"):
+                print(f"{head}  ← **起こしの鎖が落ち、心拍が拾った窓**（`beat_only_gaps`）"
+                      "＝ 上限ではなく、**心拍 1本ぶん（60分）の頭打ち**です。"
+                      "**2つ 続いたら**「WAIT でも起こしを置く」へ"
+                      "（`gap_over_gate` の覆る条件 (3)）")
             else:
-                print(f"{head}  ← **口が在りません**（立て直し 無し・起こしの落ち 無し）"
-                      "＝ §7 (d) が「次に見る」と書いた側の窓です。"
-                      "**WAIT で起こしを置かなかった回**も見ること（`gap_over_gate` の覆る条件 (3)）")
+                print(f"{head}  ← **口が在りません**（立て直し 無し・起こしの落ち 無し・"
+                      "心拍だけの窓 無し）＝ §7 (d) が「次に見る」と書いた側の窓です")
         print(f"      ＊口の無い窓 {d.get('gap_over_unexplained')}つ"
-              f"（`wake_missed` いま {d.get('wake_missed')}本 / {d.get('wake_missed_n')}本）")
+              f"（`wake_missed` いま {d.get('wake_missed')}本 / {d.get('wake_missed_n')}本・"
+              f"**心拍だけの窓 {d.get('beat_only_gaps')}窓**／親の起き {d.get('wake_beats')}本 の心拍）")
     # **旧道具の読み出し（種別の下読み・枠の機会費用・立っている決め）は、ここから出さない**
     #     （2026-09-06 17:xx JST・optimizer・Fable）。09/04〜05 にここへ足した3つの塊は
     #     `src/run_marker`・`src/slot_cost`・`src/daily_pick` を読んで印字していた。手法は 09/05 に

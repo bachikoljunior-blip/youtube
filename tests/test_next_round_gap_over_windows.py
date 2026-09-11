@@ -46,12 +46,19 @@ REAL = [_w(0, 25, 1, 0, 1.004), _w(1, 0, 1, 46, 1.309), _w(1, 46, 2, 22, 1.014),
 REAL_SPAWN = [(datetime(2026, 9, 11, 1, 0, 49, tzinfo=UTC), "hourly", 2)]
 
 
-def _patch(monkeypatch, windows, spawn=(), missed=()):
+def _patch(monkeypatch, windows, spawn=(), missed=(), beats=()):
     monkeypatch.setattr(nr, "gap_windows", lambda limit=10, got=None: list(windows))
     monkeypatch.setattr(nr, "respawn_rounds", lambda **kw: list(spawn))
     monkeypatch.setattr(nr, "wake_missed",
                         lambda **kw: {"missed": [(t, 20.0) for t in missed],
                                       "placed": 46, "lags": [], "median_lag": 1.78})
+    # **3つ目の出どころも、本物の台帳から切り離すこと**（2026-09-11 15:0x に足した）。
+    # 切らないと、この検査は「きょうの `parent_wakes.jsonl` に心拍だけの窓が無いこと」を
+    # 不変条件にしてしまいます（§5 の教訓の形 6つ目）。
+    monkeypatch.setattr(nr, "beat_only_gaps",
+                        lambda *a, **kw: [{"from": f.isoformat(), "at": t.isoformat(),
+                                           "gap_min": round((t - f).total_seconds() / 60, 1)}
+                                          for (f, t) in beats])
 
 
 def test_実物_立て直しの無い窓を名指しすること(monkeypatch):
@@ -64,6 +71,10 @@ def test_実物_立て直しの無い窓を名指しすること(monkeypatch):
     assert g["windows"][1]["respawn"] == [] and not g["windows"][1]["explained"], \
         "1.717 の窓に立て直しは在りません（11:2x はここを口の在る窓の説明で消していた）"
     assert g["n_unexplained"] == 1
+    # **この窓の本当の出どころは 3つ目です**（2026-09-11 15:0x・`beat_only_gaps`）——
+    # 本物の台帳では 02:59:52 → 03:59:41 が「心拍から心拍まで、ほかの起きが 0本」で、
+    # いまの印字は `explained` の側に立ちます。ここでは口を切ってあるので偽のまま
+    # （下の `test_心拍だけの窓は…` が、その側を撃ちます）。
 
 
 def test_実物_この_2つ_は続いていないこと(monkeypatch):
@@ -86,6 +97,25 @@ def test_起こしが届かなかった窓は_立て直しが無くても口が�
     w = nr.gap_over_gate()["windows"][0]
     assert w["wake_missed"] is True and w["explained"] is True
     assert nr.gap_over_gate()["n_unexplained"] == 0
+
+
+def test_心拍だけの窓は_立て直しも起こしの落ちも無くても口が在ること(monkeypatch):
+    """**3つ目の出どころ**（2026-09-11 15:0x）。実物 09/11 02:58→03:59 の窓そのもの。"""
+    _patch(monkeypatch, [_w(2, 58, 3, 59, 1.717)],
+           beats=[(datetime(2026, 9, 11, 2, 59, 52, tzinfo=UTC),
+                   datetime(2026, 9, 11, 3, 59, tzinfo=UTC))])
+    g = nr.gap_over_gate()
+    assert g["windows"][0]["beat_only"] is True and g["windows"][0]["explained"] is True
+    assert g["n_unexplained"] == 0
+
+
+def test_窓の外の心拍だけの窓は_その窓に付けないこと(monkeypatch):
+    """またいでいる窓も付けないこと（その周を伸ばした側とは言えない）。"""
+    _patch(monkeypatch, [_w(2, 58, 3, 59, 1.717)],
+           beats=[(datetime(2026, 9, 11, 3, 30, tzinfo=UTC),
+                   datetime(2026, 9, 11, 4, 30, tzinfo=UTC))])
+    w = nr.gap_over_gate()["windows"][0]
+    assert w["beat_only"] is False and w["explained"] is False
 
 
 def test_窓の外の立て直しは_その窓に付けないこと(monkeypatch):
