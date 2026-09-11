@@ -555,6 +555,10 @@ def cmd_hear(a):
     for r in rows:
         mark = "OK " if not r["diffs"] else "!! "
         print(f"{mark}コマ{r['i']} ({r['how']}): {r['heard']}")
+        if r.get("near"):   # 門（min_len=2）が落としている 1字差。**1モーラの誤読はここにしか出ません**（hear.near_spans の註）
+            print("      [?] 1字だけの差:", "・".join(f"予定「{e}」聞こえた「{g}」" for e, g in r["near"]))
+            if not r["diffs"]:
+                print(f"          音  : {r['got']}")
         if r["diffs"]:
             print(f"      台本: {r['say']}")
             print(f"      予定: {r['exp']}")
@@ -584,11 +588,22 @@ def cmd_hear(a):
                 elif v["verdict"] == "分けられない":
                     print("      → 5モーラ 未満の差は、この手では分けません（在るほうへ丸めないこと）")
     print(f"一致 {len(rows) - len(bad)}/{len(rows)}")
+    near_n = sum(len(r.get("near", ())) for r in rows)
+    reps = hear.near_repeats(rows)
+    if near_n:
+        print(f"  [?] 1字だけの差 {near_n}件（門は通っています）—— **一致の数は、1字の誤読については何も言っていません**"
+              "（hear.near_spans の註）。ほとんどは whisper の癖ですが、**TTS の誤読もここにしか出ません**")
+    for (e, g), ii in reps:
+        print(f"  [!] 予定「{e}」→ 聞こえた「{g}」が コマ{'・'.join(str(i) for i in ii)} の {len(ii)}か所 ＝ "
+              "**同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。"
+              "その語を §2 の (1)（読みの割れない語に書き換える）で直すか、通す理由をこの本の節に書くこと")
     if bad:
         print("差の読み方: TTS の誤読なら yomi か言い換え（yomi は効かない語がある → 直したら hear をやり直す）。"
               "whisper の聞き違い（ねんきん→めんきん・4がつ→4かつ 型）なら通してよい。決めるのは Fable。")
     ledger("heard", a.id, mismatched=len(bad), model="medium" if a.medium else "small", mode="kana",
            diffs=[{"i": r["i"], "d": r["diffs"]} for r in bad],
+           near=[{"i": r["i"], "d": r["near"]} for r in rows if r.get("near")],   # 門が落とした 1字差（hear.near_spans の覆る条件 (1) を本ごとに数えるため）
+           near_repeats=[{"d": list(p), "i": ii} for p, ii in reps],   # 同じ 1字差が 2コマ以上（覆る条件 (2) ＝ TTS 側だったかを次の回が数える）
            escalated=[r["i"] for r in rows if "→" in r["how"]],   # small で差が出て medium が予定どおりに聞いたコマ
            tail={str(r["i"]): r["tail"]["ok"] for r in rows if r.get("tail")},   # 末尾が丸ごと無いコマ → 末尾5秒に在ったか（hear.tail_probe の覆る条件を数えるため）
            voice={str(r["i"]): r["voice"]["verdict"] for r in rows if r.get("voice")},   # 音の側の答え（hear.tail_voice の覆る条件「3本 続けて当たったら寄せる」を数えるため）
