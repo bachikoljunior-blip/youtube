@@ -30,4 +30,17 @@ def build(s: Script, image: Path | None = None) -> dict:
          "-i", str(full), "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "medium", "-crf", "20",
          "-r", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", str(mp4)])
     sheet = contact_sheet(pngs, d / "sheet.png")
-    return {"mp4": mp4, "wavs": wavs, "durations": durs, "total": probe_duration(mp4), "sheet": sheet, "slides": pngs}
+    # **焼いた mp4 の指紋をその場で刻む**（2026-09-11 20:5x・hourly・Opus。`script.build_sig` の註）。
+    # ここに置く理由: mp4 を書くのはこの関数だけなので、**刻み忘れる道がありません**
+    # （呼ぶ側に置くと、次に別の口から焼いた回が黙って古い刻印を残します）。
+    # `work/` は git に入らないので、**刻印は台帳の `built` の側にも要ります**（`cli.cmd_build`）。
+    sig = s.build_sig(image)
+    (d / "build.sig").write_text(sig, encoding="utf-8")
+    return {"mp4": mp4, "wavs": wavs, "durations": durs, "total": probe_duration(mp4),
+            "sheet": sheet, "slides": pngs, "sig": sig}
+
+
+def built_sig(vid: str) -> str | None:
+    """**いま `work/` に在る mp4 が、どの本文で焼かれたか**（無ければ None ＝ 焼いていないか、刻む前の版で焼いた）。"""
+    p = workdir(vid) / "build.sig"
+    return p.read_text(encoding="utf-8").strip() if p.exists() else None

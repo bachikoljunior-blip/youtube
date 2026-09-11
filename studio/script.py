@@ -125,6 +125,11 @@ TAGS = ("前提", "しくみ", "決まり", "計算", "結論", "見る所")
 #   2 … 板を継いでから署名する（13:1x。行の割り直しでは動かない ＝ 覆る条件 (1)）
 LOOP_SIG_VERSION = 2
 
+# 焼き（mp4）の指紋の**作り方**の版（`Script.build_sig`）。**作り方を変えたら必ず上げること**
+# （`LOOP_SIG_VERSION` と同じ理由 —— 上げないと古い刻印と比べて「本文が動いた」と嘘を言う）。
+#   1 … 焼きが読む物ぜんぶ（2026-09-11 20:5x）
+BUILD_SIG_VERSION = 1
+
 
 class Segment(BaseModel):
     say: str = Field(..., description="声で読む文。ふつうの話し言葉。")
@@ -196,6 +201,49 @@ class Script(BaseModel):
         body = "\n".join(f"{g.say}\x1f{g.show}\x1f{g.sub}\x1f{g.tag}\x1f{''.join(g.board)}"
                          for g in self.segments)
         return f"{LOOP_SIG_VERSION}:{hashlib.sha256(body.encode('utf-8')).hexdigest()[:12]}"
+
+    def build_sig(self, image=None) -> str:
+        """**焼いた mp4 が、いまの本文で焼かれた物かの指紋**（2026-09-11 20:5x・hourly・Opus が足した）。
+
+        なぜ: **`cmd_schedule` は `work/<id>.mp4` が在るかしか見ていませんでした**
+        （`if not mp4.exists()` の 1行 だけ）。題と説明欄は**上げる瞬間の台本**から読むので
+        （`yt.upload(mp4, s.title, s.description, ...)`）、**焼いたあとに台本を直して予約すると、
+        新しい題と説明欄に古い声と絵が付いた本が出ます** —— しかも印字は「上げた」だけで、
+        どこにも「古い」と出ません。§4 (0-b) と `loop_sig` と**同じ族**（あとの手の直しが
+        前の手の答えを古くする）で、**ここは族のいちばん最後 ＝ 直す機会がもう無い所**です。
+
+        `loop_sig` では代われません。焼きが読むのに輪が読まない物が **4つ** 在ります:
+          voice・rate            声そのもの（09/07 に 1度 入れ替えた）
+          yomi・kana_in_voice    読みの直し（§4 (2) の輪が毎本 触る所。**声だけが変わり、字は 1字も動かない**）
+          板の行の割り方         `loop_sig` は **継いでから**署名する（行を割り直しても動かない ＝ 13:1x の
+                                 覆る条件 (1)）。**絵の上では行の割り方が見える**ので、焼きの側は割り方を入れる
+          背景の絵               注文が届く前に焼くと単色。届いたあと焼き直さずに予約すると**単色のまま出る**
+                                 （`trend.image_orders` が名指ししている当の形）。名と大きさで見る
+                                 （刻は worktree を跨ぐと動くので使わない）
+
+        `title`・`description`・`tags`・`notes` は**入れません** —— 焼きに渡らず、上げる瞬間に
+        台本から読み直されるので、直しても mp4 は古くなりません（入れると鳴らない印字＝狼少年になる）。
+
+        覆る条件: (1) この指紋が「古い」と言った回に、**焼き直した mp4 が前と同じ物だった**ことが
+        1度 でもあれば、範囲が広すぎる（まず `board` の行の割り方を外す番）。
+        (2) 逆に、指紋が同じまま mp4 が古かった回が出たら（例: `slides.py` や `tts.py` を直した回・
+        ffmpeg の欄を変えた回）、指紋に**道具の版**を足すこと（＝ `BUILD_SIG_VERSION` を上げる）。
+        **いまは道具の版を見ていません** —— `studio/` を直した回は、その回が焼き直すこと。
+        """
+        import hashlib
+        body = "\n".join(f"{g.say}\x1f{g.show}\x1f{g.sub}\x1f{g.tag}\x1f" + "\x1e".join(g.board)
+                          for g in self.segments)
+        yomi = "\x1f".join(f"{k}={v}" for k, v in sorted(self.yomi.items()))
+        kana = "\x1f".join(sorted(self.kana_in_voice))
+        img = ""
+        if image is not None:
+            try:
+                img = f"{image.name}:{image.stat().st_size}"
+            except OSError:
+                img = f"{image.name}:?"
+        body = f"{body}\x1d{self.voice}\x1d{self.rate}\x1d{yomi}\x1d{kana}\x1d{img}"
+        return f"{BUILD_SIG_VERSION}:{hashlib.sha256(body.encode('utf-8')).hexdigest()[:12]}"
+
 
     def problems(self) -> list[str]:
         out = []

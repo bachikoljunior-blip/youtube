@@ -541,7 +541,10 @@ def cmd_build(a):
     if not ok:
         print(f"  [!] {r['total']:.1f}秒 > {MAX_SECONDS}秒。say を削ること")
     ledger("built", a.id, seconds=round(r["total"], 1), image=bool(img), chars=s.total_chars(),
-           scenes=[round(d, 1) for d in r["durations"]])   # 同じ本文でも焼くたびに ±3% 揺れる（09/06 22:1x 実測）。コマ単位で比べるため
+           scenes=[round(d, 1) for d in r["durations"]],
+           sig=r["sig"])   # 同じ本文でも焼くたびに ±3% 揺れる（09/06 22:1x 実測）。コマ単位で比べるため。
+                           # `sig` は `script.build_sig`（2026-09-11 20:5x）—— **秒だけでは古い焼きを見分けられません**
+                           # （±3% の揺れと、本文を直した差が同じ大きさになる）
     return 0 if ok else 1
 
 
@@ -683,6 +686,18 @@ def cmd_schedule(a):
     mp4 = workdir(a.id) / f"{a.id}.mp4"
     if not mp4.exists():
         print("mp4 が無い。先に build")
+        return 1
+    # **上げる mp4 が、いまの本文で焼かれた物か**（2026-09-11 20:5x・hourly・Opus が足した。
+    # `script.build_sig` の註）。ここまでは「在るか」しか見ておらず、**焼いたあとに台本を直して
+    # 予約すると、新しい題と説明欄に古い声と絵が付いた本が出ます**（題も説明欄も `s` から読むため）。
+    # **`--force` では通りません** —— `--force` は「1日1本」の門の鍵で、別の問いです。
+    # 直し方は 1つ（`build` を撃ち直す・90秒）なので、逃げ道を作る値打ちがありません。
+    img = image_for(a.id)
+    want, have = s.build_sig(img), render.built_sig(a.id)
+    if have != want:
+        why = "焼いたあとに台本か背景の絵が動いた" if have else "この mp4 には刻印が無い（刻む前の版で焼いた）"
+        print(f"mp4 はいまの本文で焼かれていない（{why}）。先に build を撃ち直すこと")
+        print(f"  刻印 {have or '無し'} ／ いまの本文 {want}")
         return 1
     hh, mm = map(int, a.at.split(":"))
     at = now_jst().replace(hour=hh, minute=mm, second=0, microsecond=0)
