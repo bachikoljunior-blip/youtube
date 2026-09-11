@@ -1527,6 +1527,17 @@ def record_model_choice(role: str, model: str, why: str,
         # ＝ **その周が見た数は、その周に書くしかありません**（読む側は `margin_series()`）。
         "reach_ceiling_margin": (round(float(p["reach_ceiling_margin"]), 3)
                                  if p.get("reach_ceiling_margin") is not None else None),
+        # **その周が見た 2つ の着地と、門に当てた側ともう一方が一致したか**
+        # （`short_verdict` の覆る条件 (2)）。**手で送らないこと** —— §7「いまの数」は
+        # 「2つ の側が答えを違えた回は 8周目」を**手で数えて**いました（2026-09-12 01:4x に踏んだ）。
+        # `reach_ceiling_margin` と同じ理由で、`pace(過去の刻)` から数え直しても同じ列は出ません
+        # （`per_lap` も遅れも**いまの台帳**から引き直される）＝ **その周が見た数は、その周に
+        # 書くしかありません**（読む側は `agree_series()` / `agree_line()`）。
+        "reach_floor": (round(float(p["reach_floor"]), 2)
+                        if p.get("reach_floor") is not None else None),
+        "reach_carry": (round(float(p["reach_carry"]), 2)
+                        if p.get("reach_carry") is not None else None),
+        "short_agree": short_verdict(p.get("reach_floor"), p.get("reach_carry"))["agree"],
         "expected_goal_effect": (
             "次に出る1本の台本を持つ（題材・台本・直し ＝ 効き目の当のもの・高）" if tier == "leverage"
             else "measure・道具・親の手続き・公開前の build/hear（Opus で足りる所・他モデルの半分）" if tier == "other"
@@ -1637,9 +1648,23 @@ def margin_series(n: int = 8) -> list[tuple[str, float]]:
     そのときは `record_model_choice` に**周の印そのもの**（`rounds.jsonl` の `round`）を
     書かせること。**寄せの幅を伸ばして繕わないこと。**
     """
+    return [(a, float(v)) for a, v in _round_series("reach_ceiling_margin", n)]
+
+
+def _round_series(field: str, n: int) -> list[tuple[str, object]]:
+    """**`data/model_choice.jsonl` の欄を 1つ 取り、周ごとに 1点 へ畳んだ列**（古い順・API 0単位）。
+
+    畳み方（`rounds.jsonl` のいちばん近い周へ寄せる／控えは役と `MARGIN_SAME_SEC`）と、
+    その derivation・覆る条件は **`margin_series()` の註**（ここには写さない）。
+
+    **なぜ分けたか**（2026-09-12 01:4x・optimizer・Opus）: 同じ台帳を周ごとに読む口が
+    2つ目（`agree_series`）になりました。**畳みを写すと、10:5x に踏んだ「同じ周が 2点 に出る」
+    穴が、写した側にだけ残ります**（§5 教訓の形 2つ目 ＝ 直した側に 2つ目の口が無いかを撃つこと）。
+    **`None` は「その周は書いていない」**なので、点にしません（欄が無い古い行も同じ）。
+    """
     if not MODEL_CHOICE_FILE.exists():
         return []
-    pts: list[tuple[str, str, float]] = []       # (刻, 役, 余裕)
+    pts: list[tuple[str, str, object]] = []      # (刻, 役, 値)
     for line in MODEL_CHOICE_FILE.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
@@ -1648,13 +1673,13 @@ def margin_series(n: int = 8) -> list[tuple[str, float]]:
             r = json.loads(line)
         except json.JSONDecodeError:
             continue
-        m, at = r.get("reach_ceiling_margin"), r.get("at")
+        m, at = r.get(field), r.get("at")
         if m is None or not at:
             continue
-        pts.append((at, str(r.get("work_kind") or "").split(":")[0], float(m)))
+        pts.append((at, str(r.get("work_kind") or "").split(":")[0], m))
     pts.sort()
     marks = round_marks()
-    out: list[tuple[str, float]] = []
+    out: list[tuple[str, object]] = []
     keys: list[object] = []                      # 各点が寄った周（`marks` の番号 or 控えの束）
     roles: set[str] = set()                      # 控え: いま開いている周に、もう出た役
     prev: datetime | None = None
@@ -1988,6 +2013,61 @@ def short_words(reach_floor: float | None, reach_carry: float | None,
                  "（当たった先は縮まないので、床の側も `per_lap` に比例して落ちます"
                  "・盤は `short_verdict` の註）")
     return line
+
+
+def agree_run(n: int = 40) -> dict | None:
+    """**「2つ の側が答えを違えた回」が何周 続いているか**（`short_verdict` の覆る条件 (2)）。
+
+    2026-09-12 01:4x・optimizer・Opus。出どころは `data/model_choice.jsonl` の
+    `short_agree`（親が周ごとに積む）で、**周ごとに 1点 へ畳んで**から数えます（`_round_series`）。
+
+    **なぜ道具の側で数えるか —— この回に踏んだ。** `short_verdict` の覆る条件 (2) は
+    「答えを違える回が出たら、その数を METHOD §5 へ並べること」と書いてあり、
+    **その註と §5 の (2') は 2026-09-12 01:4x まで「いまは 2つ が重なっている ＝
+    側を決めた効きはまだ 1度も出ていません」のまま**でした。ところが §7「いまの数」は
+    同じ刻に「**2つ の側が答えを違えた回は 8周目**」と書いています ＝ **条件は 8周 前に引かれ、
+    条件の側だけが古いまま**。数が**手で送られていた**ためで、`margin_series` が
+    07:5x に閉じたのと同じ穴です（§5 教訓の形 7つ目 ＝ 覆る条件を註に書いたら、
+    それを読む印字も一緒に作ること）。
+
+    返すもの: `run`（いま続いている「違えた」周の数）・`agree`（直近の周の一致）・
+    `since`（その run の 1周目の刻）・`pts`（畳んだあとの点の数）。
+    **`None` は「まだ 1点も積まれていない」**（この欄を書き始めた回より前 ＝ 次の周から埋まる）。
+
+    **覆る条件**: (1) `run` が伸び続けるあいだは、門に当てる側（床）を変えないこと ——
+    違いは「側を決めた効きが出ている」ことの印であって、側が間違っている印ではありません
+    （どちらが正しいかは `short_verdict` の盤の側で決まる）。
+    (2) **一致に戻った回**（`run` 0）が出たら、その刻を METHOD §5 の (2') へ足すこと ＝
+    2つ の側は重なったり離れたりする数なので、「違え始めた」だけでは窓が閉じません。
+    (3) この列が 3周 続けて 1点も積まれなかったら、`margin_series` の覆る条件 (1) と同じ
+    （`record_model_choice` の `except` に入っている ＝ 欠けを詰めないこと）。
+    """
+    xs = _round_series("short_agree", n)
+    if not xs:
+        return None
+    run, since = 0, None
+    for at, v in reversed(xs):
+        if v is False:
+            run, since = run + 1, at
+        else:
+            break
+    return {"run": run, "agree": xs[-1][1], "since": since, "pts": len(xs)}
+
+
+def agree_line(n: int = 40) -> str:
+    """`agree_run()` を、`--pace` が印字する1行にする（**手で数えないこと**）。"""
+    v = agree_run(n)
+    if v is None:
+        return ("      2つ の側の一致: **まだ 1点も積まれていません**"
+                "（`record_model_choice` が `short_agree` を書き始めた回より前 ＝ "
+                "次の周から埋まります）")
+    if v["run"] == 0:
+        return (f"      2つ の側は**この周は重なっています**（畳んだ点 {v['pts']}周）"
+                " ＝ METHOD §5 13:1x の (2') の分子は **0周**（`quota.agree_run`）")
+    return (f"      2つ の側が**答えを違えた回: {v['run']}周 続いています**"
+            f"（{str(v['since'])[5:16]} から・畳んだ点 {v['pts']}周・台帳 `short_agree`）"
+            " ＝ **METHOD §5 13:1x の (2') の分子**"
+            "（`quota.agree_run`。**手で数えないこと**）")
 
 
 def margin_line(n: int = 8, per_lap: float | None = None) -> str:
@@ -2789,6 +2869,7 @@ def pace_report(now: datetime | None = None) -> None:
         print(short_words(p.get("reach_floor"), p.get("reach_carry"),
                           (p["seg"] or {}).get("hours"), p.get("left_hours"),
                           p.get("floor_clipped")))
+        print(agree_line())
         if p["reach_floor"] - p["reach_carry"] > 2.0:
             print(f"      ＊差の **{p['reach_floor'] - p['reach_carry']:.0f} ポイント**は"
                   f"**間隔だけ**で決まります。**「いく／いかない」ではなく「床に乗るか」。**")
