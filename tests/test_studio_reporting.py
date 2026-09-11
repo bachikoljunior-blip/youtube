@@ -220,3 +220,41 @@ def test_面のCTRはインプレッションで重みを付けること():
     (day, imp, ctr), = reporting.reach_by_day(rows, "v1")
     assert (day, imp) == ("20260909", 1000)
     assert abs(ctr - 1.0) < 1e-9      # 重み付け 1.0%（そのまま平均すると 5.0%）
+
+
+# --- 2026-09-11 18:4x（optimizer・Opus）: §7 (o-4)(3) の並べ直し -------------------
+
+
+def test_報告の日の終わりは翌日の16時JST():
+    """報告の期間は 16:00 JST 〜 翌 16:00 JST（`pt_day` の裏）。
+
+    **10:00 JST 公開の本は、最初の境目が 齢 6.0時間 ちょうど**（`day_end_jst` の註）。
+    """
+    e = reporting.day_end_jst("20260908")
+    assert (e.year, e.month, e.day, e.hour) == (2026, 9, 9, 16)
+    # `pt_day` と往復すること（10:00 JST 公開 → その日の報告の日 → 終わりは 6時間 後）
+    pub = dt.datetime(2026, 9, 9, 10, 0, tzinfo=dt.timezone(dt.timedelta(hours=9)))
+    d = reporting.pt_day(pub)
+    assert (reporting.day_end_jst(d) - pub).total_seconds() / 3600 == 6.0
+
+
+def test_日の穴を数える():
+    rows = [{"date": "20260901", "video_id": "a", "views": "1", "_created": "c"},
+            {"date": "20260903", "video_id": "a", "views": "1", "_created": "c"},
+            {"date": "20260906", "video_id": "a", "views": "1", "_created": "c"}]
+    assert reporting.missing_days(rows) == ["20260902", "20260904", "20260905"]
+    # **縁は穴ではない**（最初の日より前・最後の日より後は数えない）
+    assert reporting.missing_days(rows[:1]) == []
+
+
+def test_累計は次元で割れた行を足したあとで積む():
+    """1日 1行 ではない（`latest_rows` の 17:5x の穴）—— 足してから累計にすること。"""
+    rows = [
+        {"date": "20260908", "video_id": "v", "views": "0", "country_code": "ZZ",
+         "_created": "2026-09-11T08:00:00Z"},
+        {"date": "20260908", "video_id": "v", "views": "232", "country_code": "JP",
+         "_created": "2026-09-11T08:00:00Z"},
+        {"date": "20260909", "video_id": "v", "views": "10", "country_code": "JP",
+         "_created": "2026-09-11T08:00:00Z"},
+    ]
+    assert reporting.cum_views(rows, "v") == [("20260908", 232, 232), ("20260909", 10, 242)]

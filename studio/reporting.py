@@ -56,7 +56,7 @@ from pathlib import Path
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from .common import env
+from .common import JST, env
 
 #: 本ごとの日ごとの 再生・視聴分・平均視聴秒・登録の増減・いいね。
 REPORT_TYPE = "channel_basic_a3"
@@ -326,3 +326,68 @@ def views_by_day(rows: list[dict], video_id: str) -> list[tuple[str, int]]:
         d = r.get("date", "")
         tot[d] = tot.get(d, 0) + int(float(r.get("views") or 0))
     return sorted(tot.items())
+
+
+def day_end_jst(date: str) -> dt.datetime:
+    """報告の日 `YYYYMMDD` の**期間の終わり**を JST で（＝ 翌日の 16:00 JST）。
+
+    報告の期間は 07:00Z 〜 翌 07:00Z ＝ **16:00 JST 〜 翌 16:00 JST**（`pt_day` の裏）。
+    ＊夏時間の切り替えで 07:00Z は 08:00Z になります（11月〜3月）——`pt_day` と同じ覆る条件。
+
+    **この境目が、この口のいちばん使える所です**: 公開は 10:00 JST に固定なので、
+    **その本の最初の報告の日の終わりは、齢 6.0時間 ちょうど**。
+    `trend.hold` が「6h ちょうどの点が無いので挟みで読む」と毎周 書いている当の点が、
+    **複製から返らない口で 1本に 1つ 立ちます**（`trend.report_vs_ledger` が印字する）。
+    """
+    d = dt.datetime.strptime(date, "%Y%m%d")
+    return dt.datetime(d.year, d.month, d.day, 16, tzinfo=JST) + dt.timedelta(days=1)
+
+
+def missing_days(rows: list[dict]) -> list[str]:
+    """積んだ行の**最初の日から最後の日まで**で、1行 も無い日（＝ 穴）。
+
+    **なぜ数えるか（2026-09-11 18:4x・optimizer・Opus。この回に踏んだ）**:
+    17:5x の回は 報告 **21本**（30日 のうち **20日**）で `views_by_day` を読み、
+    **10日 が穴**でした（08/12・08/15・08/16・08/18・08/22・08/27・09/02・09/04・09/05・**09/07**）。
+    そのうち **09/07 は `lQHX9LJ80Sg` の最初の 6時間**（09/08 10:00〜16:00 JST）で、
+    穴のままだと**その本の累計が 256回 低く出ます**。
+    **印字はどこにも「穴が在る」と言っていませんでした** —— `cli.cmd_reporting` は
+    「報告 N本」と「報告の日 最初〜最後」しか出さないので、**間が抜けていても同じ顔で出ます。**
+    ＝ §6 `cli.comments_to_show` の 01:4x・`trend.pair_gap` の 02:2x と**同じ族**
+    （数は出るのに、その数が全部そろっているかが出ない）。
+
+    **穴の出どころは 遡りの途中**でした: **同じ回の 1時間 後（18:4x）に撃ち直したら 31本・穴 0日**
+    ＝ ジョブを作った直後の遡り（30日）は**まとめて置かれず、数時間かけて埋まります**。
+    ＝ **「報告 N本」は動いている数で、30日 ぶんがそろうまでは読む側が穴を踏みます。**
+
+    **覆る条件**: (1) 穴が **2周 続けて同じ日**に残ったら、それは遡りの途中ではなく
+        置かれない日 ＝ そのときは `freshness`（いちばん新しい報告だけを見る）ではなく
+        **日の数**で遅れを見ること。
+    (2) 遡りが 30日 より長い口が来たら（ジョブの作成から 30日 を越えた回）、
+        最初の日は遡りの縁なので、縁の 1日 は穴に数えないこと。
+    """
+    days = sorted({r.get("date", "") for r in rows if r.get("date")})
+    if len(days) < 2:
+        return []
+    a = dt.datetime.strptime(days[0], "%Y%m%d").date()
+    b = dt.datetime.strptime(days[-1], "%Y%m%d").date()
+    have = set(days)
+    out, d = [], a
+    while d <= b:
+        k = d.strftime("%Y%m%d")
+        if k not in have:
+            out.append(k)
+        d += dt.timedelta(days=1)
+    return out
+
+
+def cum_views(rows: list[dict], video_id: str) -> list[tuple[str, int, int]]:
+    """1本の「報告の日 → その日の再生・**その日までの累計**」。
+
+    **累計が使えるのは穴が無いときだけです**（`missing_days`）—— 穴の日のぶんは黙って抜けます。
+    """
+    out, c = [], 0
+    for d, v in views_by_day(rows, video_id):
+        c += v
+        out.append((d, v, c))
+    return out

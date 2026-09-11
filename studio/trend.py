@@ -1868,6 +1868,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # （`trend.image_orders` の註 ＝ 印字だけにしない族の 5つ目）。
     out.append(image_line(rows))
     out.append(analytics_line(rows, now=now))
+    # 一括レポート（3つ目の枠・**Data API 0単位**）を、台帳の包絡と並べる
+    # （§7 (o-4)(3)・`trend.report_vs_ledger` の註 ＝ **複製から返らない唯一の口**）。
+    out.append(report_vs_ledger_line(rows))
     cl = curve_line(rows)
     if cl:
         out.append(cl)
@@ -3493,3 +3496,179 @@ def pair_gap_line(rows: list[dict], at: dt.datetime | None = None) -> str:
     return (f"前の測りから {g['gap_min']:.1f}分（門 {MIN_PAIR_MIN:.0f}分）"
             f"→ **この測りは2点組に入りません**（§7 (2) の分母は動きません）。"
             f"あと {MIN_PAIR_MIN - g['gap_min']:.1f}分 待って撃ち直すこと・いまは{where}")
+
+
+def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> dict:
+    """**一括レポート（a3）の日ごとの再生を、台帳（`videos.list` の包絡）と並べる。API 0単位。**
+
+    §7 (o-4)(3) が「**複製から返らない唯一の口で、(m) を外から当てられるのはここだけ**」と
+    名指ししている当ての、その並べ直しです（2026-09-11 18:4x・optimizer・Opus）。
+
+    報告の日 D の期間は **16:00 JST D 〜 16:00 JST D+1**（`reporting.day_end_jst`）なので、
+    **D までの累計** と、**D の終わりの時刻の台帳の包絡**が、同じものを指します。
+    ＝ 差は「**台帳（videos.list）がその時刻に、真の数からどれだけ低かったか**」。
+
+    **この回に撃った実測（穴 0日・4本）**:
+
+        本                 齢 6.0h ちょうど       次の境目        その次
+        gv1u7n_pCAQ    報告 694 / 台帳 458（**-34.0%**）   930 / 930（0）
+        lQHX9LJ80Sg    報告 256 / 台帳 172（-32.8%）       494 / 448（-9.3%）   691 / 683（-1.2%）
+        nQbVxuWpWw8    報告  42 / 台帳  28（-33.3%）        67 /  66（-1.5%）
+        EkNqtkK49Bw    報告 127 / 台帳  85（-33.1%）       144 / 127（-11.8%）  145 / 140（-3.4%）
+
+    **＝ 包絡でも足りていません。** `envelope()` の註は「1点は真の値を最大 28% 下に外す」と
+    書いており、その手当てが**それまでの最大**でした。ところが **4本 とも、いちばん若い境目で
+    -33% 前後**です ＝ **齢 6時間 の帯では 3つ の複製が**そろって**遅れており、
+    最大を取っても埋まりません**（`envelope` は**周をまたいだ割れ**を直す手で、
+    **全部の複製が同じだけ遅れている時間帯**には効かない）。
+    差は齢とともに閉じます（-33% → -1〜-12% → 0）。
+
+    **いちばん効く所**: 公開は 10:00 JST に固定・境目は 16:00 JST ＝
+    **その本の最初の境目は 齢 6.0時間 ちょうど**。`trend.hold` が毎周「6h ちょうどの点が無いので
+    挟みで読む」と書いている §1 の帯（70〜90%）の分子が、**複製から返らない口で 1本に 1つ**立ちます。
+    **ただし分母（いまの再生）は台帳のままなので、割合は上限**（まだ伸びる本ほど下がる）。
+    **判定（帯の中か外か）は `hourly`**（§5・§1 の行）—— ここは数を並べるまで。
+
+    返り: `{"holes": 穴の日, "last_day": 最後の報告の日, "books": [...],
+            "channel": {...}}`。`books` の 1点は
+    `{"date", "end", "age_h", "cum", "led", "diff", "ratio"}`。
+
+    **覆る条件**: (1) 若い境目の差が **3本 続けて ±5% の中**に入ったら、複製の遅れは
+        この帯では消えている ＝ `envelope` の手当てで足りる（この段を書き直すこと）。
+    (2) **報告の側が台帳より低い**点が、数え直し（`recounts()` が挙げる本）**以外**で出たら、
+        報告は「その日までの全部」ではない ＝ 次元の足し方（`views_by_day`）を先に疑うこと。
+    (3) 穴が在る回は `cum` が低く出ます（`reporting.missing_days`）——
+        穴が 1日 でも在る回は、差を「複製の遅れ」と読まないこと。
+    """
+    from . import reporting
+
+    rep_rows = reporting.load_rows(reporting.STORE) if rep_rows is None else rep_rows
+    holes = reporting.missing_days(rep_rows)
+    days = sorted({r.get("date", "") for r in rep_rows if r.get("date")})
+    last_day = days[-1] if days else None
+
+    # **台帳の側は `series` + `envelope`**（`hold` と同じ口 ＝ 数え直しの峰も同じ規則で落ちる。
+    # ここで生の `views` を自前で拾い直すと、同じ台帳から 2つ目の並びが立ちます）。
+    mine = ours(rows)
+    tl: dict[str, list[tuple[dt.datetime, int]]] = {}
+    pub: dict[str, dt.datetime] = {}
+    for vid, pts in series(rows).items():
+        if vid not in mine or not pts:
+            continue
+        tl[vid] = sorted(zip((_at(p) for p in pts), envelope(pts)))
+        pub[vid] = published_at(pts)
+
+    def _env_at(vid: str, when: dt.datetime) -> int | None:
+        last = None
+        for t, v in tl.get(vid, []):
+            if t <= when:
+                last = v
+        return last
+
+    books = []
+    for vid in sorted(tl):
+        pts = []
+        for d, _day, cum in reporting.cum_views(rep_rows, vid):
+            end = reporting.day_end_jst(d)
+            led = _env_at(vid, end)
+            age = (end - pub[vid]).total_seconds() / 3600.0
+            pts.append({"date": d, "end": end, "age_h": age, "cum": cum, "led": led,
+                        "diff": (None if led is None else led - cum),
+                        "ratio": (None if not cum or led is None else led / cum - 1.0)})
+        if pts:
+            books.append({"id": vid, "points": pts, "now": tl[vid][-1][1]})
+
+    # チャンネルの側（(m) を外から当てる口）——**重なる報告の日が要ります。**
+    cs = _channel_rows(rows)
+    env = _channel_env_points(cs)
+    ch: dict = {"overlap": [], "first_t": (env[0]["t0"] if env else None),
+                "last_t": (env[-1]["t1"] if env else None), "next_day": None, "predict": None}
+    if env:
+        tot: dict[str, int] = {}
+        for r in reporting.latest_rows(rep_rows):
+            tot[r.get("date", "")] = tot.get(r.get("date", ""), 0) + int(float(r.get("views") or 0))
+        for d in days:
+            end = reporting.day_end_jst(d)
+            start = end - dt.timedelta(days=1)
+            if start < env[0]["t0"] or end > env[-1]["t1"]:
+                continue
+            a = max((p["env"] for p in env if p["t1"] <= start), default=None)
+            b = max((p["env"] for p in env if p["t1"] <= end), default=None)
+            if a is None or b is None:
+                continue
+            ch["overlap"].append({"date": d, "rep": tot.get(d, 0), "led": b - a})
+        # **まだ重ならないとき**: 台帳が丸ごと覆っている、いちばん早い報告の日と、その予測。
+        if not ch["overlap"] and last_day:
+            nxt = (dt.datetime.strptime(last_day, "%Y%m%d").date() + dt.timedelta(days=1))
+            while True:
+                k = nxt.strftime("%Y%m%d")
+                end = reporting.day_end_jst(k)
+                start = end - dt.timedelta(days=1)
+                if start >= env[0]["t0"] and end <= env[-1]["t1"]:
+                    a = max((p["env"] for p in env if p["t1"] <= start), default=None)
+                    b = max((p["env"] for p in env if p["t1"] <= end), default=None)
+                    if a is not None and b is not None:
+                        ch["next_day"], ch["predict"] = k, b - a
+                    break
+                if end > env[-1]["t1"]:
+                    break
+                nxt += dt.timedelta(days=1)
+    return {"holes": holes, "last_day": last_day, "books": books, "channel": ch}
+
+
+def report_vs_ledger_line(rows: list[dict], rep_rows: list[dict] | None = None) -> str:
+    """`report_vs_ledger` を1行にする（`trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
+    from . import reporting
+
+    g = report_vs_ledger(rows, rep_rows)
+    if not g["books"]:
+        return ("**一括レポート 対 台帳: 行がありません**（`python -m studio.cli reporting` を"
+                "撃つこと・**Data API 0単位**・3つ目の枠）")
+    holes = g["holes"]
+    head = (f"**一括レポート（a3）対 台帳（`videos.list` の包絡）**（`trend.report_vs_ledger`・"
+            f"**Data API 0単位**）: 最後の報告の日 **{g['last_day']}**・"
+            + (f"**日に穴 {len(holes)}日**（{'・'.join(d[4:] for d in holes[:6])}"
+               f"{' ほか' if len(holes) > 6 else ''}）＝ **累計はその日ぶん低く出ます。"
+               "この回の差を『複製の遅れ』と読まないこと**（`reporting.missing_days`）。"
+               if holes else "**日に穴 0日**。"))
+    parts = []
+    for b in g["books"]:
+        seg = []
+        for p in b["points"]:
+            if p["led"] is None:
+                continue
+            age = f"齢{p['age_h']:.1f}h" if p["age_h"] is not None else p["date"][4:]
+            seg.append(f"{age} 報告{p['cum']}/台帳{p['led']}"
+                       + (f"（{p['ratio'] * 100:+.1f}%）" if p["ratio"] is not None else ""))
+        if seg:
+            parts.append(f"{b['id']} " + " → ".join(seg))
+    body = ("  " + "／".join(parts)) if parts else ""
+    # **齢 6.0h ちょうどの点**（10:00 JST 公開 ＋ 16:00 JST の区切り ＝ 1本に 1つ 立つ）。
+    six = []
+    for b in g["books"]:
+        for p in b["points"]:
+            if p["age_h"] is not None and 5.5 <= p["age_h"] <= 6.5 and b["now"]:
+                six.append(f"{b['id']} **{p['cum'] / b['now'] * 100:.1f}%**"
+                           f"（{p['cum']}/{b['now']}）")
+            break
+    sixline = ""
+    if six:
+        sixline = ("  **齢 6.0h ちょうどの割合（複製から返らない分子）**: " + "・".join(six)
+                   + " ＝ §1 の帯（70〜90%）の分子が、この口では 1本に 1つ 立ちます"
+                   "（**分母はいまの台帳なので、まだ伸びる本では上限**）。**判定は `hourly`**（§5）")
+    ch = g["channel"]
+    if ch["overlap"]:
+        chl = ("  **(m) を外から当てた**: " + "・".join(
+            f"{o['date'][4:]} 報告 {o['rep']}回 対 台帳 {o['led']}回" for o in ch["overlap"]))
+    elif ch["next_day"] is not None:
+        chl = (f"  **(m) はまだ外から当てられません** —— 台帳の `channel` の行は"
+               f" {ch['first_t']:%m/%d %H:%M} からで、報告の日は {g['last_day']} まで ＝ **重なりません**。"
+               f"**いちばん早く当てられるのは報告の日 {ch['next_day']}**"
+               f"（{reporting.day_end_jst(ch['next_day']) - dt.timedelta(days=1):%m/%d %H:%M}"
+               f"〜{reporting.day_end_jst(ch['next_day']):%m/%d %H:%M} JST）で、"
+               f"**台帳の側は いま {ch['predict']}回**。**その報告が置かれる見込みは"
+               f" {reporting.day_end_jst(ch['next_day']) + dt.timedelta(hours=26):%m/%d %H時}ごろ**"
+               "（`freshness` の `made_h` ＝ 25.8時間）")
+    else:
+        chl = "  **(m) を外から当てる重なりが在りません**（`report_vs_ledger` の `channel`）"
+    return "\n".join(x for x in (head, body, sixline, chl) if x)
