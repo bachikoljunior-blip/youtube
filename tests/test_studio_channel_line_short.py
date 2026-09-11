@@ -164,3 +164,51 @@ def test_full_and_short_agree_on_the_flat_verdict():
     rows = _short_flat_rows()
     assert "とは読めません" in trend.channel_line(rows)
     assert "とは読めません" in trend.channel_line_short(rows)
+
+
+# ---- 平らの門は「挟みの上端」（2026-09-11 11:3x・optimizer・Opus）
+# **踏んだ形**: 04:0x は手本の平らの**下端**（`flat_h_lo`）を門にしていた。手本は 1例で、
+# その真の長さは `flat_h_lo`〜`flat_h_hi` のどこかに在る ＝ 下端で鳴らすと、
+# **手本より短い平ら**を「前例より長い」と呼ぶ回が在る（実測の挟みは 10.199〜10.793時間）。
+
+def _between_lo_and_hi_rows() -> list[dict]:
+    """手本の平らの**挟みの中**にいる並び（下端は越えたが上端に届いていない）。
+
+    手本: 84,781 を 15:24 → 20:24（`flat_h_lo` 5.0時間）で読み、22:24 に 86,406（`flat_h_hi` 7.0時間）。
+    いまの平ら: 86,406 を 6.0時間 ＝ **5.0 < 6.0 < 7.0**。
+    """
+    return [_row("2026-09-10T15:24:00+09:00", 28, 84781),
+            _row("2026-09-10T20:24:00+09:00", 28, 84781),
+            _row("2026-09-10T22:24:00+09:00", 28, 86406),
+            _row("2026-09-11T01:24:00+09:00", 28, 86406),
+            _row("2026-09-11T04:24:00+09:00", 28, 86406)]
+
+
+def test_a_flat_inside_the_bracket_is_not_read_as_stopped():
+    rows = _between_lo_and_hi_rows()
+    g = trend.channel_growth(rows)
+    assert g["flat_laps"] >= trend.CHANNEL_FLAT_LAPS            # 周では門に届く
+    assert g["step_flat_h"] < g["flat_h"] < g["step_flat_h_hi"]  # 挟みの中
+    assert g["flat_readable"] is False                          # 上端に届いていない ＝ 読めない
+    short = trend.channel_line_short(rows)
+    assert "とは読めません" in short and "チャンネルの側を外すこと" not in short
+    assert "とは読めません" in trend.channel_line(rows)          # full と同じ verdict
+
+
+def test_positive_control_the_bracket_end_is_load_bearing():
+    """**陽性対照**: 門を下端へ戻すと、同じ並びが「止まった」側に鳴ること。"""
+    rows = _between_lo_and_hi_rows()
+    g = trend.channel_growth(rows)
+    assert (g["flat_h"] >= g["step_flat_h"]) is True     # 下端の門なら通ってしまう
+    assert (g["flat_h"] >= g["step_flat_h_hi"]) is False  # 上端の門は通さない
+
+
+def test_over_the_upper_end_says_the_sample_is_one():
+    """上端を越えた回は「止まった」と読めるが、**手本が 1例**だと言い続けること。"""
+    rows = _between_lo_and_hi_rows()[:3] + [
+        _row("2026-09-11T01:24:00+09:00", 28, 86406),
+        _row("2026-09-11T06:24:00+09:00", 28, 86406)]
+    g = trend.channel_growth(rows)
+    assert g["flat_h"] > g["step_flat_h_hi"] and g["flat_readable"] is True
+    assert "チャンネルの側を外すこと" in trend.channel_line_short(rows)
+    assert "手本は 1例" in trend.channel_line(rows)

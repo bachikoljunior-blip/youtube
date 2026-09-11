@@ -2943,6 +2943,25 @@ def channel_growth(rows: list[dict]) -> dict:
     「総再生の数がこの窓で読めない」までです。**覆る条件 (4)**: 登録も総再生も
     **同じ窓で 3周 続けて動かない**回が出たら、そのときは応答そのものを疑ってよい
     （そのときだけ「チャンネルの側」が本の 0回 の説明に使えます）。
+
+    **決め（2026-09-11 11:3x・optimizer・Opus）: 平らを「止まった」と読める門は、
+    実測の刻みの手前の平らの「挟みの上端」（`flat_h_hi`）。下端（`flat_h_lo`）ではない。**
+    `channel_steps` は平らを**挟みで返します**（動いた刻そのものは台帳に無いので
+    `flat_h_lo` ＝ 確実に平らだった長さ・`flat_h_hi` ＝ これより長くはない）。
+    04:0x はその**下端**を門にしていました ＝ 手本の真の長さが挟みのどこに在っても
+    「止まった」と鳴る側で、**いちばん早く鳴る選び方**です。
+    実測 11:3x: 手本は **1例だけ**で挟みは **10.199〜10.793時間**（差 0.594時間 ＝ いまの床で約 1周）・
+    いまの平らは **9.2時間** ＝ **2周 後に下端を越えます**。そこで鳴る「止まった」は、
+    手本が 10.8時間 だった場合には**手本より短い平ら**を「前例より長い」と呼びます。
+    **門は上限で読むこと** —— §7 (b-2) の `gate_span`（振れ幅の上限で門を引く）と同じ形で、
+    `channel_steps` の註も「観測した平らは刻みの周期の**下端**」「n＝1 では分けられない」と
+    同じ向きを言っています（**印字と註が食い違っていた ＝ §5 の教訓の形 7つ目**）。
+    **覆る条件**: (1) 刻みが 2つ 以上 載ったら、門は挟みではなく**間隔の中央値**から引くこと
+    （`channel_steps` の覆る条件 (1) と同じ口・そのときこの挟みは捨ててよい）。
+    (2) 上端を越えてもなお「止まった」が本の 0回 を説明しなかった回が 2回 出たら、
+    門は時間ではなく別の物（`sum_confirmed` の側）で引くこと。
+    (3) 挟みの幅（いま 0.594時間）が 1周 より狭くなったら、上端と下端の差は周で消える ＝
+    そのときは印字の文だけ残して、門は下端へ戻してよい。
     """
     cs = _channel_rows(rows)
     ps = _channel_env_points(cs)
@@ -2953,7 +2972,7 @@ def channel_growth(rows: list[dict]) -> dict:
             "vid_confirmed": None, "vid_unconfirmable": None,
             "mismatch": None, "over": False,
             "over_streak": 0, "over_blocks": 0, "over_ready": False, "over_drawn": False,
-            "step_flat_h": None, "flat_readable": True}
+            "step_flat_h": None, "step_flat_h_hi": None, "flat_readable": True}
     if len(cs) < 2:
         return {**base, "span_h": None, "d_subs": None, "d_views": None,
                 "views_per_h": None, "subs_per_view": None,
@@ -2974,7 +2993,8 @@ def channel_growth(rows: list[dict]) -> dict:
     # **平らを「止まった」と読めるのは、実測の刻みの手前の平らより長いときだけ**
     # （2026-09-11 04:0x・`_flat_span_h` の註。**full と短い行が同じ口から読むこと** ——
     #  `channel_line_short` の覆る条件 (2)「2つが違う verdict を言ったら片方を消す」）
-    step_lo = (channel_steps(rows)["last"] or {}).get("flat_h_lo")
+    st_last = channel_steps(rows)["last"] or {}
+    step_lo, step_hi = st_last.get("flat_h_lo"), st_last.get("flat_h_hi")
     flat_h = _flat_span_h(ps)
     return {**base, "span_h": g["span_h"], "d_subs": g["d_subs"], "d_views": g["d_views"],
             "views_per_h": (g["d_views"] / g["span_h"]) if g["span_h"] >= CHANNEL_MIN_SPAN_H else None,
@@ -2986,8 +3006,8 @@ def channel_growth(rows: list[dict]) -> dict:
             "mismatch": g["mismatch"], "over": g["over"],
             "over_streak": st["streak"], "over_blocks": st["blocks"],
             "over_ready": st["ready"], "over_drawn": st["drawn"],
-            "step_flat_h": step_lo,
-            "flat_readable": step_lo is None or flat_h >= step_lo}
+            "step_flat_h": step_lo, "step_flat_h_hi": step_hi,
+            "flat_readable": step_hi is None or flat_h >= step_hi}
 
 
 def channel_line(rows: list[dict]) -> str:
@@ -3038,12 +3058,18 @@ def channel_line(rows: list[dict]) -> str:
                     "（§7 (m)）") if g["flat_laps"] >= CHANNEL_FLAT_LAPS
                    else f" ＝ **まだ引かれません**（あと {CHANNEL_FLAT_LAPS - g['flat_laps']}周）")
                 + "。")
-        # **平らが刻みの下端より短ければ、「止まった」とは読めません**（2026-09-11 04:0x）
-        step_lo = g["step_flat_h"]
+        # **平らが刻みの手前の平らの「挟みの上端」より短ければ、「止まった」とは読めません**
+        # （2026-09-11 04:0x に下端で置き、**11:3x に上端へ移した** ——`channel_growth` の決め）
+        step_lo, step_hi = g["step_flat_h"], g["step_flat_h_hi"]
         if not g["flat_readable"]:
             flat += (f"**ただし、この平らは {g['flat_h']:.1f}時間 で、直近に実測した刻みの手前の平ら "
-                     f"{step_lo:.1f}時間 より短い ＝ 「チャンネルが止まった」とは読めません**"
-                     "（`trend.channel_steps`・`_flat_span_h` の註）。")
+                     f"{step_lo:.1f}〜{step_hi:.1f}時間（挟み・手本は 1例）の**上端**に届いていない ＝ "
+                     "「チャンネルが止まった」とは読めません**"
+                     "（`trend.channel_steps`・`channel_growth` の決め 11:3x）。")
+        elif step_hi is not None:
+            flat += (f"**この平らは手本の挟みの上端 {step_hi:.1f}時間 を越えました** ——"
+                     "**ただし手本は 1例**なので、これは「刻みの周期より長い」ではありません"
+                     "（`channel_steps` の覆る条件 (1)）。")
     # **総再生が動かない窓で登録だけが動いたら、応答が丸ごと古いのではない**（`channel_growth` の註 (4)）
     if g["d_views"] == 0 and g["d_subs"]:
         flat += (f"**同じ窓で登録は {g['d_subs']:+d} 動いています** ＝ "
@@ -3154,8 +3180,10 @@ def channel_line_short(rows: list[dict]) -> str:
                    "チャンネルの側を外すこと")
     elif g["flat_laps"] >= CHANNEL_FLAT_LAPS:
         # **門は周で引けても、読みは引けません**（`_flat_span_h` の註・full と同じ口）
+        # **門は挟みの上端**（2026-09-11 11:3x・`channel_growth` の決め）
         verdict = (f"**平らは {g['flat_h']:.1f}時間 で、実測の刻みの手前の平ら "
-                   f"{g['step_flat_h']:.1f}時間 より短い ＝ 「チャンネルが止まった」とは読めません**"
+                   f"{g['step_flat_h']:.1f}〜{g['step_flat_h_hi']:.1f}時間（挟み・1例）の"
+                   "**上端**に届いていない ＝ 「チャンネルが止まった」とは読めません**"
                    "（`trend.channel_steps`）")
     else:
         verdict = ("**本ごとの 0回 を読む前に見ること** —— 総再生が動いていれば、"
