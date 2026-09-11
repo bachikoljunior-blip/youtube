@@ -1463,6 +1463,129 @@ GATE_SPAN_H = 24.0
 #: ＝ **この門を入れないと、`side_hi` は「そろっていなかった時間帯」を読み続けます。**
 SIDE_MIN_PAIRS = 20
 
+#: `gate_span` の覆る条件 (6)（側の鋸の歯が消えたか）を「何周 続いたら」で引く数。
+#: (5) は 24時間 の**上限**で引くので周を数えませんが、(6) は幅なので周が要ります。
+SIDE_RUN_LAPS = 3
+
+
+def _span_points(rows: list[dict], hours: float) -> list[dict]:
+    """`measured` の刻ごとに **門の比・その刻の側・両側の差** を出す
+    （`gate_span` と `side_verdict` の**共通の口**・2026-09-12 03:1x に切り出した）。
+
+    **`hours` は「どの刻から評価を始めるか」だけを決めます。** `informative` に渡すのは
+    その刻までの**台帳まるごと**（`seen` は窓の外からも積む）なので、
+    **同じ刻の値は `hours` を広げても変わりません** —— だから `side_verdict` は
+    `hours*2` で呼んで、**過去の刻の 24時間 窓**を丸ごと持てます。
+    """
+    occ = sorted({r["at"] for r in rows if r.get("event") == "measured"})
+    if not occ:
+        return []
+    cut = _at({"at": occ[-1]}) - dt.timedelta(hours=hours)
+    other = [r for r in rows if r.get("event") != "measured"]
+    by_at: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("event") == "measured":
+            by_at.setdefault(r["at"], []).append(r)
+    seen: list[dict] = []
+    out: list[dict] = []
+    for at in occ:
+        seen.extend(by_at[at])
+        if _at({"at": at}) < cut:
+            continue
+        inf = informative(other + seen)
+        # **どちらの側で読むか**も、比とまったく同じ理由で刻に揺れます（`gate_span` の註）。
+        # **ただし両側の分母が 20組 に届くまでは数えない** —— 届かない点の差は
+        # 「長さが効いた」ではなく「そろえた側の組が少ない」だけで、上限を独り占めします。
+        ra, rg = inf.get("ratio_age"), inf.get("ratio_agegap")
+        n_age, n_gap = inf["band_matched"][1], inf["band_gapmatched"][1]  # type: ignore[index]
+        diff = (abs(float(rg) - float(ra))
+                if ra is not None and rg is not None and min(n_age, n_gap) >= SIDE_MIN_PAIRS
+                else None)
+        r = inf.get("gate_ratio")
+        out.append({"at": at, "diff": diff,
+                    "side": None if r is None else str(inf.get("gate_side")),
+                    "ratio": None if r is None else float(r)})
+    return out
+
+
+def side_verdict(rows: list[dict], hours: float = GATE_SPAN_H,
+                 laps: int = SIDE_RUN_LAPS) -> dict:
+    """**`gate_span` の覆る条件 (5)(6) を、毎周 印字するために数で引く**
+    （2026-09-12 03:1x JST・optimizer・Opus が足した）。
+
+    **なぜ要るか —— §5 の「教訓の形（7つ目）」そのものです**:
+    「覆る条件を註に書いたら、その条件を読む**印字**も一緒に作ること」。
+    (5)(6) は 2026-09-10 12:3x に `gate_span` の註へ書かれてから **この回まで印字が無く**、
+    `_side_line` は数（`side_lo`/`side_hi`/`side`）だけを出して
+    「覆る条件は `gate_span` の (5)(6)」と**場所を指すだけ**でした。
+    ＝ **引かれた回に、引かれたと言う口がどこにも無い。**
+
+    **実測（この回に踏んだ・API 0単位・台帳を測りの刻で切って読み直した）**:
+
+        09/11 19:18〜22:59 の 7周   `side_hi` **0.1993**   側 齢＋長さ
+        09/11 23:29〜00:55 の 4周   `side_hi` **0.1695**   側 齢＋長さ
+        09/12 01:38・02:07 の 2周   `side_hi` **0.1614**   側 齢＋長さ
+        09/12 **03:03**（この回）   `side_hi` **0.0747**   側 **齢だけ**
+
+    ＝ **(5) はこの回に初めて引かれました**（`side_hi` < `GAP_SPLIT`）。
+    **引いたのは新しい一致ではなく、24時間 の窓から 0.161 の点が 1つ 抜けたこと**です
+    —— それは (5) が**上限**で読むと決めた通りの引き方（窓の中の測り全部が門の下）ですが、
+    **「直った」ではありません。** (5) の註が「床（`quota.pace()`）が伸びていないかを
+    一緒に見ること」と書いているのはこのためで、**この回の床は 29分 → 26分（縮んだ）**
+    ＝ 帯の短い組が減ったからではない側でした（derivation は JOURNAL 09/12 03:1x）。
+
+    出すもの: `hi`/`lo`/`now`（24時間 の差の上限・下限・いま）・`side`（上限で読んだ側）・
+    `under`（(5) が引かれたか）・`run`（`hi` が門の下で続いた**測りの回数**）・
+    `narrow`（(6) の幅が門の下か）・`narrow_run`（それが続いた回数）・
+    `n`（24時間 の窓が丸ごと埋まっている点の数）。
+
+    **`run` は「周」ではなく「測り」で数えます** —— `measure` は 1周 に 1回 が建前ですが、
+    穴埋めの周（`parent_wakes.jsonl` の `patch`）では 1周 に 2回 立つことが在り、
+    **周で数えると道具が親の側の事情を読むことになります**（§5「周に 2体 そろわない回」）。
+    (6) の門 `SIDE_RUN_LAPS`（3）は**測り 3回**として読むこと。
+
+    **覆る条件**: (1) `run` が伸びているのに `side` が戻る回が出たら、`hi` の窓（`hours`）が
+    短すぎる ＝ まず `GATE_SPAN_H` を見ること。(2) `narrow_run` が `laps` に届いた回は、
+    (6) のとおり**側を点で読んでよい** ＝ そのとき `gate_span` の (5)(6) とこの関数を畳む。
+    (3) `n` が 24時間 の測りの回数より**少ない**まま `under` が立ったら、
+    それは「窓が埋まっていない」ほうの印 —— `_span_points` の `hours*2` が
+    足りていないので、そこを広げること。
+    """
+    pts = _span_points(rows, hours * 2)
+    ds = [(p["at"], float(p["diff"])) for p in pts if p["diff"] is not None]
+    res: dict[str, object] = {"hours": hours, "laps": laps, "n": 0, "side": None,
+                              "lo": None, "hi": None, "now": None,
+                              "under": False, "run": 0, "narrow": False, "narrow_run": 0}
+    if not ds:
+        return res
+    span = dt.timedelta(hours=hours)
+    first = _at({"at": ds[0][0]})
+    series: list[tuple[str, float, float]] = []
+    for i, (at, _d) in enumerate(ds):
+        t = _at({"at": at})
+        if t < first + span:
+            continue  # 24時間 の窓が埋まっていない点は、上限を低く見せる ＝ 数えない（覆る条件 (3)）
+        win = [d for a, d in ds[: i + 1] if _at({"at": a}) >= t - span]
+        series.append((at, min(win), max(win)))
+    if not series:
+        return res
+    _at_last, lo, hi = series[-1]
+    run = 0
+    for _a, _l, h in reversed(series):
+        if h >= GAP_SPLIT:
+            break
+        run += 1
+    narrow_run = 0
+    for _a, l, h in reversed(series):
+        if h - l >= GAP_SPLIT:
+            break
+        narrow_run += 1
+    res.update({"n": len(series), "lo": lo, "hi": hi, "now": ds[-1][1],
+                "side": "齢＋長さ" if hi >= GAP_SPLIT else "齢だけ",
+                "under": hi < GAP_SPLIT, "run": run,
+                "narrow": (hi - lo) < GAP_SPLIT, "narrow_run": narrow_run})
+    return res
+
 
 def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
     """**門 (2) の比は、本ではなく「いつ測ったか」で上下する。その振れ幅を出す**
@@ -1538,38 +1661,16 @@ def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
     (4) `hours` を変えたら `lo`/`hi` は当然 動きます。**24時間 なのは、帯が 1日に 1度しか回らないから**で、
     それより短くすると片側しか入らない窓が出ます（＝ 幅が嘘に狭くなる）。
     """
-    occ = sorted({r["at"] for r in rows if r.get("event") == "measured"})
     res: dict[str, object] = {"n": 0, "lo": None, "hi": None, "now": None,
                               "points": [], "hours": hours,
                               "side_lo": None, "side_hi": None, "side_now": None, "side": None}
-    if not occ:
+    got = _span_points(rows, hours)
+    if not got:
         return res
-    last = _at({"at": occ[-1]})
-    cut = last - dt.timedelta(hours=hours)
-    other = [r for r in rows if r.get("event") != "measured"]
-    by_at: dict[str, list[dict]] = {}
-    for r in rows:
-        if r.get("event") == "measured":
-            by_at.setdefault(r["at"], []).append(r)
-    seen: list[dict] = []
-    points: list[tuple[str, str, float]] = []
-    diffs: list[float] = []
-    for at in occ:
-        seen.extend(by_at[at])
-        if _at({"at": at}) < cut:
-            continue
-        inf = informative(other + seen)
-        # **どちらの側で読むか**も、比とまったく同じ理由で刻に揺れます（下の「側も点で読まない」）。
-        # **ただし両側の分母が 20組 に届くまでは数えない** —— 届かない点の差は
-        # 「長さが効いた」ではなく「そろえた側の組が少ない」だけで、上限を独り占めします（下の実測）。
-        ra, rg = inf.get("ratio_age"), inf.get("ratio_agegap")
-        n_age, n_gap = inf["band_matched"][1], inf["band_gapmatched"][1]  # type: ignore[index]
-        if ra is not None and rg is not None and min(n_age, n_gap) >= SIDE_MIN_PAIRS:
-            diffs.append(abs(float(rg) - float(ra)))
-        r = inf.get("gate_ratio")
-        if r is None:
-            continue
-        points.append((at, str(inf.get("gate_side")), float(r)))
+    points: list[tuple[str, str, float]] = [
+        (str(p["at"]), str(p["side"]), float(p["ratio"]))  # type: ignore[arg-type]
+        for p in got if p["ratio"] is not None]
+    diffs: list[float] = [float(p["diff"]) for p in got if p["diff"] is not None]
     if diffs:
         res.update({"side_lo": min(diffs), "side_hi": max(diffs), "side_now": diffs[-1],
                     "side": "齢＋長さ" if max(diffs) >= GAP_SPLIT else "齢だけ"})
@@ -1595,7 +1696,7 @@ def _span_line(rows: list[dict]) -> str:
             f"（帯の中の回は 0.5 へ・外の回は上へ。分子が動かないまま分母だけが増えるため）。"
             f"**門 (2) を引くのは、この振れ幅の上限 {hi:.3f} が 0.5 を切った回だけ**"
             f"（`trend.gate_span` の註・覆る条件 (1)）。"
-            + _side_line(g))
+            + _side_line(g) + _side_verdict_line(rows))
 
 
 def _side_line(g: dict) -> str:
@@ -1609,6 +1710,33 @@ def _side_line(g: dict) -> str:
             f"**実測 12:3x: 帯の外から `measure` を 1回 足すだけで 差は 0.101 → 0.020倍 に落ち、"
             f"点で読むと側が反転しました**（本の側は 1冊も動いていない）。"
             f"覆る条件は `gate_span` の (5)(6)。")
+
+
+def _side_verdict_line(rows: list[dict]) -> str:
+    """**(5)(6) が引かれたかを、毎周 言う**（註と derivation は `side_verdict`）。
+
+    §5 の「教訓の形（7つ目）」—— 覆る条件を註に書いたら、**その条件を読む印字も一緒に作る**。
+    印字が無ければ、引かれた回に引かれたと言う口がどこにも無い（この口が無かった 2周 で
+    (5) が引かれ、次の回が註を読むまで気づけませんでした）。
+    """
+    v = side_verdict(rows)
+    if not v["n"]:
+        return ""
+    hi, lo = float(v["hi"]), float(v["lo"])  # type: ignore[arg-type]
+    head = (f"**側の覆る条件 (5)**（`side_verdict`・門 {GAP_SPLIT}倍）: "
+            f"差の上限 **{hi:.3f}** ＝ ")
+    if v["under"]:
+        head += (f"**引かれています**（測り {v['run']}回 続けて門の下・24時間 の窓が埋まった点 {v['n']}件）"
+                 f" ＝ 読む側は **{v['side']}**・**§7 (2) の見出しを直すこと**。"
+                 f"**戻りは「直った」ではなく「帯の短い組が減った」印**なので、"
+                 f"床（`quota.py --pace`）が伸びていないかを一緒に見ること。")
+    else:
+        head += f"**引かれません**（読む側は **{v['side']}**）。"
+    head += (f" **(6)**: 幅 **{hi - lo:.3f}**（門 {GAP_SPLIT}倍）を"
+             + (f"測り **{v['narrow_run']}回** 続けて下回っています（{v['laps']}回 で"
+                f"側は点で読んでよい ＝ そのとき (5)(6) と `side_verdict` を畳む）。"
+                if v["narrow"] else "下回っていません。"))
+    return head
 
 
 def band_vs_age(rows: list[dict], iters: int = 2000, seed: int = 20260909) -> dict:
