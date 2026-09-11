@@ -986,6 +986,20 @@ def gap_windows(limit: int = 10,
         if at is None or row.get("who") != "owner":
             continue
         aim = row.get("aim_min")
+        # **`aim_min` が空の WAIT は、その行の `floor_min` が同じ数です**
+        # （2026-09-12 05:3x・optimizer・Opus）。`decide()` の狙い先は **どちらの枝でも
+        # `floor`** なので（`aim = floor`）、欄が無いのは「狙いが無かった」ではなく
+        # **`live >= 1` の枝が書いていなかった**だけ ＝ 同じ数が `floor_min` に在ります。
+        # ここで拾わないと、その区間の分母は GO の `floor_min`（その GO の中で
+        # `pace()` が生んだ新しい床）へ落ちます —— **22:4x が閉じた 4つ目の刻ずれ**。
+        # **GO の行は取りません**（`go` の `floor_min` は分母の落ち先そのもの）。
+        # 実測（この回・110区間）: 落ちていた区間 39 のうち **17 が `aim_min` の在る時代**で、
+        # **門を越えた窓は 7つ とも その側**。拾うと 7つ → **6つ**（09/11 21:46 の 1.279 → **1.222**）。
+        # **覆る条件**: `decide()` が WAIT の狙い先を `floor` 以外にしたら、この拾いは
+        #   別の数を混ぜます ＝ そのときは `aim_min` だけに戻すこと
+        #   （見張りは `tests/test_next_round_aim_on_live_wait.py` の 3件目）。
+        if not aim and not row.get("go"):
+            aim = row.get("floor_min")
         if aim:
             aims.append((at, float(aim)))
     starts = round_starts()
@@ -1841,6 +1855,22 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
                            if early > 0 else ""))}
     wait = target - passed
     out = {**base, "go": False, "roles": list(ROLES), "passed_min": passed,
+           # **狙い先は、どちらの枝でも `floor`**（2026-09-12 05:3x・optimizer・Opus）。
+           # 20:5x から 09/12 05:3x まで、この欄は**下の `if idle:` の中だけ**で書かれていました
+           # ＝ **起こしを置く枝（0体）にしか付かない**。`live >= 1` の WAIT は
+           # **38行 とも `aim_min` が空**で（台帳から数えた）、その区間は
+           # `gap_ratios` の分母が **GO の `floor_min` へ落ちます**。
+           # **それは 22:4x が閉じたはずの「4つ目の刻ずれ」そのもの**です ——
+           # 分子は古い床の下で待った区間・分母はその GO の中で `pace()` が生んだ新しい床。
+           # 実物（この回・`data/parent_wakes.jsonl` 110区間）: 分母が落ちた区間は **39**、
+           # うち **17 は `aim_min` が在る時代のもの**（＝ `gap_ratios` の註が言う
+           # 「`aim_min` より前の台帳」ではない）。そして **§7 (d) の門を越えた窓は
+           # 7つ とも この 17 の側**でした（1.309・1.717・1.851・1.279・1.560・2.360 ほか）
+           # ＝ **門が読む窓だけが、直したはずの分母で読まれていた。**
+           # **覆る条件**: `live >= 1` の WAIT で「狙い先」が `floor` でなくなったら
+           #   （例: 走っているサブの長さから狙いを決める枝が入ったら）、この欄もその数にすること。
+           #   数える口は `tests/test_next_round_aim_on_live_wait.py`・derivation は JOURNAL 05:3x。
+           "aim_min": floor,
            "wait_min": wait, "idle": idle, "target_min": target,
            "why": f"前の周の開始から {passed:.0f}分。あと {wait:.0f}分"}
     if idle:
@@ -1858,8 +1888,7 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
         # 狙い先が `floor - lat/2` のままだったので、**毎周きっかり `lat/2` だけ床の下**へ落ちます。
         # `floor - lat/2` は「もう届いてしまった `passed` を、出すか待つか」の**境目**であって、
         # **狙う先ではありません**（実測は `wake_latency_minutes()` の註）。
-        aim = floor
-        out["aim_min"] = aim
+        aim = floor          # 上の `out["aim_min"]` と同じ数（欄は両方の枝で書きます）
         # **台帳から算数が読めること。** `wait_min` は境目まで（もう起きている回の
         # 「あと何分」）、`wake_wait_min` は狙い先まで —— 分母が違うので、
         # `wake_min` を `wait_min` から引き算し直すと合いません（20:5x に分かれた）。
