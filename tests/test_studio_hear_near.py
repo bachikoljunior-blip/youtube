@@ -9,7 +9,11 @@
 **陽性対照**（この回に撃って落としてある）:
   - `near_spans` の `< 2` を `< 1` にすると `test_1字の誤読は門を通る` の後半 2件 が落ちる
   - `near_repeats` の `len(ii) >= 2` を `>= 1` にすると `test_散った1字差は名指ししない` が落ちる
-  - `_LOOSE` から `("へ", "え")` を外すと `test_助詞のへは畳む` が落ちる
+  - ~~`_LOOSE` から `("へ", "え")` を外すと `test_助詞のへは畳む` が落ちる~~
+    → **2026-09-11 21:2x（optimizer・Opus）に、その畳みを外しました**（`hear._particle_he` の註）。
+    畳みは**両側**に当たるので、**TTS が本当に「ヘ」と読んだ回まで消していました**。
+    予定の側（janome の 発音）で「え」を出し、聞いた側は直さない形に移してあります。
+    陽性対照は `tests/test_studio_hear_particle_he.py`（3つ を撃って落とした）
 """
 from studio.hear import diff_spans, isms_pairs, loose, near_repeats, near_spans
 
@@ -83,7 +87,13 @@ def test_同じコマの中の重なりは名指ししない():
     assert near_repeats(rows2) == [(("ぶ", "ふ"), [3, 6])]
 
 
-def test_助詞のへは畳む():
-    """「人へ」は え と読む ＝ **予定の側の誤り**。両側に当たる `loose` で畳む（実測 09/10・09/12 の コマ1）。"""
-    assert loose("ひとへ") == loose("ひとえ")
-    assert near_spans(loose("もらうひとへ"), loose("もらうひとえ")) == []
+def test_助詞のへは予定の側で直す():
+    """「人へ」は え と読む ＝ **予定の側の誤り**。
+
+    **2026-09-11 21:2x に、直す所を `loose`（両側）から予定の側（`_particle_he`）へ移した**
+    —— 両側で畳むと、**TTS が字のまま「ヘ」と読んだ回まで一致にしてしまう**（`hear._particle_he` の註）。
+    """
+    from studio.hear import expected_kana, heard_kana
+    assert expected_kana("もらう人へ", {}) == "もらうひとえ"     # 予定は音の側
+    assert heard_kana("もらうひとへ", {}) == "もらうひとへ"       # 聞いた側は字のまま
+    assert loose("ひとへ") != loose("ひとえ")                    # ＝ 鳴る（片側の問いが開いた）

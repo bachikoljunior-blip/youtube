@@ -19,7 +19,8 @@ def test_数字は直接かなにする():
 
 def test_予定の読みは文脈つき():
     # pykakasi は「人」を「にん」、「割ると」を「われると」と読んだ（実測 09/06）
-    assert hear.expected_kana("もらう人へ。", {}) == "もらうひとへ"
+    # 助詞の「へ」は janome の 発音（エ）を採る（2026-09-11 21:2x・`hear._particle_he` の註）
+    assert hear.expected_kana("もらう人へ。", {}) == "もらうひとえ"
     assert hear.expected_kana("12で割ると", {}) == "じゅうにでわると"
     # 月: 4月 → がつ・月5万円 → つき・1か月 → かげつ・毎月 → まいつき
     assert hear.expected_kana("4月", {}) == "よんがつ"

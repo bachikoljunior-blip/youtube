@@ -100,7 +100,45 @@ _SYMBOL_YOMI = {"×": "かける", "✕": "かける", "÷": "わる", "＋": "�
 # 予定の側は「後」を yomi で固定する（script.py の lint）。両側に当てると「午後」が「ごあと」になる。
 
 
-def _kana_by_janome(text: str) -> str:
+def _particle_he(reading: str, phonetic: str) -> str:
+    """助詞の「へ」だけ、janome の 発音（エ）を採る。**「は」は採らない**（下の実測）。
+
+    janome（ipadic）は 読み と 発音 を別に持ち、**表記どおりの助詞だけが割れます**:
+    助詞 は 読み ハ／発音 ワ・助詞 へ 読み ヘ／発音 エ（ほかに割れるのは 厚生 コウセイ→コーセイ 型の
+    長音表記だけで、そちらは `loose()` が両側で畳むので触らない）。
+
+    **2026-09-11 21:2x（optimizer・Opus）に、どちらを採るかを台帳から数えて分けました**
+    （API 0単位・TTS 0回。16:4x の `hourly` の申し送り「助詞だけを別の問いで撃つ」の答え）:
+
+        09/12 の本 12コマ の助詞 **18件**（は 16・では 1・へ 1）に対し、
+        20:30 の `heard` の 1字差（`near`）に出た 助詞 は **1件だけ**（コマ3 予定「は」↔ 聞いた「わ」）
+        ＝ **whisper は 助詞の「は」を 16/17 で字のまま「は」と書きます。**
+
+    ＝ **「は」の側は、音がどちらでも `は` と書かれるので、原理的に分けられません**
+    （TTS が「ハ」と読み違えても、正しく「ワ」と読んでも、聞いた側は同じ「は」）。
+    **だから予定の側を「わ」にしてはいけません** —— 1本 16件 の偽の `[?]` が増えるだけで、
+    見えるものは 1つ も増えません。
+
+    **「へ」は逆でした**: 実測 2/2 で whisper は音の側（え）を書いています
+    （09/10・09/12 の本の コマ1「もらう人へ」→「もらうひとえ」・13:2x と 16:4x の目視）。
+    ＝ **予定の側を「え」にすれば、TTS が「ヘ」と読んだ回だけが 1字差で鳴ります**（片側だけの問い）。
+    そのために `_LOOSE` の `へ→え` を外しました（**語中の「へ」（部屋→へや）は両側とも読みが「へ」なので、
+    外しても比べは壊れません** —— 割れるのは助詞の「へ」だけで、そこは予定の側が「え」になった）。
+
+    **覆る条件**: (1) 助詞の「へ」で `[?]` が 3本 続けて鳴ったら、鳴らしているのは TTS ではなく
+    **whisper が字のまま「へ」と書く回**なので、`_LOOSE` の `へ→え` を戻すこと（そのとき「へ」の側も
+    「は」と同じ「分けられない」に落ちます ＝ §2 の (b) 抑揚だけが残る）。
+    (2) 逆に `[?]` が鳴った回の音を聞いて本当に「ヘ」だったら、§2 の (1)（語を書き換える）で直し、
+    その語を §2 に書くこと（オーナー 09/11 12:4x「ひらがなも漢字もあった」の、ひらがなの側の 1例目）。
+    (3) 「は」の側は、**whisper が「わ」と書く率が 3本 続けて半分を越えたら**引き直すこと
+    （そのとき初めて「は」も片側の問いになる）。
+    """
+    if phonetic and phonetic != "*" and phonetic != reading and phonetic == reading.replace("ヘ", "エ"):
+        return phonetic
+    return reading
+
+
+def _kana_by_janome(text: str, particle_he: bool = True) -> str:
     out = []
     buf = ""
     for t in _tok.tokenize(text):
@@ -117,6 +155,8 @@ def _kana_by_janome(text: str) -> str:
         r = t.reading
         if r == "*" or not r:
             r = "".join(w["hira"] for w in _kks.convert(sf))
+        elif particle_he:
+            r = _particle_he(r, t.phonetic)
         out.append(jaconv.kata2hira(r))
     if buf:
         out.append(num_to_kana(buf.strip(".,")))
@@ -142,15 +182,20 @@ def _fold_kanji_units(text: str) -> str:
     return text
 
 
-def to_kana(text: str) -> str:
-    """字（漢字・数字・記号まじり）→ ひらがなだけ。予定側と、whisper が漢字を混ぜた聞いた側の両方に使う。"""
+def to_kana(text: str, particle_he: bool = True) -> str:
+    """字（漢字・数字・記号まじり）→ ひらがなだけ。予定側と、whisper が漢字を混ぜた聞いた側の両方に使う。
+
+    `particle_he=False` は**聞いた側だけ**（`heard_kana`）。助詞の「へ」を音（え）に直すのは
+    **予定の側の仕事**で、聞いた側に当てると **whisper が書いた「へ」まで「え」に直してしまい、
+    片側の問いが閉じます**（`_particle_he` の註）。
+    """
     text = re.sub(r"\s+", "", text)
     text = _fold_kanji_units(text)
     # whisper は「か月」を「ヶ月」「ケ月」「カ月」「箇月」と書く（09/06 14:4x: 「10ヶ月」で pykakasi が「ゖ」を出して !!）
     text = re.sub(r"[ヶケカヵ箇]月", "か月", text)
     for k, v in _SYMBOL_YOMI.items():
         text = text.replace(k, v)
-    kana = _kana_by_janome(text)
+    kana = _kana_by_janome(text, particle_he)
     kana = jaconv.kata2hira(kana)
     return re.sub(r"[^ぁ-ゖー]", "", kana)
 
@@ -211,7 +256,7 @@ def _apply_one_kanji_yomi(say: str, ones: dict[str, str]) -> str:
     return "".join(out)
 
 
-def expected_kana(say: str, yomi: dict[str, str]) -> str:
+def expected_kana(say: str, yomi: dict[str, str], particle_he: bool = True) -> str:
     ones = {k: v for k, v in yomi.items() if len(k) == 1 and _ONE_KANJI.fullmatch(k)}
     for k in sorted((k for k in yomi if k not in ones), key=len, reverse=True):
         say = say.replace(k, yomi[k])
@@ -219,7 +264,7 @@ def expected_kana(say: str, yomi: dict[str, str]) -> str:
         say = _apply_one_kanji_yomi(say, ones)   # 1字の漢字だけ、語で当てる（註）
     for a, b in _PRE:
         say = re.sub(a, b, say)
-    return to_kana(say)
+    return to_kana(say, particle_he)
 
 
 # ---------- ゆるい照合 ----------
@@ -230,9 +275,12 @@ _LOOSE = [# ゔ は小さい母音より先に（後だと ゔぃ → ゔい →
           ("ー", ""), ("っ", ""), ("を", "お"), ("づ", "ず"), ("ぢ", "じ"), ("ぉ", "お"), ("ぇ", "え"), ("ぃ", "い"),
           ("いぇ", "え"), ("やん", "えん"), ("いえん", "えん"), ("ゅう", "ゅ"), ("しち", "なな"), ("ぜろ", "れい"),
           # 助詞の「へ」は「え」と読む。**予定の側の誤り**で、聞いた側は正しく え と書いていた（実測 2026-09-11 13:2x:
-          # 09/10・09/12 の本の コマ1 が どちらも 予定 ひとへ ↔ 音 ひとえ）。loose は両側に当たるので、
-          # 語中の「へ」（部屋 → へや）も両側で同じだけ畳まれ、比べは壊れない
-          ("へ", "え")]
+          # 09/10・09/12 の本の コマ1 が どちらも 予定 ひとへ ↔ 音 ひとえ）。
+          # **2026-09-11 21:2x に、この行を外して予定の側（`_particle_he`）で直しました** ——
+          # 両側に当てる形は、**TTS が本当に「ヘ」と読んだ回まで畳んで隠します**（§2 の ひらがなの側）。
+          # 予定の側が助詞の「へ」を「え」にしたので、語中の「へ」（部屋 → へや）は両側とも「へ」のまま揃います。
+          # **戻す条件は `_particle_he` の註の (1)。**
+          ]
 # whisper が決まって書き違える語（音は正しい。実測 09/06 で 22コマ中 8コマ）。聞いた側だけに当てる
 _WHISPER_ISMS = [("めんきん", "ねんきん"), ("れんきん", "ねんきん"), ("でんきん", "ねんきん"),
                  ("ねんきぃ", "ねんきん"), ("ねんきい", "ねんきん"),
@@ -273,7 +321,7 @@ def heard_kana(heard: str, yomi: dict[str, str]) -> str:
     heard = _TIMES_X.sub("ばい", heard)
     heard = _RANGE.sub(_range_sub, heard)
     heard = _BROKEN_GROUP.sub(lambda m: m.group(1) + "," + m.group(2).ljust(3, "0"), heard)
-    k = expected_kana(heard, yomi)   # whisper が漢字を混ぜても同じ道で仮名にする
+    k = expected_kana(heard, yomi, particle_he=False)   # whisper が漢字を混ぜても同じ道で仮名にする（助詞の「へ」だけは直さない・`_particle_he` の註）
     for a, b in _WHISPER_ISMS:
         k = k.replace(a, b)
     k = _MANEN.sub("まんえん", k)
