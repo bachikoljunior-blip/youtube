@@ -1097,6 +1097,31 @@ def fable_rate(now: datetime | None = None,
             "all_rate": carry}
 
 
+def fable_rolled(fe: dict | None) -> bool:
+    """**「Fable のみ」の枠が戻っているか**（門は 1か所・2026-09-11 20:5x・optimizer・Opus）。
+
+    `fable_estimate()` の返りを渡すこと。戻っていれば `est` は **前の枠の目盛りのまま**
+    （`fable_estimate` の註）で、**いまの枠の使用量ではありません** ——
+    そこを読み違えると、枠が戻った直後の周に「**Fable のみ もう 100%**」と出ます。
+
+    **この述語を、読む側で書き直さないこと。** 2026-09-11 20:5x まで、これは
+    `sub_model()` の中に literal で 1つ だけ在り、**親の【枠】の段は持っていませんでした** ——
+    そのため同じ段が「Fable のみ **もう 100%**（＝ 尽きた）」と
+    「この周は hourly **fable**」（＝ 使える）を**同じ行に並べて**印字する形でした
+    （`spawn_prompt._quota_block()` の註・JOURNAL 2026-09-11 20:5x）。
+    §5 教訓の形 7つ目（覆る条件を註に書いたら、その条件を読む印字も一緒に作ること）の当のもの
+    —— §5 の模型の段の**覆る条件 (4)**（「リセットで Fable が戻り `hourly` が fable で
+    立つ周に戻ったら、役ごとの形がそのまま効く」）には、**それを読む印字が 1つも
+    ありませんでした。**
+
+    **覆る条件**: (1) `fable_estimate` が戻った枠で `est` を **0%** から数え直すように
+    変わったら（＝ `rate_source` に `"reset"` が要らなくなったら）、この述語も一緒に外すこと。
+    (2) 枠の戻りを `fable_ration()["rolled"]` からも読む回が出たら、**2つ を並べず**
+    どちらか 1つ に寄せること（いまは `fable_estimate` の側が正本 ＝ `sub_model` が読む側）。
+    """
+    return bool(fe) and fe.get("rate_source") == "reset"
+
+
 def fable_estimate(now: datetime | None = None,
                    gauge: dict | None = None) -> dict | None:
     """**「Fable のみ」の、いまの推定と、100% に届く時刻。**
@@ -1354,10 +1379,16 @@ def fable_ration(now: datetime | None = None,
     opus で立てた周は Fable を 1%も 食わないのに、時間の側は進み続けるため）。
     1体ぶんは `fable_cost_per_sub()`（同じ枠の2点の実測）、測れなければ `FABLE_PER_SUB_FALLBACK`。
 
-    返り: `{"line", "est", "over", "start", "resets", "elapsed_h", "left_h", "per_sub",
-    "subs_since", "gauge"}`。目盛りが無い／`resets` が無い／枠が戻っている回は **None**
-    （＝ この門は何も言わない。枠が戻った回の「fable へ戻す」は `sub_model` / 
-    `next_round_owner.corrected_sub_model` の `reset` の枝が先に当たります）。
+    返り: `{"line", "est", "over", "start", "resets", "rolled", "elapsed_h", "left_h",
+    "per_sub", "subs_since", "gauge"}`。**None は 2つ の場合だけ** ——
+    目盛りが無い／`resets` が無い。
+
+    **枠が戻っている回も、この線は答えます**（`rolled: True`・下の while の註）。
+    2026-09-11 20:5x まで、この行には「枠が戻っている回は **None**」と書いてありました ——
+    **コードと逆**で、同じ回に書かれた §5 の決め（「枠が戻った回も同じ線が答えます」）とも、
+    検査 `test_リセットされたら_fable_に戻る_かつ配りも始まる` とも食い違っていました。
+    `sub_model` / `next_round_owner.corrected_sub_model` の `reset` の枝は、
+    **この線を飛ばすのではなく `role_model(..., ration=...)` へ渡します**（`sub_model` の註）。
 
     **覆る条件**:
     (1) オーナーが「枠を余らせるな・使い切れ」と言い直したら、この線は捨てて崖の門へ戻すこと
@@ -1981,7 +2012,7 @@ def sub_model(now: datetime | None = None, role: str | None = None) -> tuple[str
     if not fe:
         return "fable", "「Fable のみ」の目盛りがまだ無い（画面が来たら --fable で積むこと）"
     g = fe["gauge"]
-    if fe["rate_source"] == "reset":
+    if fable_rolled(fe):
         # **戻った回も、役の段と配りの線を通すこと**（`fable_ration()` の註・2026-09-11 19:5x）。
         # ここで素の `"fable"` を返すと、**リセット直後の数時間が配り無しで走ります**
         # ——直線は前へ出たぶんを取り返させないので、そこで出た差はその枠のあいだ残ります。
