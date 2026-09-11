@@ -1306,12 +1306,133 @@ def fable_cost_per_sub(now: datetime | None = None) -> float | None:
     return max(0.0, (float(fr["to_pct"]) - float(fr["from_pct"])) / births)
 
 
-def role_model(model: str, why: str, est_pct: float | None, role: str | None) -> tuple[str, str]:
-    """**枠の門を通った (model, why) に、役の段と予備の線を重ねる。**
+#: **週枠の長さ**（画面の `resets` は 7日 間隔・実測 `data/usage.jsonl`:
+#: 09/04 22:00Z → 09/11 22:00Z）。`fable_ration()` の線の分母。
+FABLE_WINDOW_HOURS = 168.0
+
+#: **Fable のサブ 1体 が「Fable のみ」の目盛りを何%進めるか**（実測 2026-09-07 08:1x:
+#: 09/06 16:41→09/07 08:04 に fable 14体 で +13 ＝ **0.93%/体**・`ROLE_TIER` の註）。
+#: `fable_cost_per_sub()` が同じ枠の2点から測れた回はそちらが正本で、これは測れない回の既定。
+FABLE_PER_SUB_FALLBACK = 0.93
+
+
+def fable_ration(now: datetime | None = None,
+                 gauge: dict | None = None) -> dict | None:
+    """**Fable を枠の終わりまで持たせる線**（2026-09-11 19:5x・optimizer・Opus）。
+
+    オーナー原文（受け取り帳 `c2d075b2` 2026-09-11 19:4x・`06fec2ad` 19:4x・一字も変えない）:
+
+    > **「リセットされたらfableにするよな？フェイブルずっと使えるように調整するよな？」**
+    > **「ずっと使えるように調整すんの？」**
+
+    同じ問いは **09/03 07:3x** に既に在りました（`CLAUDE.md` 冒頭）——
+    > **「Fableのみは100％到達になって使えなくなるようにならないほうが良くない？」**
+
+    **それが 2枠 続けて守れていません**（実測 `data/usage.jsonl`。この関数はそのために在る）::
+
+        枠 09/05 07:00 → 09/12 07:00 JST（168時間）
+          09/05 16:19  Fable 16%（線 5.5%）    09/09 21:13  Fable 70%（線 65.6%）
+          09/06 16:41       28 （線 20.1）     09/10 17:24       86 （線 77.6）
+          09/07 08:04       41 （線 29.2）     09/11 12:38      100 （線 89.0）← 尽きた
+          09/08 12:40       48 （線 46.2）
+          09/09 07:08       59 （線 57.2）
+        ＝ **9点 とも線の上**・**リセットの 18.4時間 前（枠の 10.9%）に 100%**
+        前の枠（→ 09/05 07:00）も 09/04 15:40 に 100% ＝ **2枠 続けて**
+
+    **なぜ既存の門では止まらないか**: `FABLE_CAP_PCT`（100%）も `FABLE_RESERVE_PCT`（90%）も
+    `fable_cost_per_sub` の「1体ぶんを足すと越えるか」も、**全部 崖の手前で止める門**です。
+    崖で止めれば「落ちない」だけで、**崖に着く時刻は早いまま** ＝ その後ずっと Fable は使えません。
+    オーナーが言っているのは崖ではなく **配り方**（「ずっと使えるように**調整**」）。
+
+    **線の形は `pace()` と同じ**: `pace()` は「すべて」を **残り% ÷ 残り時間** で配ります。
+    ここは「Fable のみ」を **枠の頭から終わりまでの直線**で配る ——
+    いま許されるのは `100% × 経過 ÷ 168時間` まで。**推定がその線の上なら、その周は opus。**
+    ＝ Fable は枠のどの時刻にも残っており、**尽きる時刻はリセットと同じ**になります。
+
+    **推定は時間ではなく「立てた fable のサブの数」で運びます**（`pace()` の 2026-09-06 の決めと
+    同じ形 —— 枠を食うのは周であって時間ではない。しかも**配り始めると時間で運ぶ推定は必ず外れます**:
+    opus で立てた周は Fable を 1%も 食わないのに、時間の側は進み続けるため）。
+    1体ぶんは `fable_cost_per_sub()`（同じ枠の2点の実測）、測れなければ `FABLE_PER_SUB_FALLBACK`。
+
+    返り: `{"line", "est", "over", "start", "resets", "elapsed_h", "left_h", "per_sub",
+    "subs_since", "gauge"}`。目盛りが無い／`resets` が無い／枠が戻っている回は **None**
+    （＝ この門は何も言わない。枠が戻った回の「fable へ戻す」は `sub_model` / 
+    `next_round_owner.corrected_sub_model` の `reset` の枝が先に当たります）。
+
+    **覆る条件**:
+    (1) オーナーが「枠を余らせるな・使い切れ」と言い直したら、この線は捨てて崖の門へ戻すこと
+        （**その言葉が正本**）。いまの原文は逆（「ずっと使える」）。
+    (2) 次の枠のリセット時に「Fable のみ」が **90% に届かなかったら**、線が締めすぎ ＝
+        分母を「残り時間」側（`100 - est` を `left_h` で割る形）へ変えること
+        —— 直線は**過去の使いすぎを取り返させない**ので、早い時期に外れた枠では余ります。
+    (3) 逆に、線を入れてもリセットの **6時間 以上 前**に 100% に届いた枠が出たら、
+        運びの側（`per_sub`・`_subs_from_choices` の数え落とし）を疑うこと。
+    (4) `FABLE_WINDOW_HOURS`（168時間）は画面の `resets` の間隔の実測です ——
+        間隔が変わった枠が 1つ でも出たら、定数ではなく **1つ前の `resets` との差**で数えること。
+    (5) 「すべて」の着地（`pace()` の `landing`）が、この配りで **98% を切る**回が
+        3周 続いたら、opus 側の 1体の重さ（0.41%）では「すべて」を埋められない ＝
+        そのときは役を1つ足す側（§5 の覆る条件）へ回すこと。
+    """
+    now = now or datetime.now(timezone.utc)
+    g = fable_gauge() if gauge is None else gauge
+    if not g or not g.get("at") or not g.get("resets"):
+        return None
+    resets = g["resets"]
+    # **枠が戻った回も、この線は答えます**（2026-09-11 19:5x に足した当のもの）——
+    # 新しい枠の頭は前の `resets` そのもので、そこでの「Fable のみ」は **0%**、
+    # そこから立てた fable のサブは `data/model_choice.jsonl` に残っています。
+    # ＝ **新しい画面を待たずに配りを始められます。** 待つ形だと、オーナーの
+    # 「リセットされたら fable にするよな？」の直後の数時間が**配り無しで走り**、
+    # そこで前へ出たぶんは直線では取り返せません（覆る条件 (2)）。
+    rolled = False
+    while resets <= now:
+        resets = resets + timedelta(hours=FABLE_WINDOW_HOURS)
+        rolled = True
+    start = resets - timedelta(hours=FABLE_WINDOW_HOURS)
+    base_pct = 0.0 if rolled else float(g["pct"])
+    since = start if rolled else g["at"]
+    elapsed_h = max(0.0, (now - start).total_seconds() / 3600)
+    left_h = max(0.0, (resets - now).total_seconds() / 3600)
+    line = max(0.0, min(100.0, 100.0 * elapsed_h / FABLE_WINDOW_HOURS))
+    per_sub = fable_cost_per_sub()
+    if per_sub is None or per_sub <= 0:
+        per_sub = FABLE_PER_SUB_FALLBACK
+    subs = _subs_from_choices(since, now, model="fable")
+    est = min(100.0, base_pct + subs * per_sub)
+    return {"line": line, "est": est, "over": est > line,
+            "start": start, "resets": resets, "rolled": rolled,
+            "elapsed_h": elapsed_h, "left_h": left_h,
+            "per_sub": per_sub, "subs_since": subs, "gauge": g}
+
+
+def fable_ration_words(r: dict | None) -> str:
+    """`fable_ration()` を1行にする（印字は 1か所・§5 教訓の形 7つ目）。"""
+    if not r:
+        return ""
+    verdict = "**線の上 → この周は Opus**" if r["over"] else "線の下 → Fable"
+    head = ("**枠は戻っています**（新しい枠の頭 0% から数え直し・画面を待たない）" if r.get("rolled")
+            else f"目盛り {r['gauge']['pct']:.0f}%")
+    return (f"配りの線 {r['line']:.1f}%（枠の {r['elapsed_h']:.0f}/{FABLE_WINDOW_HOURS:.0f}時間）"
+            f"対 いま推定 {r['est']:.1f}%"
+            f"（{head} ＋ fable {r['subs_since']}体 × {r['per_sub']:.2f}%）"
+            f" ＝ {verdict}"
+            f"（**Fable を枠の終わりまで持たせる** ＝ オーナー 09/11 19:4x・09/03 07:3x・"
+            f"`quota.fable_ration`）")
+
+
+def role_model(model: str, why: str, est_pct: float | None, role: str | None,
+               ration: dict | None = None) -> tuple[str, str]:
+    """**枠の門を通った (model, why) に、役の段と予備の線と配りの線を重ねる。**
 
     `model` が既に `opus`（100% 到達）なら触らない。`fable` で、役が `routine` で、
     推定が `FABLE_RESERVE_PCT` 以上なら Opus へ倒し、理由に1行 足す。
     役が無い呼び（古い呼び方）は今までどおり。
+
+    **`ration`（2026-09-11 19:5x・optimizer・Opus）** は `fable_ration()` の返り。
+    **呼ぶ側が渡すこと** —— ここで `fable_ration()` を呼ぶと、呼ぶ側が差し替えた目盛りと
+    **別の目盛り**（実物の `data/usage.jsonl`）を読むので、**同じ問いに 2つ の答え**が出ます
+    （§5 教訓の形 1つ目の族。この回に 1度 踏み、検査 5件 が赤くなって気づいた）。
+    `None` なら配りの線は当てません（役の段と予備の線だけ ＝ 前の形）。
     """
     tier = ROLE_TIER.get(role or "", None)
     if tier == "light":
@@ -1330,7 +1451,15 @@ def role_model(model: str, why: str, est_pct: float | None, role: str | None) ->
                 return "opus", (f"{why}。役 `{role}` は高レバレッジ側だが、1体ぶん ≈ {per_sub:.1f}% を"
                                 f"足すと {est_pct + per_sub:.0f}% ≧ {FABLE_CAP_PCT:.0f}% → "
                                 "**Opus**（100% を越えて落とさない）")
+            # **崖の門の手前に、配りの線を置く**（`fable_ration()` の註・2026-09-11 19:5x）。
+            # 上の 2つ は**崖で止める**門なので、崖に着く時刻は早いまま ＝ 着いたあとの
+            # 18.4時間 は Fable が 1度も使えません（実測 2枠 続けて）。オーナー 09/11 19:4x
+            # 「フェイブルずっと使えるように調整するよな？」の当のもの。**門は 1か所**（§5 教訓の形 7つ目）。
+            if ration and ration["over"]:
+                return "opus", f"{why}。{fable_ration_words(ration)}"
             why = f"{why}。役 `{role}` は高レバレッジ側（`quota.ROLE_TIER`）→ 100% の手前まで Fable"
+            if ration:
+                why = f"{why}。{fable_ration_words(ration)}"
         return model, why
     if est_pct >= FABLE_RESERVE_PCT:
         return "opus", (f"{why}。**ただし役 `{role}` は定型側**（`quota.ROLE_TIER`・"
@@ -1853,7 +1982,14 @@ def sub_model(now: datetime | None = None, role: str | None = None) -> tuple[str
         return "fable", "「Fable のみ」の目盛りがまだ無い（画面が来たら --fable で積むこと）"
     g = fe["gauge"]
     if fe["rate_source"] == "reset":
-        return "fable", f"「Fable のみ」の枠は {g['resets'].astimezone(JST):%m/%d %H:%M} JST に戻った（目盛り {g['pct']:.0f}% は前の枠）"
+        # **戻った回も、役の段と配りの線を通すこと**（`fable_ration()` の註・2026-09-11 19:5x）。
+        # ここで素の `"fable"` を返すと、**リセット直後の数時間が配り無しで走ります**
+        # ——直線は前へ出たぶんを取り返させないので、そこで出た差はその枠のあいだ残ります。
+        return role_model(
+            "fable",
+            f"「Fable のみ」の枠は {g['resets'].astimezone(JST):%m/%d %H:%M} JST に戻った"
+            f"（目盛り {g['pct']:.0f}% は前の枠 ＝ **新しい枠は 0% から**）",
+            0.0, role, fable_ration(now, gauge=g))
     head = f"「Fable のみ」 {g['pct']:.0f}%（{g['at'].astimezone(JST):%m/%d %H:%M} JST）"
     ex = fe["exhaust_at"]
     ex_words = f"・100% は {ex.astimezone(JST):%m/%d %H:%M} JST" if ex else ""
@@ -1862,7 +1998,7 @@ def sub_model(now: datetime | None = None, role: str | None = None) -> tuple[str
                         f"（{_fable_rate_words(fe)}{ex_words}。**新しい画面が来るまで Opus**）")
     return role_model("fable", (f"{head} → いま推定 {fe['est']:.0f}% ＜ 上限 {FABLE_CAP_PCT:.0f}%"
                                 f"（{_fable_rate_words(fe)}{ex_words}）"),
-                      float(fe["est"]), role)
+                      float(fe["est"]), role, fable_ration(now, gauge=g))
 
 
 #: `reach_at_reset()` が「床に従って回った」と見なすときに、1周ごとに床の上へ
@@ -2498,6 +2634,15 @@ def pace_report(now: datetime | None = None) -> None:
     for _role in sub_roles():
         _m, _why = sub_model(now, _role)
         print(f"    サブの模型（役 `{_role}`）: **{_m}**（{_why}）")
+    # **Fable の配り**（`fable_ration()` の註・2026-09-11 19:5x。オーナー 19:4x
+    # 「フェイブルずっと使えるように調整するよな？」）—— 崖の門に着いた回は上の `why` が
+    # 配りに触れないので、**この 1行 は役の行と別に、毎周 出します。**
+    _r = fable_ration(now)
+    if _r:
+        print(f"    **Fable の配り**: {fable_ration_words(_r)}")
+        print(f"      ＝ この線に従えば「Fable のみ」が 100% に着くのは "
+              f"**リセット（{_r['resets'].astimezone(JST):%m/%d %H:%M} JST）と同じ刻**。"
+              f"実測の 2枠 は **18.4時間 前**（この枠）と **15.3時間 前**（前の枠）に尽きています")
     if p.get("rate_cap") is not None:
         mx = p.get("rate_max") or {}
         print(f"    オーナーの上限: **{p['rate_cap']:.3f} %/時**"

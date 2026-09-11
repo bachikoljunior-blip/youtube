@@ -54,11 +54,16 @@ def corrected_sub_model(now: datetime | None = None,
 
     reset_at = gauge.get("resets")
     if reset_at and reset_at <= now:
-        return (
+        # **戻った回も、役の段（`ROLE_TIER`）と配りの線（`quota.fable_ration`）を通す。**
+        # 2026-09-11 19:5x・optimizer・Opus。オーナー 19:4x「リセットされたら fable にするよな？
+        # フェイブルずっと使えるように調整するよな？」——**前半（fable へ戻す）はこの枝が答え、
+        # 後半（ずっと使える）は `role_model` の中の線が答えます。** 素の `"fable"` を返すと
+        # 後半が効かず、**新しい画面が来るまでの数時間だけ配り無し**で走ります。
+        return quota.role_model(
             "fable",
             f"『Fable のみ』は {reset_at.astimezone(quota.JST):%m/%d %H:%M} JST に戻った"
-            "（前の目盛りは切替判定に使わない）",
-        )
+            "（前の目盛りは切替判定に使わない ＝ **新しい枠は 0% から**）",
+            0.0, role, quota.fable_ration(now, gauge=gauge))
 
     pct = float(gauge.get("pct", 0.0))
     seen = gauge["at"].astimezone(quota.JST)
@@ -94,6 +99,8 @@ def corrected_sub_model(now: datetime | None = None,
         f"＜ 内訳上限{FABLE_ONLY_GAUGE_FULL_PCT:.0f}%"
         "（100%が通常の全モデル週間上限の50%分。50%では止めない）" + tail,
         max(pct, est_pct), role,
+        # **配りの線は、この呼びが読んだ目盛りから作ること**（`quota.role_model` の註）
+        quota.fable_ration(now, gauge=gauge),
     )
 
 

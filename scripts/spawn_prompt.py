@@ -576,6 +576,28 @@ def _standing_models() -> str:
     return "・".join(out)
 
 
+def _fable_ration_words() -> str:
+    """**Fable の配りの 1行**（`quota.fable_ration` / `fable_ration_words`）。読めなければ空。
+
+    2026-09-11 19:5x・optimizer・Opus。オーナー原文（受け取り帳 `c2d075b2`・`06fec2ad`）:
+    「リセットされたらfableにするよな？フェイブルずっと使えるように調整するよな？」
+
+    **この段は線を引き直しません** —— 道具が印字した字をそのまま運びます
+    （§5 教訓の形 7つ目「覆る条件を註に書いたら、その条件を読む印字も一緒に作ること」。
+    註と印字が食い違えば、**読まれるのは印字のほう**）。
+    `_quota_mod()` から引くのは `_short_lines()` と同じ理由（検査が差し替えた `quota` を見るため）。
+    """
+    q = _quota_mod()
+    fn = getattr(q, "fable_ration", None)
+    words = getattr(q, "fable_ration_words", None)
+    if not callable(fn) or not callable(words):
+        return ""
+    try:
+        return words(fn()) or ""
+    except Exception:                                          # noqa: BLE001
+        return ""
+
+
 def _short_lines(reach_floor: float | None, p: dict) -> list[str]:
     """**「短く終わってよいか」の判定は、`quota.short_words()` の1行をそのまま運ぶ**
     （2026-09-11 17:0x・optimizer・Opus。**API 0単位**）。
@@ -779,6 +801,12 @@ def _quota_block() -> str:
                 f" → そこから `hourly` も opus（`quota.ROLE_TIER`）")
         elif land.get("fable") is not None:
             lines.append(f"    Fable のみ  床に従うと リセット時 **{land['fable']:.0f}%**（尽きない）")
+        # **Fable の配り**（`quota.fable_ration` の註・2026-09-11 19:5x。オーナー 19:4x
+        # 「フェイブルずっと使えるように調整するよな？」）。**判定は道具の 1行 をそのまま運ぶ**
+        # ——この段で線を引き直さないこと（§5 教訓の形 7つ目・`_short_lines()` の註と同じ形）。
+        ration_words = _fable_ration_words()
+        if ration_words:
+            lines.append(f"    Fable の配り  {ration_words}")
         lines += [
             "    **目盛りは 2つ・絞り（床）は 1つ** —— 床は「すべて」の残りから引かれるので、"
             "Fable の着地は床では選べません（`quota.landing()` の註・METHOD §5）。",
