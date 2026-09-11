@@ -159,10 +159,73 @@ _QUOTE_DROP = re.compile(r"[\s\*＊。、，,\.]")
 # (5) 10字 の門で本物を落とした回が 1度でも出たら、下げること（いま本物の最短は 11字）。
 _QUOTE_MIN = 10
 
+# **鳴った行の「札」を分ける印**（2026-09-12 00:0x・optimizer・Opus。§14 の申し送り
+# 「直す先は**印字の側**でもよい」）。**門は動かしません** —— 鳴る件数は 1件も変わらず、
+# 変わるのは**その行が何と言うか**だけです。
+#
+# **なぜ印字の側か**（数）: いま鳴る 9件 は**全部 作業の記録**（09/06 2・09/07 4・09/11 3）で、
+# 本物は 0件 です。`_QUOTE_MIN` の註の覆る条件 (4) は「記録が 3本 続けて鳴ったら、記録を書く所を
+# 見出しで分けるか、門ごと外す」と書いていますが、**どちらも高い**:
+#   ・門ごと外す → この門は実物で**本物を 6件** 拾っています（09/11 コマ8 の 1件 ＋ 09/12 の 5件）
+#   ・notes の書き方を分ける → 7本 の notes を書き直す（`hourly` の持ち場に手が入る）
+# **いま高いのは「読む側が 記録 を本物と読んで、記録を消す向きに直す」こと**（§14 の申し送りの字）で、
+# それは**札を変えるだけで消えます**（値段 0）。
+#
+# **述語（実物 15件 に当てて決めた・API 0単位）**:
+#   写しの印  `＝ 声の` が左に在る（`・` で継いだ鎖も同じ ＝ 前の引用から継がれた側）
+#             → **本物の 6件 のうち 5件** がこの形。記録の 9件 は **0件**
+#   記録の印  引用のすぐ右／左に、書き直しを言う語が在る（下の 2つ の表。
+#             **`・` で継いだ鎖も同じ** —— 印は 1つ目の左に在り、長い引用を跨ぐと 24字 から外れます）
+#             → **記録の 9件 とも当たり**。本物の 6件 は **0件**
+# **順は 写し → 記録 → どちらでもない**。写しの印が在る行は、記録の語が在っても強い札のまま
+# （写しの印が付くのは「＝ 声の …」＝ notes が声を引いている所そのものだから）。
+# **本物 6件 のうち 2件**（09/12 の コマ11・コマ5）は写しの印を持たず、**いまと同じ札**のまま出ます
+# ＝ **この直しで弱くなる行は 1件もありません**（弱い札が付くのは 記録 の 9件 だけ）。
+#
+# 覆る条件:
+#   (6) 写しの印（`＝ 声の`）を持つ行が**記録**だった回が 1度でも出たら、この 2つ の印は分けられない
+#       ＝ 札を 1つ に戻すこと（そのときは `_QUOTE_MIN` の (4) の「記録を書く所を分ける」側へ）。
+#   (7) 記録の印を持つ行が**本物**だった回が 1度でも出たら、その語を下の表から外すこと
+#       （表は「書き直しを言う語」だけ ＝ 出どころや式を言う語を入れないこと）。
+#   (8) `＝ 声の` の形を使わない notes の書き方に変わったら、写しの印は空振り ＝ その回が外すこと
+#       （(1) と同じ日に引かれます）。
+_QUOTE_COPY_MARK = "声の"          # 左 14字 以内（`＝ 声の コマ6「…」` の形）
+_QUOTE_COPY_CHAIN = "・"           # 直前の引用から `・` で継がれた側も写し
+# 書き直しを言う語（**右**。引用のすぐ後ろ 8字 以内）
+_QUOTE_REC_RIGHT = ("→", "だった", "落とした", "捨てた", "外した", "戻した")
+# 同じ語（**左**。引用のすぐ前 24字 以内）—— 記録は「…を落とした: コマ2「…」」の向きでも書かれる
+_QUOTE_REC_LEFT = ("→", "直し:", "直し：", "直した", "落とした", "捨てた", "収めるため", "のままだと")
+
 
 def _quote_norm(s: str) -> str:
     """引き写しの照合用: 空白・`*`・句読点を落とす（`hear.loose()` と同じ考え方）。"""
     return _QUOTE_DROP.sub("", s)
+
+
+def _quote_kind(notes: str, start: int, end: int, prev_end: int, prev_kind: str) -> str:
+    """鳴った引用が「写し」か「作業の記録」か（**札を選ぶだけ。門は動かさない**・上の註）。
+
+    返すもの: `"copy"`（写し ＝ 声に合わせる）／`"record"`（作業の記録かもしれない）／`""`（どちらでもない）。
+    `prev_end`/`prev_kind` は**同じ notes の 1つ前の引用**（`・` の鎖を継ぐため）。
+    """
+    left = notes[max(0, start - 24):start]
+    right = notes[end:end + 8]
+    # (1) 写しの印 —— 左 14字 に `＝ 声の`、または 1つ前の写しから `・` で継がれた側
+    if _QUOTE_COPY_MARK in notes[max(0, start - 14):start]:
+        return "copy"
+    chained = (prev_end is not None
+               and _QUOTE_COPY_CHAIN in notes[prev_end:start]
+               and not notes[prev_end:start].strip("・ 　"))
+    if prev_kind == "copy" and chained:
+        return "copy"
+    # (2) 記録の印 —— 書き直しを言う語が、すぐ右か左に在る
+    if any(w in right for w in _QUOTE_REC_RIGHT) or any(w in left for w in _QUOTE_REC_LEFT):
+        return "record"
+    # (3) 記録の鎖 —— `捨てた: コマ2「…」・コマ3「…」` の 2つ目（印は 1つ目の左に在り、
+    #     長い引用を跨ぐと左 24字 から外れます。**鎖は写しと同じ形で継ぎます**）
+    if prev_kind == "record" and chained:
+        return "record"
+    return ""
 
 
 def stale_note_quotes(notes: str, says: list[str]) -> list[str]:
@@ -181,14 +244,21 @@ def stale_note_quotes(notes: str, says: list[str]) -> list[str]:
           ＝ そのときは**声を直す側**の印字にする（いまは写しが従で、声が主）。
       (3) `description` の側にも同じ形の写しが出たら、対象を広げる
           （2026-09-11 時点の実測: description に コマ引用は 0件）。
+
+    **札は 3つ に分かれます**（2026-09-12 00:0x・optimizer・Opus。`_QUOTE_COPY_MARK` の註）——
+    **鳴る件数は 1件も変わりません**。覆る条件 (6)(7)(8) もそこ。
     """
     out: list[str] = []
+    prev_end: int | None = None
+    prev_kind = ""
     for m in _NOTE_QUOTE.finditer(notes or ""):
         n = int(m.group(1).translate(str.maketrans("０１２３４５６７８９", "0123456789")))
         quote = m.group(2)
         flat = _quote_norm(quote).replace("…", "")
         if len(flat) < _QUOTE_MIN or flat.endswith("か"):
             continue      # (a) 短い断片 / (b) 問いの札（`_QUOTE_MIN` の註）
+        kind = _quote_kind(notes or "", m.start(), m.end(), prev_end, prev_kind)
+        prev_end, prev_kind = m.end(), kind
         if not 1 <= n <= len(says):
             out.append(f"notes の「コマ{n}「{quote[:14]}…」」は、この本に無いコマを指している"
                        f"（コマは 1〜{len(says)}）")
@@ -196,9 +266,20 @@ def stale_note_quotes(notes: str, says: list[str]) -> list[str]:
         say = _quote_norm(says[n - 1])
         missing = [p for p in quote.split("…") if _quote_norm(p) and _quote_norm(p) not in say]
         if missing:
-            out.append(f"notes の「コマ{n}「{quote[:20]}…」」が、いまの コマ{n} の声に在りません"
-                       f"（声を直した回が写しを置いていった側 ＝ 写しを声に合わせる。"
-                       f"外れた所: {'／'.join(x[:14] for x in missing)}）")
+            where = f"外れた所: {'／'.join(x[:14] for x in missing)}"
+            if kind == "record":
+                # **書き直しの記録らしい行** —— 直す先は notes ではありません。
+                # ここを「古い写し」と読んで消すと、**何をどう直したかの記録が消えます**。
+                out.append(f"notes の「コマ{n}「{quote[:20]}…」」は、いまの コマ{n} の声に在りません"
+                           f"（**すぐ前後に書き直しの語が在る ＝ 作業の記録らしい**。"
+                           f"記録なら、そのままでよい —— 消さないこと。{where}）")
+            elif kind == "copy":
+                out.append(f"notes の「コマ{n}「{quote[:20]}…」」が、いまの コマ{n} の声に在りません"
+                           f"（**`＝ 声の` の写し ＝ 写しを声に合わせる**。"
+                           f"声を直した回が写しを置いていった側。{where}）")
+            else:
+                out.append(f"notes の「コマ{n}「{quote[:20]}…」」が、いまの コマ{n} の声に在りません"
+                           f"（声を直した回が写しを置いていった側 ＝ 写しを声に合わせる。{where}）")
     return out
 
 # 輪の指紋の**作り方**の版（`Script.loop_sig`）。**作り方を変えたら必ず上げること** ——
