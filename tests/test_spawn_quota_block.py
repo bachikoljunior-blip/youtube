@@ -275,7 +275,15 @@ def test_positive_control_頭の行の門は実在する(monkeypatch):
 # derivation と覆る条件は `spawn_prompt._quota_block` の註（16:3x）。
 
 def _stub_fable(monkeypatch, est: float, spent: float | None,
-                models: dict | None = None, cap: float = 100.0):
+                models: dict | None = None, cap: float = 100.0,
+                rolled: bool = False, ration_est: float = 0.0):
+    """**`rolled` は「枠が戻った回」**（2026-09-11 20:5x・optimizer・Opus が足した）。
+
+    戻った枠では `fable_estimate()["est"]` は**前の枠の目盛りのまま**（100%）で、
+    いまの枠の使用量は `fable_ration()["est"]`（0% から数え直し）です
+    —— `quota.fable_rolled` / `quota.fable_estimate` の註。
+    `rolled=False` の呼びは前と同じ物を返します（**古い検査を動かさない**）。
+    """
     import datetime as _dt
     import sys
     import types
@@ -293,6 +301,13 @@ def _stub_fable(monkeypatch, est: float, spent: float | None,
                                    "fable_spent_h_before_reset": spent, "laps": 23}
     mod.JST = jst
     mod.FABLE_CAP_PCT = cap
+    mod.fable_rolled = lambda fe: rolled
+    mod.fable_ration = lambda *a, **k: {
+        "line": 0.1, "est": ration_est, "over": ration_est > 0.1, "rolled": rolled,
+        "start": reset, "resets": reset + timedelta(hours=168),
+        "elapsed_h": 1.0, "left_h": 167.0, "per_sub": 0.93, "subs_since": 0,
+        "gauge": {"pct": 100.0}}
+    mod.fable_ration_words = lambda r: "配りの線 0.1% 対 いま推定 0.0% ＝ 線の下 → Fable" if r else ""
     if models is not None:
         mod.sub_roles = lambda: tuple(models)
         mod.sub_model = lambda now=None, role=None: (models[role], "理由")
@@ -318,11 +333,61 @@ def test_立った模型を役ごとに名前で出すこと(monkeypatch):
     assert "§5 10:3x" in got, got
 
 
-def test_Fableが戻った枠では役ごとの形がそのまま出ること(monkeypatch):
-    """**覆る条件 (2)**: 並びが割れたら、§5 15:1x の役ごとの形がそのまま効く。"""
+def test_並びが割れた回は役ごとの形がそのまま出ること(monkeypatch):
+    """**覆る条件 (2)**: 並びが割れたら、§5 15:1x の役ごとの形がそのまま効く。
+
+    **この検査は「枠が戻った回」ではありません**（2026-09-11 20:5x に名を直した）——
+    目盛りは 100% のまま ＝ **尽きた枠**で並びだけが割れた形です。
+    前の名（`test_Fableが戻った枠では…`）は**戻った枠を見ていると読めて**、
+    そのせいで「**もう 100%**」と「この周は hourly **fable**」を同じ段が並べる形が
+    **緑のまま 1周 通りました**（§5 教訓の形 4つ目 ——「検査は緑で、実物の形だけが抜けていた」）。
+    戻った枠は下の `test_戻った枠では前の枠の目盛りを運ばないこと` が見ます。
+    """
     _stub_fable(monkeypatch, est=100.0, spent=14.0,
                 models={"hourly": "fable", "optimizer": "opus"})
     assert "この周は hourly fable・optimizer opus" in sp._quota_block()
+
+
+# ---- 戻った枠に、尽きた枠の話を渡さないこと（2026-09-11 20:5x・optimizer・Opus）
+# **踏んだ形**: リセット（09/12 07:00 JST）の後、`fable_estimate()` は
+# `est = 前の枠の目盛り`（= 100%）を返し続けます（`rate_source: "reset"`・関数の註）。
+# `sub_model` はその枝で **0%** を渡し直すので模型は正しく `fable` に戻るのに、
+# この段は `fe["est"]` を素で運んでいたため
+# 「Fable のみ **もう 100%** … ＝ **この周は hourly fable**」を**同じ行に並べて**渡していました。
+# 16:3x（尽きた枠に未来形）の**鏡**で、しかも §5 の模型の段の**覆る条件 (4)**
+# （リセットで Fable が戻ったら役ごとの形がそのまま効く）を読む印字が **1つも無かった**側です。
+# 門は `quota.fable_rolled`（1か所）。derivation は JOURNAL 2026-09-11 20:5x。
+
+def test_戻った枠では前の枠の目盛りを運ばないこと(monkeypatch):
+    _stub_fable(monkeypatch, est=100.0, spent=14.0,
+                models={"hourly": "fable", "optimizer": "opus"},
+                rolled=True, ration_est=0.0)
+    got = sp._quota_block()
+    assert "もう 100%" not in got, got
+    assert "枠は戻りました" in got, got
+    assert "Fable のみ **0%**" in got, got
+    assert "この周は hourly fable・optimizer opus" in got, got
+    assert "覆る条件 (4)" in got, got
+    assert "前に 100%" not in got, got
+
+
+def test_positive_control_戻っていない枠では前の字がそのまま出ること(monkeypatch):
+    """**陽性対照**: 上の門は、戻っていない回の字まで消してはいけない。"""
+    _stub_fable(monkeypatch, est=100.0, spent=14.0,
+                models={"hourly": "opus", "optimizer": "opus"}, rolled=False)
+    got = sp._quota_block()
+    assert "もう 100%" in got, got
+    assert "枠は戻りました" not in got, got
+
+
+def test_positive_control_古い_quota_には_戻りの門が無くても落ちないこと(monkeypatch):
+    """`fable_rolled` を持たない `quota` でも、段は前と同じ字で出ること。"""
+    mod = _stub_fable(monkeypatch, est=100.0, spent=14.0,
+                      models={"hourly": "opus", "optimizer": "opus"})
+    del mod.fable_rolled
+    del mod.fable_ration
+    got = sp._quota_block()
+    assert "もう 100%" in got and "枠は戻りました" not in got, got
 
 
 def test_positive_control_尽きていない回は未来形が出ること(monkeypatch):

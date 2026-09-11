@@ -576,6 +576,39 @@ def _standing_models() -> str:
     return "・".join(out)
 
 
+def _fable_ration() -> dict | None:
+    """**Fable の配りの数**（`quota.fable_ration()` の返り）。読めなければ None。
+
+    `_fable_ration_words()` と**同じ物**を返します —— 枠が戻った回の
+    「いま Fable のみ 何%」は、目盛り（前の枠の数）ではなく **この `est`** です
+    （`quota.fable_rolled` の註）。
+    """
+    q = _quota_mod()
+    fn = getattr(q, "fable_ration", None)
+    if not callable(fn):
+        return None
+    try:
+        r = fn()
+    except Exception:                                          # noqa: BLE001
+        return None
+    return r if isinstance(r, dict) else None
+
+
+def _fable_rolled(fe: dict) -> bool:
+    """**「Fable のみ」の枠が戻っているか** ——門は `quota.fable_rolled`（1か所）。
+
+    読めない古い `quota` では False（＝ 前と同じ字を出す・`_short_lines()` と同じ構え）。
+    """
+    q = _quota_mod()
+    fn = getattr(q, "fable_rolled", None)
+    if not callable(fn):
+        return False
+    try:
+        return bool(fn(fe))
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
 def _fable_ration_words() -> str:
     """**Fable の配りの 1行**（`quota.fable_ration` / `fable_ration_words`）。読めなければ空。
 
@@ -741,10 +774,17 @@ def _quota_block() -> str:
             return ("【枠】**読めていません**（目盛りが無いか、周が数えられていない）。"
                     "**空欄を「余裕がある」と読まないこと** —— `python scripts/quota.py --pace`。")
         fe = fable_estimate() or {}
+        # **枠が戻ったかは、ここで書き直さないこと**（門は `quota.fable_rolled`・1か所）。
+        # 戻っていれば `fe["est"]` は**前の枠の目盛りのまま**（`quota.fable_estimate` の註）
+        # ＝ そのまま運ぶと「Fable のみ **もう 100%**」と「この周は hourly **fable**」を
+        # 同じ段が並べて言います（JOURNAL 2026-09-11 20:5x・14:0x/16:3x と同じ族）。
+        ration = _fable_ration()
+        rolled = _fable_rolled(fe)
+        fable_now = (ration.get("est") if (rolled and ration) else fe.get("est"))
         fr = fable_rate() or {}
         ratio = ((fr.get("rate") or 0.0) / p["carry_rate"]) if p.get("carry_rate") else 0.0
         land = landing(p["used_now"], p["left_hours"], p["per_lap"],
-                       fe.get("est"), p["per_lap"] * ratio,
+                       fable_now, p["per_lap"] * ratio,
                        lag_min=p.get("reach_lag_min") or 0.0)
         lines = [
             "【枠 —— この回に使ってよい速さ】**模型の枠の話です**"
@@ -752,7 +792,9 @@ def _quota_block() -> str:
             "日枠 10,000単位/日・16:00 JST に戻る・`studio/yt.py` 冒頭）。"
             "オーナー 21:13「全てのモデル100％いきそう？」21:5x「その視点ないんだったら視点だけ与えなよ」",
             f"    いま      すべて **{p['used_now']:.0f}%**"
-            + (f"・Fable のみ **{fe['est']:.0f}%**" if fe.get("est") is not None else "")
+            + (f"・Fable のみ **{fable_now:.0f}%**"
+               + ("（**戻った枠**の数 ＝ 前の枠の目盛りではありません）" if rolled else "")
+               if fable_now is not None else "")
             + f"（リセット {p['window_reset'].astimezone(JST):%m/%d %H:%M} JST まで"
               f" {p['left_hours']:.0f}時間）",
             f"    床        **{p['floor_min']:.0f}分**（周から周。1周 {p['per_lap']:.3f}%）",
@@ -786,7 +828,28 @@ def _quota_block() -> str:
         cap = _fable_cap()
         # **もう尽きた枠について、これから尽きる話を渡さないこと**
         # （2026-09-11 16:3x・optimizer・Opus。derivation は下の註と JOURNAL 16:3x）。
-        if est is not None and cap is not None and est >= cap:
+        if rolled:
+            # **戻った枠について、尽きた枠の話を渡さないこと**（2026-09-11 20:5x・optimizer・Opus）。
+            # 16:3x は逆向き（尽きた枠に「これから尽きる」）を直した回で、これはその鏡です。
+            # **§5 の模型の段の覆る条件 (4) を読む印字は、ここにしかありません。**
+            who = _standing_models()
+            head = ""
+            try:
+                if ration and ration.get("start") is not None:
+                    head = f"{ration['start'].astimezone(JST):%m/%d %H:%M} JST"
+            except Exception:                                  # noqa: BLE001
+                head = ""
+            gw = _gauge_words(fe).strip("（）")           # 「目盛り 09/11 12:38 JST」
+            lines.append(
+                "    Fable のみ  **枠は戻りました**"
+                + (f"（新しい枠の頭 {head} から **0%**" if head else "（**0%** から数え直し")
+                + (f"・{gw} は**前の枠**の数）" if gw else "）")
+                + (f" ＝ **この周は {who}**（`quota.sub_model`）。" if who
+                   else " ＝ **この周の模型は `quota.sub_model` が決めます**（撃って読むこと）。")
+                + "**§5 15:1x の `hourly` 側の形は、覆る条件 (4) で戻ります**"
+                  "（§5 10:3x ＝ 役ではなく、**その周に実際に立った模型**で読むこと ——"
+                  "`hourly` が fable で立つ周なら、その理由はまた在ります）")
+        elif est is not None and cap is not None and est >= cap:
             who = _standing_models()
             lines.append(
                 f"    Fable のみ  **もう {est:.0f}%**{_gauge_words(fe)}"
