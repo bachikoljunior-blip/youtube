@@ -3330,6 +3330,19 @@ def channel_line_short(rows: list[dict]) -> str:
     その決めを**短い行へ引き上げてから**この行を書き直すこと（§5 の引用の覆る条件 (1) と同じ形）。
     (2) full と短い行が**違う verdict** を言った回が出たら、2つが別々に数えている ＝ 片方を消すこと
     （検査 `test_短い行と full は同じ判定を言う`）。
+    **【2026-09-11 14:0x・optimizer・Opus】(2) は実物で引かれました。ただし手当ては「消す」ではありません。**
+    同じ周に full は「**チャンネルは止まっていません**」（平らの中で本が +22回 伸びている・`flat_alive`）、
+    短い行は「**チャンネルの側を外すこと**」＝ **逆の verdict** を印字していました
+    （実物: 平ら 21周・11.5時間・上端 10.8時間 を越えた回）。
+    **2つは別々に数えてはいません** —— どちらも同じ `channel_growth()` の返りから作っており、
+    短い行が **`flat_alive` の欄を読んでいなかった**だけです。だから閉じ方は
+    **欄を読ませること**で、(2) の「片方を消す」は当たりません。
+    **(2) の書き直し**: full に**返りの新しい欄**から作る verdict を足したら、**同じ欄を短い行の枝にも当てること**。
+    2つを**消して**片付けてよいのは、2つが本当に**別々に数えていた**ときだけです。
+    **なぜ検査が捕まえなかったか**: 平らの検査（`test_over_the_upper_end_says_the_sample_is_one` ほか）の
+    並びは `channel` の行だけで `measured` の行を持たず、**`flat_alive` は必ず False** でした
+    ＝ **13:2x に足した枝を、1件も通っていません**（§5 教訓の形 4つ目 ＝ 検査は緑で、実物の形だけが抜けている）。
+    検査 `test_短い行も平らの中の伸びを言う` ＋ 陽性対照（`measured` を外すと元の verdict へ戻る）。
     (3) `trend` の側でも同じ段落が 2か所から出るようになったら、重なりは `status` だけの病気ではない ＝
     そのときは「毎周 印字する字」を**行ではなく段落の id** で数える口を足すこと。
     **この回に撃って確かめました（次の回は撃ち直さなくてよい）**: いまの `trend` の出力 **8,106字**の中で、
@@ -3349,10 +3362,24 @@ def channel_line_short(rows: list[dict]) -> str:
         verdict = (f"**§7 (m) の覆る条件 (1) が引かれています**（いま {g['over_streak']}/"
                    f"{CHANNEL_FLAT_LAPS} 塊）＝ **総再生が動かないことを"
                    "「チャンネルが止まった」と読まないこと**")
+    elif (g["flat_laps"] >= CHANNEL_FLAT_LAPS and g["flat_readable"]
+          and g["flat_alive"]):
+        # **平らの中の反証は、時間の門より強い**（`flat_video_gain` の註・2026-09-11 13:2x）。
+        # **full はこの反証を言い、短い行は言っていませんでした**（2026-09-11 14:0x に実物で割れた ＝
+        # `channel_line_short` の覆る条件 (2) が引かれた回。`_short_flat_verdict` の註）。
+        verdict = (f"**総再生は {g['flat_laps']}周（{g['flat_h']:.1f}時間）同じ読みで門"
+                   f"（{CHANNEL_FLAT_LAPS}周）の上ですが、その平らの中で本は "
+                   f"{g['flat_vid_confirmed']:+d}回 伸びています ＝ "
+                   "**チャンネルは止まっていません。平らなのは `viewCount` の読みのほう**"
+                   "（`trend.flat_video_gain`）＝ "
+                   "**この平らを『本の 0回』の説明に使わないこと**")
     elif g["flat_laps"] >= CHANNEL_FLAT_LAPS and g["flat_readable"]:
         verdict = (f"**総再生は {g['flat_laps']}周（{g['flat_h']:.1f}時間）続けて同じ読み ＝ "
                    f"門（{CHANNEL_FLAT_LAPS}周）が引かれました** ＝ 本の題や形を疑う前に、"
                    "チャンネルの側を外すこと")
+        if g["flat_vid_confirmed"] == 0:
+            verdict += ("（**平らの中の本の伸びは 0回** ＝ 向きは片側 —— "
+                        "「だから止まった」ではない・`trend.flat_video_gain`）")
     elif g["flat_laps"] >= CHANNEL_FLAT_LAPS:
         # **門は周で引けても、読みは引けません**（`_flat_span_h` の註・full と同じ口）
         # **門は挟みの上端**（2026-09-11 11:3x・`channel_growth` の決め）

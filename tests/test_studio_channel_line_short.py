@@ -212,3 +212,67 @@ def test_over_the_upper_end_says_the_sample_is_one():
     assert g["flat_h"] > g["step_flat_h_hi"] and g["flat_readable"] is True
     assert "チャンネルの側を外すこと" in trend.channel_line_short(rows)
     assert "手本は 1例" in trend.channel_line(rows)
+
+
+# ---- 平らの中の伸び（反証）も短い行が言うこと（2026-09-11 14:0x・optimizer・Opus）
+# **踏んだ形（実物）**: 平ら 21周・11.5時間（手本の上端 10.8時間 を越えた）で、
+# full は「**チャンネルは止まっていません**」（平らの中で本が +22回・`flat_alive`）、
+# 短い行は「**チャンネルの側を外すこと**」＝ **同じ周に逆の verdict**。
+# 13:2x に足した `flat_video_gain` の枝が full にしか無く、上の平らの検査は
+# `measured` の行を 1つも持たない（＝ `flat_alive` が必ず False）ので、1件も通っていなかった。
+
+def _alive_flat_rows() -> list[dict]:
+    """上端を越えた平らの**中で**、本が伸びている並び（`flat_alive` が True になる形）。
+
+    刻み: 15:24 → 20:24 が 84,781（手本の平ら 5.0〜7.0時間）・22:24 に 86,406。
+    いまの平ら: 22:24 → 06:24 ＝ **8.0時間 ＞ 上端 7.0時間**（時間の門は開く）。
+    本: 窓の頭に点を持ち、`t0 + REPLICA_LAG_H`（01:12）以降の読みを基準に **+60回**。
+    """
+    return [_row("2026-09-10T15:24:00+09:00", 28, 84781),
+            _row("2026-09-10T20:24:00+09:00", 28, 84781),
+            _row("2026-09-10T22:24:00+09:00", 28, 86406),
+            _row("2026-09-11T01:24:00+09:00", 28, 86406),
+            _row("2026-09-11T06:24:00+09:00", 28, 86406),
+            _m("2026-09-10T22:24:00+09:00", "aaa", 100, 10.0),
+            _m("2026-09-11T01:24:00+09:00", "aaa", 100, 13.0),
+            _m("2026-09-11T06:24:00+09:00", "aaa", 160, 18.0)]
+
+
+def test_短い行も平らの中の伸びを言う():
+    """full と短い行が**同じ反証**を言うこと（`channel_line_short` の覆る条件 (2) の書き直し）。"""
+    rows = _alive_flat_rows()
+    g = trend.channel_growth(rows)
+    assert g["flat_laps"] >= trend.CHANNEL_FLAT_LAPS and g["flat_readable"] is True
+    assert g["flat_alive"] is True and g["flat_vid_confirmed"] > 0
+    full, short = trend.channel_line(rows), trend.channel_line_short(rows)
+    assert "チャンネルは止まっていません" in full
+    assert "チャンネルは止まっていません" in short
+    # 逆の verdict（時間の門だけを読む側）を、短い行が言わないこと
+    assert "チャンネルの側を外すこと" not in short
+    assert f"{g['flat_vid_confirmed']:+d}回" in short
+
+
+def test_positive_control_平らの中の伸びが枠を決めている():
+    """**陽性対照**: 同じ並びから `measured` の行だけを外すと、短い行は元の verdict に戻ること。
+
+    ＝ 上の検査が通るのは `flat_alive` を読んでいるからで、文の書き換えではない。
+    """
+    rows = [r for r in _alive_flat_rows() if r["event"] != "measured"]
+    g = trend.channel_growth(rows)
+    assert g["flat_readable"] is True and not g["flat_alive"]
+    short = trend.channel_line_short(rows)
+    assert "チャンネルの側を外すこと" in short
+    assert "チャンネルは止まっていません" not in short
+
+
+def test_伸びが_0_の回は向きが片側だと言う():
+    """`confirmed == 0` の回は、短い行も「だから止まった」ではないと言うこと（向きは片側）。"""
+    rows = [r for r in _alive_flat_rows() if r["event"] != "measured"] + [
+        _m("2026-09-10T22:24:00+09:00", "aaa", 100, 10.0),
+        _m("2026-09-11T01:24:00+09:00", "aaa", 100, 13.0),
+        _m("2026-09-11T06:24:00+09:00", "aaa", 100, 18.0)]
+    g = trend.channel_growth(rows)
+    assert g["flat_vid_confirmed"] == 0 and not g["flat_alive"]
+    short = trend.channel_line_short(rows)
+    assert "チャンネルの側を外すこと" in short
+    assert "平らの中の本の伸びは 0回" in short and "「だから止まった」ではない" in short
