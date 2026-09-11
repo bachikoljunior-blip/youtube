@@ -2943,8 +2943,27 @@ def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> d
     **説明が付かないのは逆向きだけ** —— **合計 ＞ チャンネル**（触っている本の増えを、
     チャンネルの総再生が受け取っていない）。だから門はその向きにだけ当てます（`over` の欄）。
 
-    窓の頭に点を持たない本（窓の中で公開された本・測り始めた本）は**外します**（`skipped`）——
-    基準が無いので、その本の再生を丸ごと「増え」と数えると合計が上へ外れます。
+    窓の頭に点を持たない本（窓の中で公開された本・測り始めた本）は**`sum` からだけ外します**
+    （`skipped` / `no_base`）—— 基準が無いので、その本の再生を丸ごと「増え」と数えると
+    合計が上へ外れます。
+
+    **`sum_confirmed` からは外しません（2026-09-11 23:0x・optimizer・Opus。実物で踏んだ）。**
+    **踏んだ形**: 同じ台帳の同じ刻で、**窓 31.6時間 の `sum_confirmed` が +44**、その**部分集合**である
+    平ら 8.05時間 の `sum_confirmed` が **+265** ＝ **短いほうが大きい**。
+    伸びは足されるだけなので、**部分集合が本体を越えることは起こり得ません** ＝ どちらかが間違っています。
+    出どころは、`sum_confirmed` の輪が `a`（窓の頭の点）を要る側に入っていたこと:
+    窓の中で公開された本は `a` が無いので `skipped` で `continue` し、**分子に 1回も入りません**。
+    実物は `mja40GJ-GHU`（09/11 10:00 公開・窓の中）で、**確かめられる伸びは 917回**
+    （窓 31.6時間 の分子は 44 → **961**。`over` は False のまま ＝ 門は偽で引きません）。
+    **抑えは `a` ではなく `min(late)`** で、それは本が窓の頭に在ったかを要りません ——
+    `v(s) >= true(s - 遅れ) >= true(t0)` は、`true(t0)` が **0（まだ公開されていない）**でも成り立ち、
+    `b - min(late) <= b - true(t0)` ＝ **下からの抑えのまま**です。
+    ＝ **(m) の門（合計 ＞ チャンネル。説明の付かない唯一の向き）は、
+    いちばん速く伸びる本（出したばかりの本）だけを構造的に見ていませんでした。**
+    **覆る条件**: 窓の頭に点を持たない本が `min(late)` を **1点しか持たない**回は `blind` に入ります
+    —— `blind` が `grew` と同じ回が 3周 続いたら、抑えの取り方（`REPLICA_LAG_H`）の側を疑うこと（(4) と同じ）。
+    **型**: **絞りを 1つ 書いた輪は、その絞りが要らない数まで一緒に絞ります**
+    （§5 の教訓の形 5つ目の族・derivation は JOURNAL 23:0x）。
 
     **`sum` は窓の増えではありません（2026-09-10 19:3x・optimizer・Opus が実測で分けた）。**
     包絡は**読みが上がった刻**に上がるので、`sum` は「**窓の中で見えるようになった再生**」です。
@@ -2987,7 +3006,7 @@ def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> d
     —— **減らないまま `blind == grew` の回が 3周 続いたら**、抑えの取り方（`REPLICA_LAG_H` の側）を
     疑うこと。(5) 逆に `blind == 0` の回が 7周 続いたら、この欄は外してよい。
     """
-    out = {"sum": 0, "n": 0, "fresh": 0, "skipped": 0,
+    out = {"sum": 0, "n": 0, "fresh": 0, "skipped": 0, "no_base": 0,
            "sum_confirmed": None, "unconfirmable": 0, "lag_h": REPLICA_LAG_H,
            "grew": 0, "blind": 0}
     # **窓が遅れより短ければ、確かめられる伸びは 1回 も無い**（抑えに使える読みが窓の中に無い）
@@ -3010,18 +3029,24 @@ def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> d
                 fresh = True
             if cut <= t <= t1:
                 late.append(int(p["views"]))
-        if a is None or b is None:
+        if b is None:
             out["skipped"] += 1
             continue
-        out["sum"] += b - a
-        out["n"] += 1
-        # **伸びを出せるのは、窓の中で読み直した本だけ**（`measure` が触るのは公開から 7日 以内 ＝
-        # 実測 19本）。基準を持つ 46本 のうち残りは、点が窓より前で止まっているので必ず +0 を返します
-        # —— **その 0 を「伸びなかった」と読まないこと。**
-        out["fresh"] += 1 if fresh else 0
+        if a is None:
+            # **窓の頭に点が無い本を外すのは `sum` の側だけ**（2026-09-11 23:0x の直し・下の註）。
+            # `sum_confirmed` の抑えは `a` ではなく `min(late)` なので、この本も確かめられます。
+            out["skipped"] += 1
+            out["no_base"] += 1
+        else:
+            out["sum"] += b - a
+            out["n"] += 1
+            # **伸びを出せるのは、窓の中で読み直した本だけ**（`measure` が触るのは公開から 7日 以内 ＝
+            # 実測 19本）。基準を持つ 46本 のうち残りは、点が窓より前で止まっているので必ず +0 を返します
+            # —— **その 0 を「伸びなかった」と読まないこと。**
+            out["fresh"] += 1 if fresh else 0
         if not measurable:
             continue
-        if b - a <= 0:
+        if b - (a if a is not None else 0) <= 0:
             continue          # 伸びていない本は、抑えが無くても食い違いを作りません
         out["grew"] += 1
         if not late:
@@ -3176,6 +3201,7 @@ def channel_growth(rows: list[dict]) -> dict:
     base = {"n": len(cs), "laps": len(laps), "flat_laps": _flat_laps(ps),
             "flat_h": _flat_span_h(ps),
             "vid_sum": None, "vid_n": None, "vid_fresh": None, "vid_skipped": None,
+            "vid_no_base": None,
             "vid_confirmed": None, "vid_unconfirmable": None,
             "mismatch": None, "over": False,
             "over_streak": 0, "over_blocks": 0, "over_ready": False, "over_drawn": False,
@@ -3210,7 +3236,7 @@ def channel_growth(rows: list[dict]) -> dict:
             "subs_per_view": (g["d_subs"] / g["d_views"]) if g["d_views"] > 0 else None,
             "subs": b["subs"], "views": b["views"],
             "vid_sum": vd["sum"], "vid_n": vd["n"], "vid_fresh": vd["fresh"],
-            "vid_skipped": vd["skipped"],
+            "vid_skipped": vd["skipped"], "vid_no_base": vd["no_base"],
             "vid_confirmed": conf, "vid_unconfirmable": vd["unconfirmable"],
             "mismatch": g["mismatch"], "over": g["over"],
             "over_streak": st["streak"], "over_blocks": st["blocks"],
@@ -3343,7 +3369,9 @@ def channel_line(rows: list[dict]) -> str:
         tail = ("（**門は片側だけ** —— チャンネル ＞ 合計 の側は、"
                 "`measure` が触っていない古い本で説明が付きます）。")
     cmp_ = (f"同じ窓の**本ごとの増えの合計 {g['vid_sum']:+d}回**（**窓の中で読み直した {g['vid_fresh']}本**"
-            f"／基準を持つ {g['vid_n']}本・基準の無い {g['vid_skipped']}本 は外した。"
+            f"／基準を持つ {g['vid_n']}本・基準の無い {g['vid_skipped']}本 は"
+            f"**この合計からだけ外した**（**確かめられた伸びには入っています** ——"
+            f"抑えは窓の頭の点ではなく `min(late)`・`channel_video_delta` の註 23:0x）。"
             f"**伸びを出せるのは読み直した側だけ**）"
             + ("・食い違い ＝ 測れていません（両方 0）。" if g["mismatch"] is None
                else f"・食い違い **{g['mismatch'] * 100:.0f}%**" + tail))
