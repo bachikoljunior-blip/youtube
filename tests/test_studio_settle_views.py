@@ -18,6 +18,9 @@
 """
 from __future__ import annotations
 
+import ast
+import pathlib
+import re
 from datetime import timedelta, timezone
 
 import studio.cli as cli
@@ -52,6 +55,35 @@ def _svc(monkeypatch, values):
     return s
 
 
+def _ago_iso(hours: float) -> str:
+    """**齢は「いま」から数える**（2026-09-11 10:4x・optimizer・Opus）。
+
+    日付を焼き込むと、その本は日が経つほど古くなり、**`SETTLE_WITHIN_H` を越えた日に
+    検査が黙って赤くなります**。実際に **09/11 10:00 JST（この周）に 3件 が同時に赤く**
+    なりました —— 焼き込んであった `_young_iso()`（＝ 09/09 10:00 JST）が
+    ちょうど齢 48h を越えた刻です。**壊れたのは道具ではなく検査のデータ**でした
+    （§5「教訓の形 3つ目」の族）。
+
+    09/10 06:1x に `test_伸びたまま48hを越えた本が読み直される` の中で同じ穴を 1つ 塞ぎ、
+    そこに「日付を焼き込むと明日には別の本を見ることになる」と書いてありましたが、
+    **同じファイルの残り 6か所は焼き込んだまま**でした ——
+    §5「**教訓の形 2つ目**: 刻ずれを直したら、直した側にその穴の 2つ目の口が無いかを撃つこと」。
+    下の `test_この検査は日付を焼き込まない` が、その口を機械で見張ります。
+    """
+    at = cli.now_jst() - timedelta(hours=hours)
+    return at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _young_iso() -> str:
+    """`SETTLE_WITHIN_H` の**内側**（齢 47h）。**数ではなく門から引くこと。**"""
+    return _ago_iso(cli.SETTLE_WITHIN_H - 1)
+
+
+def _old_iso() -> str:
+    """`SETTLE_WITHIN_H` の**外側**（齢 49h）。"""
+    return _ago_iso(cli.SETTLE_WITHIN_H + 1)
+
+
 def test_揺れる本は最大を採る(monkeypatch):
     s = _svc(monkeypatch, {"A": [637, 823]})
     got = yt.settle_stats(["A"], reads=3)
@@ -81,11 +113,12 @@ def test_measure_は揺れた本の最大と下限を台帳に書く(monkeypatch
     """`cmd_measure` の側 —— 齢の浅い本だけ読み直し、揺れた行にだけ `views_min` を残すこと。"""
     rows = []
     monkeypatch.setattr(cli, "ledger", lambda ev, i, **kw: rows.append({"event": ev, "id": i, **kw}))
-    # 齢 9h（揺れる・読み直しの対象）と 200h（対象外）
+    # 齢 47h（束に入る・読み直しの対象）と 49h（束を越えた回は落ちる側）——
+    # **どちらも `SETTLE_WITHIN_H` から引く**（`_ago_iso` の註）。
     pub = [{"id": "A", "title": "伸び中", "views": 711, "likes": 4, "comments": 0,
-            "publish_at": None, "published_at": "2026-09-09T01:00:00Z"},
+            "publish_at": None, "published_at": _young_iso()},
            {"id": "OLD", "title": "古い", "views": 74, "likes": 0, "comments": 0,
-            "publish_at": None, "published_at": "2026-09-01T01:00:00Z"}]
+            "publish_at": None, "published_at": _old_iso()}]
     monkeypatch.setattr(yt, "published", lambda h: pub)
     monkeypatch.setattr(yt, "scheduled_all", lambda: [])
     # **揺れるのは伸びている本だけ** —— 落ち着いた本は 3回 とも同じ値を返す（実測 17/17）。
@@ -128,7 +161,7 @@ def test_束に入るなら齢で絞らない(monkeypatch):
     出たら伸ばす」でした。**その門が在るかぎり、その行は永久に出ません**（渡らない本の
     `n_values` は作られない）。**見えない側を「差が無い」と読む形**なので、門のほうを外した。
     """
-    pub = [_book("A", "2026-09-09T01:00:00Z"), _book("OLD", "2026-09-01T01:00:00Z")]
+    pub = [_book("A", _young_iso()), _book("OLD", _old_iso())]
     assert _measure_targets(monkeypatch, pub) == ["A", "OLD"]
 
 
@@ -149,8 +182,8 @@ def test_広げても単位は増えない(monkeypatch):
 
 def test_束に入らない回だけ齢で絞る(monkeypatch):
     """**上限は束の大きさ**（`SETTLE_MAX_IDS`）。越えた回は齢の浅い側を採る。"""
-    pub = ([_book(f"N{i}", "2026-09-09T01:00:00Z") for i in range(cli.SETTLE_MAX_IDS)]
-           + [_book("OLD", "2026-09-01T01:00:00Z")])
+    pub = ([_book(f"N{i}", _young_iso()) for i in range(cli.SETTLE_MAX_IDS)]
+           + [_book("OLD", _old_iso())])
     got = _measure_targets(monkeypatch, pub)
     assert "OLD" not in got, f"{cli.SETTLE_MAX_IDS} を越えた回は齢 {cli.SETTLE_WITHIN_H}h までへ落とすこと"
     assert len(got) == cli.SETTLE_MAX_IDS
@@ -165,10 +198,10 @@ def test_伸びたまま48hを越えた本が読み直される(monkeypatch):
     包絡が上がらず「平ら」と出ます。
     """
     # **齢は「いま」から数える** —— 日付を焼き込むと、この検査は明日には
-    # 「48h 未満の本」を見ることになり、旧の門でも通ってしまう（この回に踏んだ）。
-    old_at = (cli.now_jst() - timedelta(hours=cli.SETTLE_WITHIN_H + 1))
-    pub = [_book("GROWING_49H", old_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                 views=534)]
+    # 「48h 未満の本」を見ることになり、旧の門でも通ってしまう（09/10 06:1x に踏んだ）。
+    # **この註は 09/11 10:4x まで、このファイルの中でこの 1件 にしか当たっていませんでした**
+    # （`_ago_iso` の註）。
+    pub = [_book("GROWING_49H", _old_iso(), views=534)]
     assert _measure_targets(monkeypatch, pub) == ["GROWING_49H"]
 
 
@@ -194,8 +227,8 @@ def test_読んで揺れなかった行にも_n_values_を書く(monkeypatch):
 
     **陽性対照**: `extra` を「`n_values > 1` のときだけ」に戻すと、この検査が落ちます。
     """
-    pub = [_book("A", "2026-09-09T01:00:00Z", views=711),
-           _book("OLD", "2026-09-01T01:00:00Z", views=74)]
+    pub = [_book("A", _young_iso(), views=711),
+           _book("OLD", _old_iso(), views=74)]
     got = _measure_rows(monkeypatch, pub, {
         "A": {"views": 823, "views_min": 637, "n_values": 2},
         "OLD": {"views": 74, "views_min": 74, "n_values": 1}})
@@ -210,8 +243,8 @@ def test_読まれていない行には_n_values_の欄が無い(monkeypatch):
     束 50件 を越えた回は齢で絞るので、48h 超の本は `settle_stats` に渡りません。
     その行に `n_values` が付いてしまうと、「読んで揺れなかった」と区別できなくなります。
     """
-    pub = ([_book(f"N{i}", "2026-09-09T01:00:00Z") for i in range(cli.SETTLE_MAX_IDS)]
-           + [_book("OLD", "2026-09-01T01:00:00Z")])
+    pub = ([_book(f"N{i}", _young_iso()) for i in range(cli.SETTLE_MAX_IDS)]
+           + [_book("OLD", _old_iso())])
     got = _measure_rows(monkeypatch, pub,
                         {b["id"]: {"views": 1, "views_min": 1, "n_values": 1} for b in pub})
     assert "n_values" not in got["OLD"], "**渡っていない本**に欄を作らないこと（＝ 0件 の分母から外れる）"
@@ -223,9 +256,7 @@ def test_measure_は48h超を何本読んだかを印字する(monkeypatch, caps
 
     印字が無いと、(h) を読む回は毎回 台帳を自分で数え直すことになります（この回がそうした）。
     """
-    old_at = cli.now_jst() - timedelta(hours=cli.SETTLE_WITHIN_H + 1)
-    old_iso = old_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    pub = [_book("YOUNG", "2026-09-09T01:00:00Z"), _book("OLD1", old_iso), _book("OLD2", old_iso)]
+    pub = [_book("YOUNG", _young_iso()), _book("OLD1", _old_iso()), _book("OLD2", _old_iso())]
     monkeypatch.setattr(cli.trend, "pair_gap_line", lambda rows: "")
     _measure_rows(monkeypatch, pub, {
         "YOUNG": {"views": 1, "views_min": 1, "n_values": 2},
@@ -266,3 +297,32 @@ def test_measure_の札は数え直しの道を指さない(monkeypatch, capsys)
     assert "「齢 48h 超」を (3) の分子として読まないこと" in line
     # **分子の在り処**を指すこと（指さないと、次の回はこの数を分子として使う）
     assert "trend.shakes" in line, "(3) の分子を数える先を指すこと"
+
+
+def test_この検査は日付を焼き込まない():
+    """**穴の口を機械で見張る**（2026-09-11 10:4x・optimizer・Opus）。
+
+    このファイルの本は `SETTLE_WITHIN_H`（48h）の**内か外か**だけで役が決まります。
+    日付を焼き込むと、その本は日が経つほど古くなり、**書いた人が知らない日に内から外へ
+    渡って**検査が赤くなります（09/11 10:00 JST に 3件 が同時に赤くなった実物）。
+
+    **手で「もう焼き込まない」と決めても、次に検査を足す回が忘れます** ——
+    `studio/livetests.py` の規則A（import で引く ＝ 腐らない）と同じ形で、
+    **口のほうを機械で引きます**。
+
+    **陽性対照**: このファイルのどこかに `"2026-09-09T01:00:00Z"` を書き戻すと、この検査が赤くなる。
+    """
+    tree = ast.parse(pathlib.Path(__file__).read_text())
+    # **註と docstring は当たりません** —— 当たるのは「**値として書いた**日付」だけ。
+    # （註を外すと、この検査は自分の陽性対照の1行で赤くなります。09/11 10:4x に踏んだ）
+    docs = {id(n) for p_ in ast.walk(tree)
+            if isinstance(p_, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and (n := (p_.body[0].value if p_.body and isinstance(p_.body[0], ast.Expr)
+                       and isinstance(p_.body[0].value, ast.Constant)
+                       and isinstance(p_.body[0].value.value, str) else None)) is not None}
+    baked = [n.value for n in ast.walk(tree)
+             if isinstance(n, ast.Constant) and isinstance(n.value, str)
+             and id(n) not in docs and re.fullmatch(r"\d{4}-\d{2}-\d{2}T.*", n.value)]
+    assert baked == [], (
+        "齢は `_ago_iso`（＝ `cli.SETTLE_WITHIN_H` から引く）で作ること。"
+        f"焼き込まれた日付: {baked}")
