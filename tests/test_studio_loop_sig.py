@@ -25,7 +25,8 @@ def _script(segs) -> script.Script:
 def _rows(vid: str, sig, event: str = "critique", at: str = "2026-09-11T10:58:51+09:00"):
     r = {"id": vid, "event": event, "at": at}
     if sig is not None:
-        r["sig"] = sig
+        # 版を書かない呼び手は「いまの版の行」を指す（版そのものを試す検査だけ、明示で渡す）
+        r["sig"] = sig if ":" in sig else f"{script.LOOP_SIG_VERSION}:{sig}"
     return [r]
 
 
@@ -33,7 +34,7 @@ def test_指紋は本文で決まる():
     a = _script([_seg("あいうえお。")])
     b = _script([_seg("あいうえお。")])
     assert a.loop_sig() == b.loop_sig()
-    assert len(a.loop_sig()) == 12
+    assert len(a.loop_sig()) == len(str(script.LOOP_SIG_VERSION)) + 1 + 12
 
 
 @pytest.mark.parametrize("kw", [
@@ -103,3 +104,37 @@ def test_陽性対照_実物の形をそのまま通す():
     assert cli.loop_stale("t-loop", after.loop_sig(), rows=rows), "直したのに黙った"
     # 陽性対照: 直していなければ鳴らない（＝ この印字は「本文が動いたこと」だけを見ている）
     assert cli.loop_stale("t-loop", before.loop_sig(), rows=rows) == ""
+
+
+def test_板の行を割り直しただけでは指紋は動かない():
+    """2026-09-11 13:1x に `loop_sig` の覆る条件 (1) を実物で引いた ——
+    コマ11 の板 ['1年にとどかない日数', 'も1年ぶんになる'] は**語の途中で折れて**おり
+    （sheet で見えた）、直したのは行の割り方だけ。`critique_screen` に渡るのは板の中身なので、
+    ここで指紋が動くと「輪を撃ち直せ」が鳴らない回に鳴る（狼少年）。"""
+    a = _script([_seg("あいうえお。", board=["1年にとどかない日数", "も1年ぶんになる"])])
+    b = _script([_seg("あいうえお。", board=["1年にとどかない日数も", "1年ぶんになる"])])
+    assert a.loop_sig() == b.loop_sig()
+
+
+def test_板の中身が変われば指紋は動く():
+    """陽性対照: 継いで署名しても、**中身**の直しは拾う（継ぎで全部 潰していないこと）。"""
+    a = _script([_seg("あいうえお。", board=["1年にとどかない日数も"])])
+    b = _script([_seg("あいうえお。", board=["1年をこえた日数も"])])
+    assert a.loop_sig() != b.loop_sig()
+
+
+def test_指紋は版を頭に持つ():
+    s = _script([_seg("あいうえお。")])
+    assert s.loop_sig().startswith(f"{script.LOOP_SIG_VERSION}:")
+
+
+def test_版が違う行とは本文を比べない():
+    """作り方を変えた回は、台帳の指紋が全部 合わなくなる。そのまま鳴らすと
+    「本文が動いた」と嘘をつく（2026-09-11 13:2x に 1度 そう出た）。"""
+    s = _script([_seg("あいうえお。")])
+    line = cli.loop_stale("t-loop", s.loop_sig(), rows=_rows("t-loop", "1:ffffffffffff"))
+    assert "作り方" in line and "本文が動いたとは言えません" in line, line
+    # 版が同じで中身が違う行は、これまでどおり「撃ち直せ」
+    same_ver = f"{script.LOOP_SIG_VERSION}:ffffffffffff"
+    other = cli.loop_stale("t-loop", s.loop_sig(), rows=_rows("t-loop", same_ver))
+    assert "read" in other and "作り方" not in other, other

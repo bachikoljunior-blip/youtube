@@ -494,6 +494,13 @@ def loop_stale(vid: str, sig: str, rows=None) -> str:
         return ""
     if old == sig:
         return ""
+    # **版が違う行とは、本文を比べられません**（2026-09-11 13:2x に踏んだ・`script.LOOP_SIG_VERSION`）。
+    # 作り方を変えた回は、貯まった指紋が全部 合わなくなる ＝ そのまま鳴らすと
+    # 「本文が動いた」と**嘘をつきます**。言えることだけを言う。
+    if old.split(":")[0] != sig.split(":")[0]:
+        return (f"輪の指紋の**作り方**が変わりました（{last['event']} {last.get('at', '?')[:16]} は版 "
+                f"{old.split(':')[0]}・いまは 版 {sig.split(':')[0]}）＝ **本文が動いたとは言えません**。"
+                f"次に read → critique を撃った回から、また比べられます")
     return (f"輪は古い本文で閉じています（{last['event']} {last.get('at', '?')[:16]} は指紋 {old}・"
             f"いまは {sig}）＝ **read → critique を撃ち直すこと**（§4 (1)「直す → 最初から評価し直す」）")
 

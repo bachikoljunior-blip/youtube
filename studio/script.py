@@ -113,6 +113,13 @@ MAX_BOARD_LINES = 5
 MAX_BOARD_CHARS = 14
 TAGS = ("前提", "決まり", "計算", "結論", "見る所")
 
+# 輪の指紋の**作り方**の版（`Script.loop_sig`）。**作り方を変えたら必ず上げること** ——
+# 上げないと、台帳に貯まった古い指紋と比べたときに「本文が動いた」と嘘の印字が出ます
+# （2026-09-11 13:2x に 1度 そう出た: 板の継ぎ方を変えた回。`cli.loop_stale` が版で分けます）。
+#   1 … 板を行ごとに `|` で継ぐ（12:3x）
+#   2 … 板を継いでから署名する（13:1x。行の割り直しでは動かない ＝ 覆る条件 (1)）
+LOOP_SIG_VERSION = 2
+
 
 class Segment(BaseModel):
     say: str = Field(..., description="声で読む文。ふつうの話し言葉。")
@@ -159,15 +166,31 @@ class Script(BaseModel):
         `cold_read` の say はその部分集合）。`notes`・`description` は輪に渡らないので入れません
         —— 入れると §4 (0) の説明欄の直しで輪が古い扱いになり、**鳴らない印字**（狼少年）になります。
 
+        **頭に版（`LOOP_SIG_VERSION`）を付けてあります**（2026-09-11 13:2x に、同じ回で踏んで足した）——
+        **作り方を変えると、台帳に貯まった指紋は全部 合わなくなります**。版が無いと、その回の印字は
+        「本文が動いた」と**嘘をつきます**（実際に 1度 そう出た）。版が違う行は「作り方が変わった」と言い、
+        **本文が動いたとは言いません**（`cli.loop_stale`）。
+
         覆る条件: (1) この印字が「古い」と言った回に、**say/show/sub が 1字も変わっていなかった**
         ことが 1度 でもあれば、指紋の範囲が広すぎる（tag・board を外すこと）。
+        **【2026-09-11 13:1x に、この (1) を自分で引きました】** 板の行を割り直しただけの回で鳴った
+        —— 外したのは tag・board ではなく**板の行の割り方**だけ（下）。**tag と board の中身は残す**
+        （どちらも `critique_screen` が渡している ＝ critic が読む物）。
+        **次に (1) を引いたときは、tag を外す番です。**
         (2) 逆に、指紋が同じまま輪の答えが古くなった回が出たら（例: `critique` の問い文を変えた回）、
-        指紋に `critic.critique` のプロンプトの版を足すこと。
+        指紋に `critic.critique` のプロンプトの版を足すこと（＝ `LOOP_SIG_VERSION` を上げる）。
         """
         import hashlib
-        body = "\n".join(f"{s.say}\x1f{s.show}\x1f{s.sub}\x1f{s.tag}\x1f{'|'.join(s.board)}"
-                         for s in self.segments)
-        return hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+        # **板は行を継いでから署名します**（2026-09-11 13:1x に、上の覆る条件 (1) を自分で引いた）——
+        # 板の行を割り直しただけの回（`say`/`show`/`sub` は 1字も動いていない）で指紋が動き、
+        # 「輪を撃ち直せ」と鳴りました。実物: コマ11 の板を
+        # ['1年にとどかない日数', 'も1年ぶんになる'] → ['1年にとどかない日数も', '1年ぶんになる'] へ
+        # （語の途中で折れていたのを直しただけ ＝ sheet の折れの直し）。
+        # **critique に渡るのは板の中身**（`critique_screen` は ' ／ ' で継いで渡す）で、
+        # **行の割り方は渡らない**ので、継いで署名すれば中身の直しだけが指紋を動かします。
+        body = "\n".join(f"{g.say}\x1f{g.show}\x1f{g.sub}\x1f{g.tag}\x1f{''.join(g.board)}"
+                         for g in self.segments)
+        return f"{LOOP_SIG_VERSION}:{hashlib.sha256(body.encode('utf-8')).hexdigest()[:12]}"
 
     def problems(self) -> list[str]:
         out = []
