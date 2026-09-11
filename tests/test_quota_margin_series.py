@@ -35,6 +35,65 @@ def _row(at, margin=None, role="hourly"):
     return r
 
 
+@pytest.fixture(autouse=True)
+def _no_rounds(tmp_path, monkeypatch):
+    """**既定では周の台帳を空にする**（2026-09-11 11:2x）。
+
+    `margin_series` は周を `data/rounds.jsonl` の刻へ寄せて数えます。
+    ここを塞がないと、検査の作り話の刻が**実物の周**へ寄ってしまい、
+    検査が「きょうの台帳」に依ります（この回に 3件 踏んだ・METHOD §5 教訓の形 6つ目）。
+    周の刻を要る検査は、下の `_rounds()` で自分の分を置きます。
+    """
+    monkeypatch.setattr(quota, "ROUNDS_LOG", tmp_path / "no-rounds.jsonl")
+
+
+def _rounds(tmp_path, monkeypatch, ats):
+    """周の台帳（`rounds.jsonl`）を置く —— 親は 1周に 2行（役ごと）積む。"""
+    f = tmp_path / "rounds.jsonl"
+    f.write_text("".join(
+        json.dumps({"at": a, "role": r, "round": a}, ensure_ascii=False) + "\n"
+        for a in ats for r in ("hourly", "optimizer")), encoding="utf-8")
+    monkeypatch.setattr(quota, "ROUNDS_LOG", f)
+    return f
+
+
+def test_周は_rounds_jsonl_の刻へ寄せて数えること(tmp_path, monkeypatch):
+    """**周の印は `rounds.jsonl` が持っています**（2026-09-11 11:2x・optimizer・Opus）。
+
+    親は**周を記録する 10秒 前に模型を選ぶ**ので（実測 10:00:39 の行 対 10:00:49 の周）、
+    「その行より前のいちばん新しい周」では **1つ 前の周**に付きます。
+    だから**いちばん近い周**（前でも後でもよい）へ寄せます。
+    """
+    _rounds(tmp_path, monkeypatch, ["2026-09-11T09:25:23+09:00", "2026-09-11T10:00:49+09:00"])
+    monkeypatch.setattr(quota, "MODEL_CHOICE_FILE", _write(tmp_path, [
+        _row("2026-09-11T09:25:13+09:00", 3.011, "hourly"),
+        _row("2026-09-11T09:25:14+09:00", 3.011, "optimizer"),
+        _row("2026-09-11T10:00:39+09:00", 3.011, "hourly"),
+        _row("2026-09-11T10:00:40+09:00", 3.011, "optimizer"),
+    ]))
+    assert len(quota.margin_series()) == 2, "2周 ＝ 2点（周の刻より 10秒 手前の行も、その周へ寄る）"
+
+
+def test_同じ周に同じ役が立て直されても_1点(tmp_path, monkeypatch):
+    """**実物で踏んだ形**（2026-09-11 10:17 JST）。
+
+    親は `hourly` を **fable が 429（月の上限）を返したので opus で立て直し**、
+    **同じ周の 17分 後に 3行目**（役は hourly）を積みました。
+    ＝ **同じ周かどうかは、刻の近さでも役でも決まりません** ——
+    11:0x に「役がちがう ＋ 5秒 以内」へ直した 30分 後に、その手は外れています。
+
+    **陽性対照**: 周の刻を 2つ にして 10:17 を別の周にすると、この検査は 2点 を見て赤くなる。
+    """
+    _rounds(tmp_path, monkeypatch, ["2026-09-11T10:00:49+09:00"])
+    monkeypatch.setattr(quota, "MODEL_CHOICE_FILE", _write(tmp_path, [
+        _row("2026-09-11T10:00:39+09:00", 3.011, "hourly"),
+        _row("2026-09-11T10:00:40+09:00", 3.011, "optimizer"),
+        _row("2026-09-11T10:17:17+09:00", 3.057, "hourly"),   # 429 で立て直した回
+    ]))
+    assert quota.margin_series() == [("2026-09-11T10:00:39+09:00", 3.011)], \
+        "同じ周の 3行 ＝ 1点（その周が最初に見た数）"
+
+
 def test_同じ周の_2行_は_1つ_に畳むこと(tmp_path, monkeypatch):
     """親は 1周に 2行（`hourly` と `optimizer`）積みます。畳まないと周の数が倍に出ます。"""
     monkeypatch.setattr(quota, "MODEL_CHOICE_FILE", _write(tmp_path, [
@@ -71,7 +130,7 @@ def test_同じ周の_2行_は_1秒_ずれていても畳むこと(tmp_path, mon
 
 
 def test_同じ役が続いたら_近くても別の周_穴埋め(tmp_path, monkeypatch):
-    """**時刻だけで畳まないこと。**
+    """**時刻だけで畳まないこと**（`rounds.jsonl` が読めない回の**控え**の側）。
 
     親は**前の周の同じ役がまだ走っていると、穴埋めで片方だけを立てます**（METHOD §5）——
     そのとき前の周と **1分 しか離れません**。時刻の窓だけで畳むと、その周が消えます。
@@ -90,7 +149,7 @@ def test_同じ役が続いたら_近くても別の周_穴埋め(tmp_path, monk
 
 
 def test_穴埋めの周は_役がちがっても_1分_で別の周(tmp_path, monkeypatch):
-    """**窓の上を押さえるのは、穴埋めの周**（2026-09-11 10:5x）。
+    """**窓の上を押さえるのは、穴埋めの周**（2026-09-11 10:5x・**控え**の側）。
 
     前の周の同じ役がまだ走っていると、親は**穴埋めで片方だけを立て、間隔を待ちません**
     （METHOD §5・`data/parent_wakes.jsonl` の `patch: true`）——

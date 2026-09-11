@@ -1357,6 +1357,39 @@ def record_model_choice(role: str, model: str, why: str,
 MARGIN_SAME_SEC = 5.0
 
 
+def round_marks() -> list[datetime]:
+    """**周の刻そのもの**を `data/rounds.jsonl` から古い順で返す（`round` の別数）。
+
+    2026-09-11 11:2x・optimizer・Opus。**`margin_series` が周を数えるための、唯一の正本。**
+    刻と役で推す手は、この回に **2度** 外れました（下の `margin_series` の註）。
+    """
+    if not ROUNDS_LOG.exists():
+        return []
+    seen: dict[str, datetime] = {}
+    try:
+        lines = ROUNDS_LOG.read_text(encoding="utf-8").splitlines()
+    except Exception:                                          # noqa: BLE001
+        return []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:                                      # noqa: BLE001
+            continue
+        key, at = row.get("round") or row.get("at"), row.get("at")
+        if not key or not at:
+            continue
+        try:
+            t = datetime.fromisoformat(at)
+        except ValueError:
+            continue
+        if key not in seen or t < seen[key]:
+            seen[key] = t
+    return sorted(seen.values())
+
+
 def margin_series(n: int = 8) -> list[tuple[str, float]]:
     """**余裕（`ceiling_rate()` ÷ 要る速さ）の、周ごとの列**を新しい順の逆（古い順）で返す。
 
@@ -1386,21 +1419,31 @@ def margin_series(n: int = 8) -> list[tuple[str, float]]:
     「門まで あと N周」は、全部この列を分母にしています）。
     §5「教訓の形 4つ目」——手で作った検査データは、書き手が知っている形にしかなりません。
 
-    **同じ周と読む条件は 2つ**（`MARGIN_SAME_SEC` の註）: **役がちがう**ことと、
-    **差が `MARGIN_SAME_SEC` 以内**であること。台帳の実測（322行）では、
-    同じ周の 2行 は **0〜1秒**・**同じ役が続く（＝ 別の周）いちばん短い差は 14秒**なので、
-    この 2つ は重なりません。**周は役ごとに 1行**（`record_model_choice`）なので、
-    役が同じなら、いくら近くても別の周です（穴埋めの周は 1分 しか離れません・METHOD §5）。
+    **周は推さずに、`data/rounds.jsonl` の刻へ寄せて数えます**（`round_marks()`・11:2x）。
+    刻と役で推す手は、**同じ回に 2度 外れました**:
+
+        1度目  `at` の文字列一致で畳んでいた → 実物の 2行 は **1秒** ずれる（10:00:39 / 10:00:40）
+        2度目  「役がちがう ＋ 5秒 以内」に直した 30分 後、親が **429（Fable の月の上限）**で
+               `hourly` を **17分 後に立て直し**、同じ周に 3行目（役は hourly）が入った
+
+    ＝ **同じ周かどうかは、刻の近さでも役でも決まりません。**（親は同じ役を同じ周に
+    2度 立てることがあり、その差は秒でも分でもありうる。）
+    **周の印は `rounds.jsonl` が持っているので、そちらへ寄せます** ——
+    各行を**いちばん近い周の刻**（前でも後でもよい）へ寄せ、同じ周に寄った行は 1点 に畳む。
+    **「前の周」ではなく「いちばん近い」なのは、親が周を記録する 10秒 前に模型を選ぶから**です
+    （実測 10:00:39 の行 対 10:00:49 の周）。
+
+    `MARGIN_SAME_SEC` と役で挟む手は、**`rounds.jsonl` が読めない回の控え**として残してあります。
 
     **覆る条件**: (1) この列が **3周 続けて 1つも積まれなかったら**（親が `pace()` で
     落ちている ＝ `record_model_choice` の `except` に入っている）、欠けを黙って詰めないこと
     —— 空の周は空のまま出し、`pace()` の側を見ること。
     (2) 列の点が **8周 そろっても門を 1度も切らないまま 3日** 続いたら、
     見る数は余裕ではなく着地の側へ戻してよい（`ceiling_rate()` の覆る条件 (1) と一緒に読む）。
-    (3) **同じ役が `MARGIN_SAME_SEC` 以内に 2行 続いた回**が出たら（＝ 親が 1周に
-    同じ役を 2度 立てた／穴埋めが速すぎた）、役だけでは周を分けられません ——
+    (3) **`rounds.jsonl` の刻から `MARGIN_SAME_SEC * 2` より遠い行**が出たら
+    （`margin_series` はそれでもいちばん近い周へ寄せます）、周の記録が落ちている側 ——
     そのときは `record_model_choice` に**周の印そのもの**（`rounds.jsonl` の `round`）を
-    書かせること。**時刻の定数を伸ばして繕わないこと。**
+    書かせること。**寄せの幅を伸ばして繕わないこと。**
     """
     if not MODEL_CHOICE_FILE.exists():
         return []
@@ -1418,21 +1461,31 @@ def margin_series(n: int = 8) -> list[tuple[str, float]]:
             continue
         pts.append((at, str(r.get("work_kind") or "").split(":")[0], float(m)))
     pts.sort()
+    marks = round_marks()
     out: list[tuple[str, float]] = []
-    roles: set[str] = set()                      # いま開いている周に、もう出た役
+    keys: list[object] = []                      # 各点が寄った周（`marks` の番号 or 控えの束）
+    roles: set[str] = set()                      # 控え: いま開いている周に、もう出た役
     prev: datetime | None = None
     for at, role, m in pts:
         try:
-            t = datetime.fromisoformat(at)
+            t: datetime | None = datetime.fromisoformat(at)
         except ValueError:
             t = None
-        same = (out and prev is not None and t is not None
-                and role not in roles
-                and abs((t - prev).total_seconds()) <= MARGIN_SAME_SEC)
-        if same:
+        if marks and t is not None:
+            # **いちばん近い周へ寄せる**（前でも後でもよい ＝ 親は周を記録する手前で模型を選ぶ）。
+            key: object = min(range(len(marks)),
+                              key=lambda i: abs((marks[i] - t).total_seconds()))
+        else:
+            # 控え（`rounds.jsonl` が無い回）: 役がちがい、かつ `MARGIN_SAME_SEC` 以内なら同じ周。
+            same = (out and prev is not None and t is not None
+                    and role not in roles
+                    and abs((t - prev).total_seconds()) <= MARGIN_SAME_SEC)
+            key = keys[-1] if same else ("fallback", len(out))
+        if keys and key == keys[-1]:
             roles.add(role)                      # 同じ周の 2行目 ＝ 列には足さない
             continue
         out.append((at, m))                      # 周の 1行目（その周が見た数）
+        keys.append(key)
         roles = {role}
         prev = t
     return out[-n:]
