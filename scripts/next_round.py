@@ -981,6 +981,110 @@ def gap_ratio_median(limit: int = 10) -> tuple[float | None, int]:
     return (median(got) if got else None), len(got)
 
 
+#: §7 (d) の門（区間 ÷ 狙い先）。**2つ 続いたら**引く。
+#: 出どころは1か所（それまで 1.25 は註と §7 の字にしか無く、数える口が持っていませんでした）。
+GAP_RATIO_GATE = 1.25
+
+
+#: 模型を選んだ行を周へ寄せるときの、離れてよい幅（分）。これより遠い行は**どの周にも付けません**。
+#: 周の刻が無い時期の行を、いちばん近いというだけで遠くの周へ押し込まないため
+#: （実物で踏んだ: 寄せる幅を置かないと、周の台帳が薄い日の行が端の周へ積まれます）。
+RESPAWN_NEAR_MIN = 30.0
+
+
+def respawn_rounds(marks: list[datetime] | None = None,
+                   rows: list[dict] | None = None,
+                   near_min: float = RESPAWN_NEAR_MIN,
+                   last: int | None = None) -> list[tuple[datetime, str, int]]:
+    """**同じ周に、同じ役のサブを 2度 以上 立てた周**（＝ 立て直し）を古い順で返す。
+
+    返り: `(周の刻, 役, その周にその役を立てた回数)` の並び。出どころは
+    `data/model_choice.jsonl`（親が模型を選ぶたびに 1行）＋ `data/rounds.jsonl`（周の刻）。
+    **追加 0単位。**
+
+    **なぜ足したか（2026-09-11 11:2x・optimizer・Opus。この回に踏んだ）**:
+    §7 (d)（区間 ÷ 狙い先・門 1.25・**2つ 続いたら**）が、この回に **1.309** で 1つ目 を出しました。
+    中身はこうです:
+
+        10:00:39  GO（`hourly` は fable）
+        10:0x     **429（monthly spend limit）が 2体 連続**
+        10:17:17  親が `hourly` を **opus** で立て直した
+        10:46:35  次の周   ＝ **周から周 45.9分**（床 35.0分 ＝ 1.309倍）
+                  **立て直しの刻から数えると 29.3分**（床の下）
+
+    ＝ **1.309 の出どころは上限でも丸めでもなく、立て直しの 17分 です。**
+    §7 21:4x はこの型を「条件をそのまま読んだ次の回は、**在りもしない上限を探しにいきます**」と
+    書いており、**その族の 2つ目**です（1つ目 は 09/10 12:18 の 1.481 ＝ 起こしが届かず心拍が拾った回で、
+    そちらは `wake_missed()` が名指しします）。
+
+    ＝ **門を越えた窓には、いま 2つ の出どころが在ります。片方は口が在り、もう片方は無い。**
+    無いほうを、次の回が `model_choice.jsonl` と `rounds.jsonl` を**手で突き合わせずに**読めるようにしました
+    （`wake_missed` と同じ形・§7 (d)「手で突き合わせないこと」）。
+
+    **数えるだけで、区間は 1つ も落としません** —— 落とすと「2つ 続いたら」の分子ごと消え、
+    本物の上限が来た回に鳴らなくなります（§5 教訓の形 4つ目「引けない条件を作らないこと」）。
+
+    **覆る条件**: (1) 立て直しを抱えない窓で 1.25 を 2つ 続けて越えたら、そのとき初めて
+    「上限が在る」と読むこと。(2) 立て直しが **枠のリセットを跨いで**続いたら（＝ 429 が Fable の
+    尽きたせいではない）、`quota.sub_model` の門ではなく API の側を見ること。
+    (3) 1周に 3行 以上 の役が当たり前になったら（いまは 429 の回だけ）、この口は
+    「立て直し」ではなく「片肺の埋め」を数えているので、`patch` の列と突き合わせ直すこと。
+    """
+    import quota as _quota                                       # noqa: PLC0415
+
+    marks = list(marks if marks is not None else _quota.round_marks())
+    if last is not None and marks:
+        marks = marks[-int(last):]
+    if rows is None:
+        rows = []
+        f = _quota.MODEL_CHOICE_FILE
+        if f.exists():
+            for line in f.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except Exception:                                # noqa: BLE001
+                    continue
+    if not marks or not rows:
+        return []
+
+    counts: dict[tuple[datetime, str], int] = {}
+    for row in rows:
+        at, kind = row.get("at"), row.get("work_kind") or ""
+        if not at:
+            continue
+        try:
+            t = datetime.fromisoformat(at)
+        except Exception:                                        # noqa: BLE001
+            continue
+        role = kind.split(":")[0] or "?"
+        # **いちばん近い周へ寄せる**（親は周を記録する前に模型を選ぶので、
+        # 「その行より前の周」では 1つ 前に付きます ——`quota.margin_series` の註と同じ）。
+        mark = min(marks, key=lambda m: abs((m - t).total_seconds()))
+        if abs((mark - t).total_seconds()) > float(near_min) * 60.0:
+            continue                                             # どの周にも付けない
+        counts[(mark, role)] = counts.get((mark, role), 0) + 1
+    return sorted(((m, r, n) for (m, r), n in counts.items() if n > 1),
+                  key=lambda x: x[0])
+
+
+def gap_over_gate(limit: int = 10, gate: float = GAP_RATIO_GATE) -> dict:
+    """**門を越えた窓を、立て直しを抱えているかどうかと一緒に**返す（§7 (d) の読む口）。
+
+    返り: `{"ratios": [...], "over": [比], "n_over": int, "respawn": [(刻, 役, 回数)]}`。
+    **`over` が 2つ 続いたときだけ (d) は引かれます**（`respawn_rounds` の註）。
+    """
+    got = gap_ratios(limit=limit)
+    over = [round(v, 3) for v in got if v > gate]
+    # **立て直しは、いま見ている窓のぶんだけ**（区間 `limit` 本 ＝ 周 `limit + 1` つ）。
+    # 全部 返すと、周の台帳が薄かった日の古い塊が毎回 出て、読む側が門と結び付けられません。
+    return {"ratios": [round(v, 3) for v in got], "over": over,
+            "n_over": len(over), "gate": gate,
+            "respawn": respawn_rounds(last=limit + 1)}
+
+
 def rounding_evidence(rows: list[dict] | None = None) -> tuple[int, int]:
     """**19:1x の丸めが効いたかを、「答えられる行」だけで数える**
     （2026-09-09 02:5x JST・optimizer・Opus が踏んで足した）。
@@ -1307,6 +1411,14 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
     base["wake_missed_n"] = _miss["placed"]
     base["wake_lag_median_min"] = (None if _miss["median_lag"] is None
                                    else round(_miss["median_lag"], 2))
+    # **門を越えた窓と、その窓が立て直しを抱えているか**（2026-09-11 11:2x・`respawn_rounds` の註）。
+    # §7 (d) は「門 1.25・**2つ 続いたら**」で、越えた窓には出どころが 2つ 在ります:
+    # 起こしが届かなかった側（`wake_missed` が名指しする）と、**429 の立て直し**（この 2つ）。
+    # 名指しが無いと、次の回は **在りもしない上限を探しに行きます**（§7 21:4x の型）。
+    _gate = gap_over_gate()
+    base["gap_over_gate_n"] = _gate["n_over"]
+    base["gap_over_gate"] = _gate["over"]
+    base["respawn_rounds"] = [[m.isoformat(), r, n] for m, r, n in _gate["respawn"]]
     group = current_round(span_min=round_span(floor))
 
     # **0体 は「間隔を見ない」ではなく「起こしを置いて待つ」**（2026-09-03・上の節）。
@@ -1738,6 +1850,19 @@ def main() -> int:
 
     d = decide(live=args.live)
     print(f"[next_round] 間隔 {d['floor_min']:.0f}分（{d['source']}）")
+    # **門を越えた窓は、出どころと一緒に印字する**（2026-09-11 11:2x・`respawn_rounds` の註）。
+    # §7 (d) は「2つ 続いたら」なので、1つ では何も起きません ——
+    # けれど **名指しが無いと、次の回は在りもしない上限を探しに行きます**（§7 21:4x の型）。
+    if d.get("gap_over_gate"):
+        print(f"  [?] 区間 ÷ 狙い先が 門 {GAP_RATIO_GATE} を越えた窓: "
+              f"{'・'.join(f'{v:.3f}' for v in d['gap_over_gate'])}"
+              f"（10窓 中 {d['gap_over_gate_n']}つ・**2つ 続いたら** §7 (d) が引かれます）")
+        for at, role, n in d.get("respawn_rounds") or []:
+            print(f"      ＊同じ窓の中に**立て直し**が在ります: {at} に `{role}` を {n}回"
+                  "（429 など）＝ **上限ではなく、その周が長かった理由**です")
+        if not d.get("respawn_rounds"):
+            print("      ＊立て直しは在りません ＝ 起こしの側を見ること"
+                  f"（`wake_missed` いま {d.get('wake_missed')}本 / {d.get('wake_missed_n')}本）")
     # **旧道具の読み出し（種別の下読み・枠の機会費用・立っている決め）は、ここから出さない**
     #     （2026-09-06 17:xx JST・optimizer・Fable）。09/04〜05 にここへ足した3つの塊は
     #     `src/run_marker`・`src/slot_cost`・`src/daily_pick` を読んで印字していた。手法は 09/05 に
