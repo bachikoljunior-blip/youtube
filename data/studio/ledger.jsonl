@@ -3179,6 +3179,21 @@
 {"seconds": 86.9, "image": true, "chars": 458, "scenes": [6.1, 6.7, 5.2, 8.7, 6.0, 8.6, 6.6, 10.1, 8.6, 6.3, 7.7, 6.4], "at": "2026-09-11T10:29:12+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "built"}
 {"mismatched": 0, "model": "small", "mode": "kana", "diffs": [], "escalated": [2, 5, 10, 11], "tail": {}, "voice": {}, "how": {"2": "small→medium", "5": "small→medium+prompt", "10": "small→medium", "11": "small→medium"}, "at": "2026-09-11T10:30:23+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "heard"}
 {"n": 2, "kinds": ["missing_cond", "missing_cond"], "at": "2026-09-11T10:34:49+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
+{"subs": 28, "views": 86406, "videos": 270, "at": "2026-09-11T10:48:29+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"views_live": 948, "views_ledger": 943, "over": 5, "age_h": 48.8, "src": "status", "at": "2026-09-11T10:48:29+09:00", "id": "gv1u7n_pCAQ", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-11T10:48:29+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"takeaway": "退職金にかかる税金は、働いた年数によって決まる非課税枠を超えた分に半分の税率で課税される。", "unclear": ["「決まり」が何か（法律？制度？）の説明がない", "「1年にみたないはんぱは、1日でも1年とします」という複雑な表現", "「はみ出ます」という表現が何に対してなのか初見では分かりにくい", "退職所得控除額などの専門用語を日本語化しているが、「非課税枠」という概念自体が初心者には抽象的"], "at": "2026-09-11T10:50:11+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "cold_read"}
+{"understand": 3, "n_real": 4, "done": false, "at": "2026-09-11T10:51:14+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "critique"}
+{"understand": 3, "n_real": 2, "done": false, "at": "2026-09-11T10:54:38+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "critique"}
+{"understand": 2, "n_real": 3, "done": false, "at": "2026-09-11T10:56:35+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "critique"}
+{"understand": 2, "n_real": 3, "done": false, "at": "2026-09-11T10:58:51+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "critique"}
+{"takeaway": "退職金にかかる税金は、勤続年数で決まる非課税枠を超えた部分に対してかかり、長く働くほど非課税枠が大きくなる。", "unclear": ["「決まり」の具体的な法律用語が何か", "「はみ出た700万円は、半分にします」という表現が分かりにくい（課税対象額が50%という意味）", "「1年にみたないはんぱは、1日でも1年とします」の説明が複雑"], "at": "2026-09-11T10:59:59+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "cold_read"}
+{"seconds": 90.1, "image": true, "chars": 472, "scenes": [6.1, 6.7, 5.2, 8.7, 6.0, 8.6, 6.6, 9.9, 11.0, 6.3, 8.7, 6.4], "at": "2026-09-11T11:02:41+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "built"}
+{"mismatched": 1, "model": "small", "mode": "kana", "diffs": [{"i": 8, "d": [["でます", ""]]}], "escalated": [2, 5, 10, 11], "tail": {}, "voice": {}, "how": {"2": "small→medium", "5": "small→medium+prompt", "10": "small→medium", "11": "small→medium+prompt"}, "at": "2026-09-11T11:04:14+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "heard"}
+{"seconds": 90.3, "image": true, "chars": 473, "scenes": [6.1, 6.7, 5.2, 8.7, 6.0, 8.6, 6.6, 10.1, 11.0, 6.3, 8.7, 6.4], "at": "2026-09-11T11:06:01+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "built"}
+{"mismatched": 0, "model": "small", "mode": "kana", "diffs": [], "escalated": [2, 5, 10, 11], "tail": {}, "voice": {}, "how": {"2": "small→medium", "5": "small→medium+prompt", "10": "small→medium", "11": "small→medium+prompt"}, "at": "2026-09-11T11:07:16+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "heard"}
+{"seconds": 90.3, "image": true, "chars": 473, "scenes": [6.1, 6.7, 5.2, 8.7, 6.0, 8.6, 6.6, 10.1, 11.0, 6.3, 8.7, 6.4], "at": "2026-09-11T11:09:17+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "built"}
+{"n": 2, "kinds": ["missing_cond", "missing_cond"], "at": "2026-09-11T11:12:19+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "crosscheck"}
 {"subs": 28, "views": 86406, "videos": 270, "at": "2026-09-11T10:48:48+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
 {"views_live": 948, "views_ledger": 943, "over": 5, "age_h": 48.8, "src": "status", "at": "2026-09-11T10:48:48+09:00", "id": "gv1u7n_pCAQ", "event": "views_over"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-11T10:48:48+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
