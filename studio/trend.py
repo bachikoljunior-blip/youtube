@@ -737,9 +737,16 @@ def last_rise_gap_h(pts: list[dict], env: list[int]) -> float:
     return last_age - float(pts[0]["age_h"])
 
 
-HOLD_AGES = (6.0, 12.0, 24.0)
+HOLD_AGES = (6.0, 12.0, 24.0, 48.0)
 #: §1 の表が「公開 6時間で最終の 70〜90%」と書いている帯。**この帯に入るかを、毎回 数で見る。**
 HOLD_BAND = (70.0, 90.0)
+#: §1 の表の**後半**（「48時間でほぼ止まる」）を数える齢。**2026-09-12 04:3x に `HOLD_AGES` へ足した**
+#: —— それまで 6h・12h・24h しか印字しておらず、**後半の覆る条件 (2) を数える口が 1つも無かった**
+#: （`late_gain` の註）。
+HOLD_LATE_H = 48.0
+#: §1 の 覆る条件 (2) の門: 「48h の後の伸びが **3本 続けて 5% 未満**なら、後半を戻す」。
+HOLD_LATE_GATE_PCT = 5.0
+HOLD_LATE_RUN = 3
 #: 「その齢ちょうどの点」と見なす幅（時間）。台帳の `age_h` は 0.1 刻みなので 3分 で足りる。
 #: **表示の `＊` の 0.5h とは別物** —— あちらは「読む人への注意」、こちらは**判定**に使う。
 HOLD_EXACT_H = 0.05
@@ -924,6 +931,95 @@ def hold_verdict(cell: dict | None, growing: bool,
     return "unknown"
 
 
+def late_gain(got: list[dict]) -> list[dict]:
+    """**齢 48h より後に付いた割合**（§1 の表の**後半**「48時間でほぼ止まる」の分子）。API 0単位。
+
+    **なぜ足したか（2026-09-12 04:3x JST・optimizer・Opus が、この回に踏んだ）**:
+    §1 の表のこの行は **覆る条件 (2)「48h の後の伸びが 3本 続けて 5% 未満なら、後半を戻す」**を
+    持ちながら、**その割合を印字する口が 1つも在りませんでした** —— `HOLD_AGES` は 6h・12h・24h で
+    止まっており、`hold_lines` も `flats` も「48h の後」を数えません。
+    ＝ **サブが毎周 やる仕事 (b)（覆る条件を数字で見る）が、この 1つ だけ構造的にできない。**
+
+    **実際に何が起きていたか**: その行は自分で「**数は `trend` が毎周 印字する** —— ここにも §7 にも
+    写さない」と書いたうえで、**手で数えた 2つ の割合を本文へ写して**いました
+    （`lQHX9LJ80Sg` **22.5%**・`gv1u7n_pCAQ` **+1.5%**・2026-09-11 14:2x）。
+    この回に数え直すと **13.4〜24.3%** と **2.1%** ＝ **どちらも古くなっています**
+    （分母の「いまの再生」が伸びたため）。**口が無い数は、写されるか、消えるかのどちらかです。**
+
+    **挟みで読む**（`hold_verdict` と同じ規則）: 齢 48h ちょうどの点はめったに無いので、
+    48h の値は「48h 以前の最後の点（`pct`）」と「48h を越えた最初の点（`hi_pct`）」に挟まれます。
+    ＝ **後の伸び ＝ 100 - (48h の値)** は ``[100-hi_pct, 100-pct]``。
+
+    **伸びている本に「5% 未満」は返しません** —— 分母（いまの再生）がこれから増えるので、
+    **後の伸びの割合は これから上がるだけ**（下端しか決まっていない）。
+    ＝ ``over``（5% 以上）は伸びていても言い切れますが、``under`` は**確定した本にだけ**。
+
+    **判定は `hourly`**（§5・optimizer は数を並べるまで）。
+
+    **覆る条件**: (1) ``unknown`` の本が **3本** を越えたら、足りないのは判定ではなく
+    **`flats` の境目**（確定が来ない ＝ `hold` の覆る条件 (5) と同じ側）。
+    (2) 齢 48h ちょうど（±`HOLD_EXACT_H`）の点を持つ本が **3本** そろったら、挟みは潰れるので
+    1点 の判定に戻してよい（`hold_verdict` の覆る条件 (1) と同じ形）。
+    """
+    out: list[dict] = []
+    for r in got:
+        c = r["at"].get(HOLD_LATE_H)
+        if not c:
+            continue
+        lo = 100.0 - float(c["hi_pct"])   # 48h の値の**上端** ＝ 後の伸びの**下端**
+        hi = 100.0 - float(c["pct"])
+        growing = bool(r["growing"])
+        if lo >= HOLD_LATE_GATE_PCT:
+            v = "over"                    # 下端が門の上 ＝ 伸びていても言い切れる
+        elif hi < HOLD_LATE_GATE_PCT and not growing:
+            v = "under"
+        else:
+            v = "unknown"
+        out.append({"id": r["id"], "day": r["day"], "lo": lo, "hi": hi,
+                    "growing": growing, "verdict": v, "age_h": float(r["age_h"])})
+    return out
+
+
+def late_run(got: list[dict]) -> int:
+    """**新しいほうから数えて、``under`` が何本 続いているか**（§1 の 覆る条件 (2) の「3本 続けて」）。
+
+    `late_gain()` の並びは公開の順なので、**末から**数える。``unknown`` は鎖を切る
+    （「5% 未満だった」と言えていないので、続いた本には数えられない）。
+    """
+    n = 0
+    for r in reversed(got):
+        if r["verdict"] != "under":
+            break
+        n += 1
+    return n
+
+
+def late_gain_line(got: list[dict]) -> str:
+    """`late_gain()` を 1行 で印字する。**数は写さない ＝ 毎周 ここから読むこと**（§1 の行）。"""
+    rows = late_gain(got)
+    if not rows:
+        return ""
+    mark = {"over": "**5% 以上**", "under": "5% 未満", "unknown": "**まだ言えない**"}
+    body = "・".join(
+        "%s %s %s（%s%s）" % (
+            r["day"], r["id"],
+            ("%.1f%%" % r["lo"]) if abs(r["hi"] - r["lo"]) < 0.05
+            else "%.1f〜%.1f%%" % (r["lo"], r["hi"]),
+            mark[r["verdict"]],
+            "・**まだ伸びている ＝ 下端**" if r["growing"] else "・確定")
+        for r in rows)
+    run = late_run(rows)
+    return (
+        f"**齢 {HOLD_LATE_H:.0f}h より後に付いた割合**（§1 の表の後半「48時間でほぼ止まる」の"
+        f" 覆る条件 (2) の分子・`trend.late_gain`・API 0単位）: {body}。"
+        f"**{HOLD_LATE_GATE_PCT:.0f}% 未満が新しいほうから続いているのは {run}本**"
+        f"（門 {HOLD_LATE_RUN}本 ＝ **{'引かれました' if run >= HOLD_LATE_RUN else '引かれません'}**）。"
+        f"**伸びている本に「{HOLD_LATE_GATE_PCT:.0f}% 未満」は返しません** ——"
+        f"分母（いまの再生）がこれから増えるので、この割合は**下端しか決まっていません**"
+        f"（`late_gain` の註）。**判定は `hourly`**（§5）。"
+        f"**この行を §1 にも §7 にも写さないこと** —— 写した 2つ は 1日 で古くなりました（同じ註）。")
+
+
 def hold_lines(rows: list[dict]) -> list[str]:
     """`hold()` を印字する。**帯に入った本の数は、写しではなく数から作る**（`hold` の註）。
 
@@ -977,6 +1073,10 @@ def hold_lines(rows: list[dict]) -> list[str]:
         + (f"**「確定」＝ 最後の伸びから {got[0]['flat_thresh_h']:.1f}時間 超**"
            "（`flats` の境目・05:4x）——**直近2点の平らで「止まった」と読まないこと**。"
            if got else ""))
+    # **§1 の表の後半（「48時間でほぼ止まる」）の分子**（`late_gain` の註・2026-09-12 04:3x）。
+    late = late_gain_line(got)
+    if late:
+        out.append(late)
     return out
 
 
