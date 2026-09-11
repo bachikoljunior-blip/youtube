@@ -47,9 +47,16 @@ def test_record_role_is_light(monkeypatch):
 
 
 def test_cost_per_sub_is_delta_over_births(monkeypatch):
+    """**分母は `data/model_choice.jsonl` の「Fable で立てたサブ」**（2026-09-11 09:4x）。
+
+    09/05 の組み直しまでは `_births_from_runs`（旧 `data/runs.jsonl`）でしたが、
+    その台帳は **09/05 16:46 で止まっており**、この関数はずっと None を返していました
+    （＝ 上の `test_leverage_role_stops_one_sub_short_of_100` の枝が実物では一度も通らない）。
+    口の乗り換えは `tests/test_quota_fable_cost_per_sub.py`。
+    """
     at = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
     monkeypatch.setattr(quota, "fable_rate", lambda now=None, anchors=None: {
         "rate": 6.0, "source": "measured", "from_at": at, "to_at": at,
         "from_pct": 60.0, "to_pct": 71.0})
-    monkeypatch.setattr(quota, "_births_from_runs", lambda a, b: 11)
+    monkeypatch.setattr(quota, "_subs_from_choices", lambda a, b, model=None: 11)
     assert abs(quota.fable_cost_per_sub() - 1.0) < 1e-9

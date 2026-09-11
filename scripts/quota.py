@@ -871,6 +871,11 @@ def _births_from_runs(start: datetime, end: datetime) -> int:
 
     1行ごとの `session` は `session_XXX#agent_YYY` の形で、**回ごとに別**です。
     ここは重複を潰して数えるだけ。読めなければ 0（呼ぶ側が `max()` するので害はない）。
+
+    **2026-09-11 09:4x から、生きている呼び手は 1つも在りません**（検査だけが呼ぶ）——
+    `data/runs.jsonl` は旧 `run_marker.py` の帳簿で **09/05 16:46 から増えていない**ので、
+    ここを新しい門の分母にすると**その門は生まれた瞬間に死にます**。
+    サブを数えるなら `_subs_from_choices()`（`data/model_choice.jsonl`）を使うこと。
     """
     if not RUNS_LOG.exists():
         return 0
@@ -1186,17 +1191,82 @@ OTHER_MODEL = "opus"
 MODEL_CHOICE_FILE = ROOT / "data" / "model_choice.jsonl"
 
 
+def _subs_from_choices(start: datetime, end: datetime,
+                       model: str | None = None) -> int:
+    """`start`〜`end` に**親が立てたサブの数**（`data/model_choice.jsonl` の行数）。
+
+    `model` を渡すと、その模型で立てたサブだけ（例 `"fable"`）。
+
+    ## **なぜ `runs.jsonl` ではないか**（2026-09-11 09:4x・optimizer・Opus）
+
+    `_births_from_runs()` が読む `data/runs.jsonl` は**旧道具の帳簿**で、
+    **2026-09-05 16:46 の行を最後に 1行も増えていません**（§8 ＝ 使わないもの）。
+    ＝ それを分母にしていた `fable_cost_per_sub()` は、**組み直しの日から
+    ずっと 0体 → None** を返しており、`role_model()` の
+    「**100% を越える形では立てない**」という門は **一度も引けないまま**でした。
+
+    親は**サブを立てる直前**に 1行ずつ `record_model_choice()` で積むので、
+    この台帳は役と模型つきで生きています（実測 320行・最後は この回の 09/11 09:25）。
+
+    **陽性対照**（`quota.ROLE_TIER` の註が書いている実測と突き合わせた）::
+
+        09/06 16:41 → 09/07 08:04   註「fable **14体** で「Fable のみ」+13 ＝ 0.93%/体」
+        この関数（model="fable"）    **14**      ＝ 註の数と一致
+        `_births_from_runs()`        **0**      ＝ 死んだ台帳
+
+    **覆る条件**: (1) 親が `record_model_choice` の `except` に落ちて行が積まれない回が
+    続いたら（`margin_series()` の覆る条件 (1) と同じ症状）、この数も過少になります ——
+    そのときは行の欠けを黙って詰めず、`pace()` の側を見ること。
+    (2) この台帳は**立てる直前**に書くので、親が印字だけして立てなかった周があると
+    **過大**に数えます（過大 ＝ 1体ぶんの費用を小さく見る ＝ 切り替えが遅い側）。
+    周ごとに 2行 を越えない事は `next_round.ROLES` が決めているので、
+    **1周に 3行 以上 が続いたらここを疑うこと**。
+    """
+    if not MODEL_CHOICE_FILE.exists():
+        return 0
+    n = 0
+    try:
+        lines = MODEL_CHOICE_FILE.read_text(encoding="utf-8").splitlines()
+    except Exception:                                          # noqa: BLE001
+        return 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        at = _parse_iso(row.get("at"))
+        if not at or not (start <= at <= end):
+            continue
+        if model is not None and row.get("model") != model:
+            continue
+        n += 1
+    return n
+
+
 def fable_cost_per_sub(now: datetime | None = None) -> float | None:
     """**サブ1体が「Fable のみ」を何% 食うか**（同じ枠の2点の Δ% ÷ その間に立ったサブ）。
 
-    測れなければ None。`fable_rate()` の measured の区間と `_births_from_runs()` を使う。
+    測れなければ None。`fable_rate()` の measured の区間と、その間に
+    **Fable で立てたサブの数**（`_subs_from_choices(..., model="fable")`）を使う。
+
+    **分母は「Fable で立てたサブ」だけ**です —— 同じ周の `optimizer` は Opus なので
+    「Fable のみ」の目盛りを 1%も食いません。周やサブ全部を分母にすると
+    **1体ぶんが半分に見え**、100% の手前で切り替える門が 1周 遅れます。
+
+    **2026-09-11 09:4x まで、ここは `_births_from_runs()`（旧 `data/runs.jsonl`）を
+    読んでおり、09/05 の組み直し以降ずっと 0体 → None でした** ＝
+    `role_model()` の「100% を越える形では立てない」枝は**一度も通っていません**
+    （`_subs_from_choices` の註に陽性対照）。
     """
     now = now or datetime.now(timezone.utc)
     fr = fable_rate(now)
     if not fr or fr.get("source") != "measured":
         return None
     try:
-        births = _births_from_runs(fr["from_at"], fr["to_at"])
+        births = _subs_from_choices(fr["from_at"], fr["to_at"], model="fable")
     except Exception:                                          # noqa: BLE001
         return None
     if not births:
@@ -1756,7 +1826,10 @@ def pace(now: datetime | None = None) -> dict | None:
     used = float(a["used_percent"])
     births = _births_between(rows, start, at)
     # **1周に何体 立っているか**（診断。分母には使いません —— `_laps_between()` の註）。
-    subs = _births_from_runs(start, at)
+    # **数える口は `data/model_choice.jsonl`**（2026-09-11 09:4x）—— 旧 `runs.jsonl` は
+    # 09/05 で止まっており、**この行は 14体・1周に 0.16体**（＝ 1周に 1体も立っていない）
+    # と印字していました。`_subs_from_choices` の註。
+    subs = _subs_from_choices(start, at)
 
     # **リセット直後は `hours`／`births` がどちらも上限**（窓の下限を採っている）
     # なので、そこから出る `rate` も `per_lap` も**下限**にしかなりません。
