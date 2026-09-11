@@ -20,12 +20,16 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from datetime import timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import quota as _quota  # noqa: E402  （門も判定も、この 1か所 から引く）
 
 
 def _load():
@@ -114,11 +118,16 @@ def test_短く終わるかは_METHOD_5_の決めを指すこと(kind):
     hits = [i for i in range(len(text)) if text.startswith("短く終わ", i)]
     assert hits, "「短く終わる」の行が本文から消えました —— 決めの指し先ごと見直すこと"
     for i in hits:
-        # **前を見ないこと**（この検査を書いた回に踏んだ）—— 直前の行が別の用で
+        # **前の行を見ないこと**（この検査を書いた回に踏んだ）—— 直前の行が別の用で
         # 「METHOD §5 の表のとおり」と言っており、**古い字のままでも緑になりました**。
-        # 指し先は**同じ文の中**に在ること ＝ 後ろだけを見る。
-        seg = text[i:i + 300]
-        assert "§5" in seg, f"「短く終わる」が §5 の決めを指していません: {seg[:120]}"
+        # **2026-09-11 17:0x に「後ろ 300字」から「同じ行」へ当て直しました**（optimizer・Opus）:
+        # 【枠】の段が運ぶ `quota.short_words()` の行は **§5 を文の頭に置く**ので、
+        # 後ろだけを見る形では**指し先が在るのに落ちます**（実測・この回）。
+        # 行は文より狭い単位なので、上の「別の行が指していた」型は**入りません**。
+        beg = text.rfind("\n", 0, i) + 1
+        end = text.find("\n", i)
+        seg = text[beg:] if end < 0 else text[beg:end]
+        assert "§5" in seg, f"「短く終わる」が §5 の決めを指していません: {seg[:160]}"
     assert "どちらかはあなたが決めること" not in text, (
         "09/09 22:1x の字が残っています —— §5 は 09/10 15:1x に役ごとの着地で決めました")
 
@@ -160,6 +169,11 @@ def _stub_landing(monkeypatch, reach_carry: float, land_all: float):
     mod.landing = lambda *a, **k: {"all": land_all, "fable": None,
                                    "fable_spent_h_before_reset": None, "laps": 0}
     mod.JST = timezone(timedelta(hours=9))
+    # **判定の行は差し替えない**（2026-09-11 17:0x）—— 門と側と `blind` は
+    # `quota.short_words` の 1か所 に在り、この段はそれを運ぶだけ。
+    # ここで偽の判定を返すと、**検査だけが通る門**を作ることになります。
+    mod.short_words = _quota.short_words
+    mod.SHORT_LANDING_GATE = _quota.SHORT_LANDING_GATE
     for name in ("scripts.quota", "quota"):
         monkeypatch.setitem(sys.modules, name, mod)
 
@@ -173,9 +187,52 @@ def test_門ちょうどの字を出さない(monkeypatch):
 
 
 def test_門の数を段の中で名指しすること(monkeypatch):
-    """読む側が METHOD を開かずに比べられるよう、門 **98%** を同じ行に置くこと。"""
+    """読む側が METHOD を開かずに比べられるよう、門を同じ段に置くこと。
+
+    **2026-09-11 17:0x に当て直しました**（optimizer・Opus）—— 前は
+    `"門は **98%**" in ...` と**門の数そのもの**を当てており、段の側も literal で
+    98 を持っていました（`SHORT_LANDING_GATE` と 2か所 ＝ `short_verdict` の覆る条件 (3)）。
+    いま段が運ぶのは `quota.short_words()` の1行なので、当てるのは
+    **定数から作った字が在るか**だけです。
+    """
     _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
-    assert "門は **98%**" in sp._quota_block()
+    assert f"（門 {_quota.SHORT_LANDING_GATE:.0f}%）" in sp._quota_block()
+
+
+def test_判定そのものを印字すること(monkeypatch):
+    """**手で引き比べさせないこと**（13:1x の決め・§5 教訓の形 7つ目）。
+
+    段は 2つ の数と門を並べるだけでなく、**引かれたか**を言うこと。
+    ここは門を跨ぐ 2通りを撃って、**向きが両方 出る**ことまで見ます
+    （**きょうの状態を不変条件にしない**・§5 教訓の形 6つ目）。
+    """
+    _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
+    assert "**引かれました ＝ 持ち場に何も無ければ短く終わってよい**" in sp._quota_block()
+    _stub_landing(monkeypatch, reach_carry=90.0, land_all=90.0)
+    assert "**引かれません ＝ 余る側 ＝ 短く終わらないこと**" in sp._quota_block()
+
+
+def test_2つの側が答えを違える回は段がそう言うこと(monkeypatch):
+    """§5 13:1x の覆る条件 (2')（`agree` False）は、**段の側でも見えること**。"""
+    _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
+    assert "**もう一方の側は逆の答え**" in sp._quota_block()
+
+
+def test_positive_control_口が無い回は空欄にしない(monkeypatch):
+    """**陽性対照**: `short_words` を外すと、段は黙らず「読めません」と言うこと。
+
+    （`from` で縛っていた頃は、この差し替えで**段が丸ごと空**になりました ＝
+    空欄が「余裕がある」に読まれる形・`_short_lines` の註）
+    """
+    import sys
+    _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
+    for name in ("scripts.quota", "quota"):
+        mod = sys.modules.get(name)
+        if mod is not None and hasattr(mod, "short_words"):
+            monkeypatch.delattr(mod, "short_words", raising=False)
+    got = sp._quota_block()
+    assert "**短く終わってよいかが読めません**" in got, got
+    assert "床に従えば **すべて 99.7%**" in got, got
 
 
 def test_positive_control_丸めの差は実在する(monkeypatch):

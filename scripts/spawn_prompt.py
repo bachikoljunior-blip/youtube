@@ -576,6 +576,57 @@ def _standing_models() -> str:
     return "・".join(out)
 
 
+def _short_lines(reach_floor: float | None, p: dict) -> list[str]:
+    """**「短く終わってよいか」の判定は、`quota.short_words()` の1行をそのまま運ぶ**
+    （2026-09-11 17:0x・optimizer・Opus。**API 0単位**）。
+
+    **踏んだ形**: 【枠】の段は「床に従えば **99.4%**・いまの間隔のまま **99.4%**
+    （§5 15:1x の覆る条件 (1) の門は **98%**・当てるのは「床に従えば」の側）」と
+    **数と門と側**を並べていましたが、**判定（引かれたか）は1文字も印字していません**でした。
+    ＝ サブは毎周、99.4 と 98 を**手で引き比べます**。
+    ところが 13:1x の決めは、その逆です ——「引き比べは `quota.short_verdict` が毎周 印字する
+    ＝ **手で当てないこと**」（門 98% は 40周 のあいだ METHOD の字の中にしか無く、
+    40周 とも手で引かれていた・§5 教訓の形 7つ目）。
+    **この段は、サブが METHOD を読むより先に目に入る印字です**（同じ教訓の形の当のもの）。
+
+    **2か所に持っていた物が 2つ**（どちらもこの回に畳んだ）:
+
+        門 98%        `SHORT_LANDING_GATE` と、この段の **literal**（`short_verdict` の覆る条件 (3)
+                      は「2か所に持たないこと」と書いてある側）
+        `blind`       「区間の窓 ＞ 残り」の述語を、この段が別に書き直していた
+                      （`short_verdict` は同じ述語を `blind` で返す）
+
+    **`short_words` は `_quota_mod()` から引きます**（`from` で縛らない）——
+    呼んだ瞬間の `sys.modules` を見るため（検査が差し替えた `quota` と別の物を見ない）と、
+    **口が無い回にこの段ごと落とさないため**です（`from` 側に足すと、
+    `short_words` を持たない差し替えで【枠】が丸ごと空になり、
+    **空欄が「余裕がある」に読まれます** —— この段の註の当のもの）。
+
+    **覆る条件**: (1) `--pace` の印字の字数が増えて、この段に載せるには長すぎる回が来たら、
+    運ぶのは1行目（判定の行）だけにすること —— **判定を落とすのではなく、註のほうを落とす**。
+    (2) `short_words` が 2行 より増えたら、この関数は畳まずに全部 運ぶ（判定と註は対で意味を持つ）。
+    (3) 門の数（98%）が動くのは `SHORT_LANDING_GATE` の 1か所 だけ ＝
+    この段に数を書き戻さないこと（検査 `tests/test_spawn_quota_gate_side.py`）。
+    """
+    if reach_floor is None and p.get("reach_carry") is None:
+        return []
+    fn = getattr(_quota_mod(), "short_words", None)
+    miss = ["    **短く終わってよいかが読めません**（`quota.short_words` が落ちたか、無い）"
+            " —— **空欄を「短く終わってよい」と読まないこと**・`python scripts/quota.py --pace`"]
+    if not callable(fn):
+        return miss
+    try:
+        line = fn(reach_floor, p.get("reach_carry"),
+                  (p.get("seg") or {}).get("hours"), p.get("left_hours"))
+    except Exception:                                          # noqa: BLE001
+        return miss
+    if not line:
+        return miss
+    # `--pace` は 6文字 下げて印字する。【枠】の段は 4文字 なので、そこだけ揃える
+    # （**字は変えない** —— 2つの口が違うことを言わないため）。
+    return [("    " + ln.strip()) for ln in line.splitlines() if ln.strip()]
+
+
 def _quota_block() -> str:
     """**枠の視点を、サブ本人に渡す段**（2026-09-09 22:1x・optimizer・Opus。**API 0単位**）。
 
@@ -698,17 +749,16 @@ def _quota_block() -> str:
             lines.append(
                 f"    リセット時  床に従えば **すべて {land['all']:.1f}%**"
                 f"・いまの間隔のまま **{p['reach_carry']:.1f}%**"
-                f"（§5 15:1x の覆る条件 (1) の門は **98%**・"
-                f"**当てるのは「床に従えば」の側**・`quota.short_verdict` 13:1x）"
                 if p.get("reach_carry") is not None else
                 f"    リセット時  床に従えば **すべて {land['all']:.1f}%**")
-            seg_h = (p.get("seg") or {}).get("hours")
-            if (seg_h is not None and p.get("left_hours") is not None
-                    and float(seg_h) > float(p["left_hours"])):
-                lines.append(
-                    f"    ＊**「いまの間隔のまま」では門を読まないこと** —— 区間の窓 {seg_h:.1f}時間 ＞ "
-                    f"残り {p['left_hours']:.1f}時間 ＝ **この枠のうちに、短く終わった効きを1度も映せません**"
-                    "（その数は 1周の重さに比例して落ちるので、門は自分が許した手で下がります）")
+            # **門も、当てる側も、`blind` も、ここで書き直さないこと**
+            # （2026-09-11 17:0x・optimizer・Opus）—— 引き比べは `quota.short_words()` が
+            # `--pace` に印字する1行で、それを**そのまま**運びます。
+            # 前の字はこの段の中で 門 98% を**literal で**持ち（`SHORT_LANDING_GATE` と2か所）、
+            # `blind` の述語（区間の窓 ＞ 残り）も別に書き直したうえで、
+            # **判定そのもの（引かれたか）は印字していません**でした ＝ サブが手で当てる形。
+            # derivation と覆る条件は `_short_lines()` の註。
+            lines += _short_lines(land.get("all"), p)
         spent = land.get("fable_spent_h_before_reset")
         est = fe.get("est")
         cap = _fable_cap()
@@ -735,7 +785,9 @@ def _quota_block() -> str:
             "    **この数で決まる行が 1つ あります**: 「持ち場に何も無ければ短く終わるか」は、"
             "**METHOD §5 が 2026-09-10 15:1x に役ごとの着地で決めました**"
             "（覆る条件 3つ も §5。09/09 22:1x のこの段は、まだ決まっていなかった頃の字でした）。"
-            "**上の数で、その決めがまだ成り立つかを見ること** —— 親は判断しません（09/06 14:0x）。",
+            "**上の判定の行は、その決めの門を `quota.short_words()` が引いた印字です** ——"
+            "**親は判断しません**（09/06 14:0x）。決めのほうが動いたら、直すのはこの段ではなく "
+            "**§5 と `quota.SHORT_LANDING_GATE`（門は 1か所）**。",
         ]
         return "\n".join(lines)
     except Exception:                                          # noqa: BLE001
