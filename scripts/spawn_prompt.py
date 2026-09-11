@@ -516,6 +516,66 @@ QUOTA_BLOCK_STATIC = (
     "実物は `python scripts/quota.py --pace`。")
 
 
+def _quota_mod():
+    """`_quota_block()` が読み込んだ `quota`（検査の差し替えも同じ物を拾う）。無ければ None。
+
+    **`import` を増やさないこと** —— `_quota_block()` は関数の中で import しており、
+    決まるのは**呼んだ瞬間の `sys.modules`** です（`tests/test_spawn_quota_block._stub_quota` の註）。
+    ここで別に import すると、差し替えた検査と**別の物**を見ます。
+    """
+    import sys  # noqa: PLC0415
+    return sys.modules.get("scripts.quota") or sys.modules.get("quota")
+
+
+def _fable_cap() -> float | None:
+    """「Fable のみ」の上限（`quota.FABLE_CAP_PCT`）。読めなければ None。
+
+    **写さないこと** —— 親は `next_round_owner.py` から走り、そこが
+    `quota.FABLE_CAP_PCT` を**実行時に書き換えます**（公式仕様の 100%）。
+    """
+    v = getattr(_quota_mod(), "FABLE_CAP_PCT", None)
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _gauge_words(fe: dict) -> str:
+    """目盛りの刻を「（目盛り 09/11 12:38 JST）」の形で。読めなければ空。"""
+    q = _quota_mod()
+    at = ((fe or {}).get("gauge") or {}).get("at")
+    jst = getattr(q, "JST", None)
+    if at is None or jst is None:
+        return ""
+    try:
+        return f"（目盛り {at.astimezone(jst):%m/%d %H:%M} JST）"
+    except Exception:                                          # noqa: BLE001
+        return ""
+
+
+def _standing_models() -> str:
+    """**この周に、役ごとに実際に立つ模型**（`quota.sub_model`）。読めなければ空。
+
+    **役の名前から引かないこと**（METHOD §5 の 2026-09-11 10:3x）——
+    §5 15:1x の「短く終わるか」は**役ごと**に書かれていますが、判定するのは
+    **その周に実際に立った模型**です。Fable が尽きた枠では `hourly` も opus で立ち、
+    そのとき「Fable を台本の回に残す」という `hourly` 側の理由は消えています。
+    """
+    q = _quota_mod()
+    fn = getattr(q, "sub_model", None)
+    if not callable(fn):
+        return ""
+    roles_fn = getattr(q, "sub_roles", None)
+    try:
+        names = tuple(roles_fn()) if callable(roles_fn) else ("hourly", "optimizer")
+    except Exception:                                          # noqa: BLE001
+        names = ("hourly", "optimizer")
+    out = []
+    for r in names:
+        try:
+            out.append(f"{r} {fn(role=r)[0]}")
+        except Exception:                                      # noqa: BLE001
+            return ""
+    return "・".join(out)
+
+
 def _quota_block() -> str:
     """**枠の視点を、サブ本人に渡す段**（2026-09-09 22:1x・optimizer・Opus。**API 0単位**）。
 
@@ -561,6 +621,28 @@ def _quota_block() -> str:
     「09/11 18:00 JST 以降に `cli reporting` を 1回」と言っています。
     **この回に踏みました**: 未返信のコメント（`cli reply` **50単位**）に触ってよいかを、
     この段のせいで 1度 決めかねた。
+    **【2026-09-11 16:3x・optimizer・Opus】Fable が 100% に着いたあと、この段は
+    「これから着く」と未来形で言い続けていました。**
+    実測（この回の本文・`quota` の同じ数）: 目盛りは **09/11 12:38 JST で「Fable のみ」100%**、
+    `sub_model` は **2役 とも opus** を返しているのに、この段は
+    「Fable のみ  床に従うと **リセットの 14時間 前に 100%** → そこから `hourly` も opus」＝
+    **これから 09/11 17:00 に切り替わる**と読める字を渡していました
+    （しかも `landing()` の見込みは**実際の到達より 4時間 遅い**）。
+    **効く所**: METHOD §5 の 15:1x は「短く終わるか」を**役ごと**に書き、
+    **10:3x がそれを「その周に実際に立った模型で読むこと」と直しています** ——
+    **その模型が、この段のどこにも無かった**（サブは `quota.py` を別に撃つまで、
+    自分が fable なのか opus なのかを枠の段から読めません）。
+    ＝ **「立てた瞬間／見込みの事実を、いまの事実として渡す」型**の 3件目
+    （15:4x の `API 0単位`・06:5x の `main_gap` の 0 の枝）。
+    **いまは尽きている回には、`sub_model` が返す模型を名前で並べます**（`_standing_models`）。
+    **覆る条件**: (1) 役が増えたら `sub_roles()` から引くので、この段は直さなくてよい
+    （既定の 2役 は `sub_roles` が読めない回のためだけ）。(2) `sub_model` が
+    役ごとに違う模型を返す回（Fable が戻った枠）では、そちらの字がそのまま出ます ——
+    **並びが「hourly **fable**・optimizer **opus**」になったら、§5 15:1x の役ごとの形が
+    そのまま効きます**（§5 の覆る条件 (4)）。(3) この行が「もう 100%」と言っているのに
+    サブが fable で立った回が出たら、見る先は `next_round_owner.corrected_sub_model`
+    （親はそちらで走る）と、この段が読む `quota.sub_model` の食い違いです。
+
     **数**: Data API の日枠は **10,000単位/日**（16:00 JST に戻る・`studio/yt.py` 冒頭）で、
     1周が撃つのは `status`＋`measure`＋`zero_probe` ＝ **その 1% の桁**。
     ＝ **この段が作っていたのは、実在しない絞り**でした（絞りは模型の枠の側だけ・`quota.landing()`）。
@@ -628,7 +710,20 @@ def _quota_block() -> str:
                     f"残り {p['left_hours']:.1f}時間 ＝ **この枠のうちに、短く終わった効きを1度も映せません**"
                     "（その数は 1周の重さに比例して落ちるので、門は自分が許した手で下がります）")
         spent = land.get("fable_spent_h_before_reset")
-        if spent is not None:
+        est = fe.get("est")
+        cap = _fable_cap()
+        # **もう尽きた枠について、これから尽きる話を渡さないこと**
+        # （2026-09-11 16:3x・optimizer・Opus。derivation は下の註と JOURNAL 16:3x）。
+        if est is not None and cap is not None and est >= cap:
+            who = _standing_models()
+            lines.append(
+                f"    Fable のみ  **もう {est:.0f}%**{_gauge_words(fe)}"
+                + (f" ＝ **この周は {who}**（`quota.sub_model`）。" if who
+                   else " ＝ **この周の模型は `quota.sub_model` が決めます**（撃って読むこと）。")
+                + "**§5 15:1x の `hourly` 側の理由（Fable を台本を書く回に残す）は、"
+                  "この周には在りません**（§5 10:3x ＝ 役ではなく、"
+                  "**その周に実際に立った模型**で読むこと）")
+        elif spent is not None:
             lines.append(
                 f"    Fable のみ  床に従うと **リセットの {spent:.0f}時間 前に 100%**"
                 f" → そこから `hourly` も opus（`quota.ROLE_TIER`）")

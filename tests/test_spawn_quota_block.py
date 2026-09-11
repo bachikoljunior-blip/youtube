@@ -208,3 +208,78 @@ def test_positive_control_頭の行の門は実在する(monkeypatch):
     _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
     old_head = "【枠 —— この回に使ってよい速さ】**API 0単位**。オーナー 21:13"
     assert "API 0単位" in old_head and "模型の枠" not in old_head
+
+
+# ---- 尽きた枠に、これから尽きる話を渡さないこと（2026-09-11 16:3x・optimizer・Opus）
+# **踏んだ形**: 目盛りは 09/11 12:38 JST で「Fable のみ」100%・`sub_model` は 2役 とも opus を
+# 返しているのに、この段は「床に従うと **リセットの 14時間 前に 100%** → そこから `hourly` も opus」と
+# **未来形**で渡していた（しかも見込みは実際の到達より 4時間 遅い）。METHOD §5 は 10:3x に
+# 「短く終わるか」を**その周に実際に立った模型**で読めと決めており、**その模型がこの段に無い**。
+# derivation と覆る条件は `spawn_prompt._quota_block` の註（16:3x）。
+
+def _stub_fable(monkeypatch, est: float, spent: float | None,
+                models: dict | None = None, cap: float = 100.0):
+    import datetime as _dt
+    import sys
+    import types
+    mod = types.ModuleType("quota_stub")
+    jst = timezone(timedelta(hours=9))
+    reset = _dt.datetime(2026, 9, 12, 7, 0, tzinfo=jst)
+    mod.pace = lambda *a, **k: {"per_lap": 0.567, "floor_min": 37.0, "used_now": 86.0,
+                                "left_hours": 15.0, "window_reset": reset,
+                                "carry_rate": 0.88, "reach_carry": 99.4,
+                                "reach_lag_min": 1.7}
+    mod.fable_estimate = lambda *a, **k: {
+        "est": est, "gauge": {"at": _dt.datetime(2026, 9, 11, 12, 38, tzinfo=jst)}}
+    mod.fable_rate = lambda *a, **k: {"rate": 1.0}
+    mod.landing = lambda *a, **k: {"all": 99.4, "fable": est,
+                                   "fable_spent_h_before_reset": spent, "laps": 23}
+    mod.JST = jst
+    mod.FABLE_CAP_PCT = cap
+    if models is not None:
+        mod.sub_roles = lambda: tuple(models)
+        mod.sub_model = lambda now=None, role=None: (models[role], "理由")
+    for name in ("scripts.quota", "quota"):
+        monkeypatch.setitem(sys.modules, name, mod)
+    return mod
+
+
+def test_尽きた枠では未来形で言わないこと(monkeypatch):
+    _stub_fable(monkeypatch, est=100.0, spent=14.0,
+                models={"hourly": "opus", "optimizer": "opus"})
+    got = sp._quota_block()
+    assert "前に 100%" not in got, got
+    assert "もう 100%" in got and "目盛り 09/11 12:38 JST" in got, got
+
+
+def test_立った模型を役ごとに名前で出すこと(monkeypatch):
+    """§5 10:3x —— 読む側は「役」ではなく**その周に実際に立った模型**で決める。"""
+    _stub_fable(monkeypatch, est=100.0, spent=14.0,
+                models={"hourly": "opus", "optimizer": "opus"})
+    got = sp._quota_block()
+    assert "この周は hourly opus・optimizer opus" in got, got
+    assert "§5 10:3x" in got, got
+
+
+def test_Fableが戻った枠では役ごとの形がそのまま出ること(monkeypatch):
+    """**覆る条件 (2)**: 並びが割れたら、§5 15:1x の役ごとの形がそのまま効く。"""
+    _stub_fable(monkeypatch, est=100.0, spent=14.0,
+                models={"hourly": "fable", "optimizer": "opus"})
+    assert "この周は hourly fable・optimizer opus" in sp._quota_block()
+
+
+def test_positive_control_尽きていない回は未来形が出ること(monkeypatch):
+    """**陽性対照**: 上の門は、尽きていない回まで消してはいけない。"""
+    _stub_fable(monkeypatch, est=80.0, spent=14.0,
+                models={"hourly": "fable", "optimizer": "opus"})
+    got = sp._quota_block()
+    assert "床に従うと **リセットの 14時間 前に 100%**" in got, got
+    assert "もう 100%" not in got and "この周は hourly" not in got, got
+
+
+def test_模型が読めない回でも段を落とさないこと(monkeypatch):
+    """`sub_model` が引けない回は、**言えないことを言わない**（段は残す）。"""
+    _stub_fable(monkeypatch, est=100.0, spent=14.0, models=None)
+    got = sp._quota_block()
+    assert "もう 100%" in got and "`quota.sub_model` が決めます" in got, got
+    assert "この周は hourly" not in got
