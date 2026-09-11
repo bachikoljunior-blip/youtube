@@ -166,7 +166,16 @@ def main_gap(root: Path | None, branch: str) -> str:
                 "（`git rev-list --count origin/main..origin/<<branch>>` が失敗）。")
     n = int(n or 0)
     if n == 0:
-        return f"`origin/main` は枝の先頭と同じ（main の先頭 {when} JST・この checkout の origin の写しで数えた）。"
+        # **0 は「この回のあいだ 0 のまま」ではありません**（2026-09-11 15:5x・optimizer・Opus。この回に踏んだ）——
+        # **あなたの押しで 0 でなくなります。** n>0 の枝には「押すこと」が書いてあるのに、
+        # **0 の枝には 1字 も無い**ので、0 で立った回は自分の押したぶんを main へ送らずに終わります
+        # （実測: この回は 3 commit 押して main を 3 後ろにし、数えに行って初めて気づいた。
+        #  次の回が n>0 で拾うので**自己修復はします** —— 直したのは「1周 遅れる」ぶんだけ）。
+        # **覆る条件**: main を進める側が親かサブかを決め直したら、この行も一緒に書き直すこと。
+        return (f"`origin/main` は枝の先頭と同じ（main の先頭 {when} JST・この checkout の origin の写しで数えた）。"
+                f" **ただし、あなたが押したら 0 ではなくなります** —— "
+                f"**この回の最後の push のあとにもう一度 `git rev-list --count origin/main..HEAD` を数え、"
+                f"0 でなければ早送り1回**（数秒・承認は要りません）。")
     return (f"`origin/main` は枝の先頭から **{n} commit** 後ろ（main の先頭 {when} JST・この checkout の origin の写しで数えた）。"
             f" **この数は「立てた瞬間」のもので、あなたが読むころには古いことがあります** —— "
             f"実測 2026-09-08 04:4x: 親は **1** と数えて渡したが、サブが最初の merge のあとに数え直したら **0** だった"

@@ -95,3 +95,24 @@ def test_数を渡すときは数え直させる(monkeypatch):
     assert "0 でなければ" in line and "0 なら押さない" in line
     # 「無条件に押せ」に戻っていないこと
     assert "進めるのは早送り1回" not in line
+
+
+def test_0_の枝も押す手を言う(monkeypatch):
+    """**0 は「この回のあいだ 0 のまま」ではありません**（2026-09-11 15:5x・optimizer・Opus）。
+
+    n>0 の枝には「0 でなければ早送りで押すこと」が在るのに、**0 の枝には 1字 も無い**ので、
+    0 で立った回は**自分が押したぶん**を main へ送らずに終わります（この回に踏んだ: 3 commit）。
+    """
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
+        cmd, 0, stdout="0\n" if "rev-list" in cmd else "09/11 15:29\n", stderr=""))
+    line = spawn_prompt.main_gap(ROOT, "claude/x")
+    assert "枝の先頭と同じ" in line
+    assert "押したら 0 ではなくなります" in line
+    assert "rev-list --count origin/main..HEAD" in line
+
+
+def test_positive_control_0_の枝の門は実在する():
+    """**陽性対照**: 古い字（1文だけ）なら、上の検査は落ちること。"""
+    old = "`origin/main` は枝の先頭と同じ（main の先頭 09/11 15:29 JST・この checkout の origin の写しで数えた）。"
+    assert "枝の先頭と同じ" in old
+    assert "押したら 0 ではなくなります" not in old
