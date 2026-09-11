@@ -27,6 +27,13 @@ _SENT_END = re.compile(r"(?<=[。？！])")
 MAX_SHOW = 16
 MAX_TOTAL_CHARS = 480   # Chirp3-HD 1.2 で実測 5.16字/秒（09/05・458字→88.8秒）→ 93秒。Neural2-D 1.08 は 450字→93.3秒（09/07・4.82字/秒 ＝ 同じ帯）。
                         # 上限は build が測る秒数（MAX_SECONDS）。455字 が 95秒 に当たる域（METHOD §11）
+                        # **助言文は「60秒に収まらない」と言っていました**（2026-09-11 11:2x・hourly・Opus が直した）——
+                        # この門は 95秒 の代理で、60秒 とは関係がありません。§2 は「60秒を越えてよい理由:
+                        # 分かる説明に要る長さを削らない」と書いているので、**助言だけが §2 と逆を向いていました**
+                        # （§3 の 9 の「年に」と同じ族 —— 門は正しく、助言文だけが食い違う形。書き手は助言に従います）。
+                        # この回に実際に踏んだ: 481字 で鳴り、「60秒」と読めば本を半分に削る向きへ行く。
+                        # 検査は tests/test_studio_total_chars_advice.py（**助言文の側の検査**）。
+                        # 覆る条件: MAX_SECONDS が 60秒 に変わったら、この註ごと戻すこと。
 
 # 書き手が人間のふりをする言い方（収益化ポリシー: AI が人間の専門家を装って sensitive topic を語る形）
 # 裸の「年」＋数字（「年66万円」）。Chirp3-HD は「とし」と読む（実測 09/05・09/06）
@@ -164,7 +171,9 @@ class Script(BaseModel):
                 if TEN.search(ln):
                     out.append(f"コマ{i} board に「{TEN.search(ln).group()}」（点・小数）。整数で言い換える")
         if self.total_chars() > MAX_TOTAL_CHARS:
-            out.append(f"合計 {self.total_chars()}字（{MAX_TOTAL_CHARS}まで。60秒に収まらない）")
+            out.append(f"合計 {self.total_chars()}字（{MAX_TOTAL_CHARS}まで ＝ build が測る秒数の上限"
+                       f"（`studio/cli.MAX_SECONDS`）に当たる字数。**60秒の門ではありません**"
+                       f" —— §2 は 60〜95秒。削るのは秒数であって、分かる説明に要る長さではない）")
         if "#Shorts" not in self.title and "#shorts" not in self.title:
             out.append("title に #Shorts が無い")
         if len(self.title) > 100:
