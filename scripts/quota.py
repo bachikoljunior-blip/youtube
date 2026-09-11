@@ -188,6 +188,18 @@ CEILING_MARGIN_GATE = 3.0
 #: （**2か所に持たない** —— 上の `CEILING_MARGIN_GATE` が 07:5x に踏んだのと同じ形）。
 SWEEP_PER_LAP_GATE = 1.0
 
+#: **「持ち場に何も無ければ短く終わってよいか」の門**（着地の %）。
+#: METHOD §5 の 2026-09-10 15:1x の決めの覆る条件 (1):
+#: 「『すべて』の着地が この数 を越えたら optimizer も短くてよい」。
+#: **2026-09-11 13:1x（optimizer・Opus）に、この門を初めて道具へ入れました** ——
+#: それまで **この 98 は METHOD の字の中にしか無く**、`--pace` は着地の数を 2つ 印字しながら
+#: **「で、短く終わってよいのか」を1度も言いませんでした**（`sweep_verdict` が 11:2x に
+#: 閉じたのと**同じ型**・METHOD §5「教訓の形（7つ目）」＝ 覆る条件を註に書いたら、
+#: その条件を読む印字も一緒に作ること）。実測: 40周 のあいだ、毎回 人が手で
+#: 「97.6% ＝ 98% の下」と引き比べていました。
+#: **覆る条件**: METHOD §5 の (1) の数が動いたら、ここも一緒に動かすこと（**2か所に持たない**）。
+SHORT_LANDING_GATE = 98.0
+
 # **オーナー指示（2026-09-02 18:4x JST・原文。一字も変えないこと）**:
 #
 # > **「使用量は定期的に画面送るからとりあえず最初は今までの最高速度の二分の一の速度でやって」**
@@ -1690,6 +1702,87 @@ def sweep_words(margin: float | None, per_lap: float | None) -> str:
     return ""
 
 
+def short_verdict(reach_floor: float | None, reach_carry: float | None,
+                  seg_hours: float | None = None,
+                  left_hours: float | None = None) -> dict:
+    """**この回、持ち場に何も無ければ短く終わってよいか。** METHOD §5 15:1x の覆る条件 (1) の、印字の側。
+
+    2026-09-11 13:1x・optimizer・Opus。`sweep_verdict`（11:2x）と**同じ型**で、
+    **足したのは数ではなく「METHOD の字の中にしか無かった門」を印字へ出す口**です。
+
+    §5 の決め（2026-09-10 15:1x）は「余る側なら短く終わらない」で、その覆る条件 (1) は
+    **「『すべて』の着地が 98% を越えたら optimizer も短くてよい」**。
+    `--pace` は着地を **2つ** 印字しますが、**どちらを門に当てるかを1度も言っていません**でした。
+
+    **どちらの側で読むか ＝ `reach_floor`（床に従えば）。** 撃って分けました
+    （この回・`used` 83.57 / 残り 17.92時間 / 遅れ 1.75分。`per_lap` だけを落とした盤）:
+
+        per_lap   床に従えば        いまの間隔のまま
+        0.567     **99.44%**       **99.41%**   ← いまの点（2つ は ここで重なる）
+        0.450       99.77            96.14
+        0.350       99.67            93.35
+        0.250       99.82            90.55
+        0.200       99.57            89.15
+        0.150       97.22            87.76
+
+    ＝ **床の側は `per_lap` 0.20 まで平ら**（床が毎周 引き直されるので、重さは間隔に吸われる
+    ——`landing()` / `ceiling_rate()` の註。23:5x と 08:5x の 144点 の掃きと同じ）。
+    **間隔の側は `per_lap` にそのまま比例して落ちます。**
+
+    **そして、ここが門の本体です:** 「短く終わる」は **`per_lap` を軽くする手そのもの**です。
+    ＝ **間隔の側で読むと、門は自分が許した手で下がる数を読むことになります**
+    （門を越える → 短く終わる → 周が軽くなる → 数が門の下へ戻る）。
+    床の側は同じ手で動きません（上の盤）ので、**閉じた輪の答えは床の側**にしか在りません。
+
+    **見られもしません**: 区間の窓（`seg_hours`・この回 19.23時間）が
+    **リセットまでの残り（17.92時間）より長い**ので、
+    「いまの間隔のまま」は**この枠のうちに、自分が許した手の効きを1度も映せません**。
+    その回は `blind` を立てて印字します（**窓 ＞ 残り** のときだけ）。
+
+    返すもの: `short`（短く終わってよいか）・`side`（読んだ側）・`read`（読んだ数）・
+    `agree`（もう一方の側も同じ答えか）・`blind`（上の窓の話）。
+
+    **覆る条件**: (1) 床の側が **`FLOOR_MIN_CLAMP` に当たる**回が来たら（`floor_clipped`）、
+    床の側も `per_lap` で動き始めるので、この「平ら」は引かれます —— そのとき掃き直すこと。
+    (2) 2つ の側が**答えを違える回**（`agree` False）が出たら、その回の数を METHOD §5 へ並べること
+    —— いまは 2つ が重なっている点なので、**側を決めた効きはまだ 1度も出ていません**。
+    (3) METHOD §5 の (1) の数（98%）が動いたら `SHORT_LANDING_GATE` を動かすこと（2か所に持たない）。
+    """
+    side, read = "floor", reach_floor
+    if read is None:
+        side, read = "carry", reach_carry
+    if read is None:
+        return {"short": None, "side": None, "read": None, "agree": None, "blind": None}
+    short = float(read) > SHORT_LANDING_GATE
+    other = reach_carry if side == "floor" else reach_floor
+    agree = None if other is None else ((float(other) > SHORT_LANDING_GATE) == short)
+    blind = (None if (seg_hours is None or left_hours is None)
+             else float(seg_hours) > float(left_hours))
+    return {"short": short, "side": side, "read": float(read),
+            "agree": agree, "blind": blind}
+
+
+def short_words(reach_floor: float | None, reach_carry: float | None,
+                seg_hours: float | None = None,
+                left_hours: float | None = None) -> str:
+    """`short_verdict` を、`--pace` が印字する1行にする（**手で引き比べないこと**）。"""
+    v = short_verdict(reach_floor, reach_carry, seg_hours, left_hours)
+    if v["short"] is None:
+        return "      **短く終わってよいか: 着地が読めません**（§5 15:1x の (1) は当てられない）"
+    head = ("**引かれました ＝ 持ち場に何も無ければ短く終わってよい**" if v["short"]
+            else "**引かれません ＝ 余る側 ＝ 短く終わらないこと**")
+    line = (f"      §5 15:1x の覆る条件 (1)（門 {SHORT_LANDING_GATE:.0f}%）: "
+            f"{head}（読む側は**床に従えば** {v['read']:.1f}%"
+            f"{'' if v['agree'] is None else ('・もう一方の側も同じ答え' if v['agree'] else '・**もう一方の側は逆の答え**')}）")
+    if v["blind"]:
+        line += ("\n      ＊**「いまの間隔のまま」では読まないこと** —— 区間の窓 "
+                 f"{seg_hours:.1f}時間 ＞ 残り {left_hours:.1f}時間 ＝ "
+                 "**この枠のうちに、短く終わった効きを1度も映せません**"
+                 "（その数は `per_lap` に比例して落ちるので、門は自分が許した手で下がります"
+                 "・`short_verdict` の盤）")
+    return line
+
+
 def margin_line(n: int = 8, per_lap: float | None = None) -> str:
     """`margin_series` を1行にする（`--pace` が印字する。**手で並べないこと**）。
 
@@ -2470,6 +2563,8 @@ def pace_report(now: datetime | None = None) -> None:
         print(f"      いまの間隔のまま **{p['reach_carry']:.1f}%**"
               f"（＝ 直近の区間の {p['carry_rate']:.3f} %/時。"
               f"**残す {100.0 - p['reach_carry']:.0f}% は、リセットで消えます**）")
+        print(short_words(p.get("reach_floor"), p.get("reach_carry"),
+                          (p["seg"] or {}).get("hours"), p.get("left_hours")))
         if p["reach_floor"] - p["reach_carry"] > 2.0:
             print(f"      ＊差の **{p['reach_floor'] - p['reach_carry']:.0f} ポイント**は"
                   f"**間隔だけ**で決まります。**「いく／いかない」ではなく「床に乗るか」。**")
