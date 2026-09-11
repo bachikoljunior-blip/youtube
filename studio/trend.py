@@ -3220,7 +3220,9 @@ def channel_growth(rows: list[dict]) -> dict:
             # （`flat_video_gain` の註・2026-09-11 13:2x）。反証のほうが強い ＝
             # 平らの中に確かめられた伸びが在れば、上端を越えていても「止まった」とは読めません。
             "flat_readable": step_hi is None or flat_h >= step_hi,
-            "flat_vid_confirmed": fv["confirmed"], "flat_alive": fv["proves_alive"]}
+            "flat_vid_confirmed": fv["confirmed"], "flat_alive": fv["proves_alive"],
+            # **`confirmed == 0` の 2つ の意味を分ける欄**（`flat_video_gain` の註・19:5x）
+            "flat_grew": fv["grew"], "flat_blind": fv["blind"]}
 
 
 def channel_line(rows: list[dict]) -> str:
@@ -3290,6 +3292,14 @@ def channel_line(rows: list[dict]) -> str:
                      "（遅れでは説明が付かない分・`trend.flat_video_gain`）＝ "
                      "**チャンネルは止まっていません。平らなのは `viewCount` の読みのほうです** ——"
                      "**この平らを『本の 0回』の説明に使わないこと**（§7 (m)）。")
+        elif g["flat_vid_confirmed"] == 0 and g["flat_blind"]:
+            # **測れなかった回に「伸び 0」と言わないこと**（`flat_video_gain` の註・19:5x）
+            flat += (f"**この平らの中で伸びた本は {g['flat_grew']}本 ですが、そのうち "
+                     f"{g['flat_blind']}本 は この窓では確かめられません**"
+                     f"（窓の確かめられる部分 ＝ 平ら {g['flat_h']:.1f}時間 − 遅れ "
+                     f"{REPLICA_LAG_H:.1f}時間 に、`measure` が 1回 しか入っていない・"
+                     "`trend.flat_video_gain`）＝ **「伸びが 0 だった」ではなく「測れなかった」** ——"
+                     "**§7 (m) の『平らの中の伸びが 0 の回』に、この回を数えないこと。**")
         elif g["flat_vid_confirmed"] == 0:
             flat += ("**この平らの中で確かめられた本の伸びは 0回 です**（`trend.flat_video_gain`）——"
                      "**「だから止まった」とは読めません**（`measure` が触るのは 19本 だけ・向きは片側）。")
@@ -3453,7 +3463,11 @@ def channel_line_short(rows: list[dict]) -> str:
         verdict = (f"**総再生は {g['flat_laps']}周（{g['flat_h']:.1f}時間）続けて同じ読み ＝ "
                    f"門（{CHANNEL_FLAT_LAPS}周）が引かれました** ＝ 本の題や形を疑う前に、"
                    "チャンネルの側を外すこと")
-        if g["flat_vid_confirmed"] == 0:
+        if g["flat_vid_confirmed"] == 0 and g["flat_blind"]:
+            verdict += (f"（**平らの中で伸びた {g['flat_grew']}本 のうち {g['flat_blind']}本 は"
+                        "この窓では確かめられません** ＝ 「伸びが 0」ではなく「測れなかった」・"
+                        "`trend.flat_video_gain`）")
+        elif g["flat_vid_confirmed"] == 0:
             verdict += ("（**平らの中の本の伸びは 0回** ＝ 向きは片側 —— "
                         "「だから止まった」ではない・`trend.flat_video_gain`）")
     elif g["flat_laps"] >= CHANNEL_FLAT_LAPS:
