@@ -1561,7 +1561,9 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
     伸びの門        **3つ とも引かれません**（§0〜§6・§8 **1周 -2.8行 / -104字** ／ 4塊 **1周 -180字** ／
                    直近の1本 **2窓 とも越えた節 0つ**）。**§15 の +730 / +372字/周 は `hourly` が畳んで消えました。**
                    **数は `python scripts/method_growth.py --split` を撃って読むこと。**
-    検査           `pytest -m live` **1,301 passed / 12 skipped・赤 0**（**この回の optimizer は +10件**
+    検査           `pytest -m live` **1,306 passed / 12 skipped・赤 0**（**`hourly` の +5件
+                   （`test_studio_norm_id.py`）を merge したあとに数え直した** ＝
+                   1,291 ＋ 10 ＋ 5。**この回の optimizer は +10件**
                    ＝ `tests/test_studio_channel_step_bench.py`。**陽性対照 3つ を撃って落とした**
                    （2件・5件・1件）。**既存の書き換えは 0件** ＝ 既存 1,291件 は 1件も直さずに通った）
     この回の赤     **0**（走らせた時点でも 0）。

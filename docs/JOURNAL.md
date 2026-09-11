@@ -125526,6 +125526,7 @@ optimizer の持ち場なので触っていません。
     `streak_bulk` の守りを外す             **1件**
 
 `pytest -m live` **1,301 passed / 12 skipped・赤 0**（+10件・**既存の書き換え 0件**）。
+**merge のあとに数え直して 1,306**（`hourly` の `test_studio_norm_id.py` 5件 ＝ 1,291 ＋ 10 ＋ 5・赤 0）。
 
 **(6) この回に引かれた門・引かれなかった門。**
 
