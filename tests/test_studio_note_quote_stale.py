@@ -103,3 +103,93 @@ def test_陽性対照_門を外すと直した本でも鳴る():
         assert len(script.stale_note_quotes(s.notes, [x.say for x in s.segments])) == 1
     finally:
         script._QUOTE_MIN = saved
+
+
+# ---- 札を 3つ に分ける（2026-09-12 00:0x・optimizer・Opus。§14 の申し送り「直す先は印字の側でもよい」）
+# **門は動かしていません** —— 下の 3件 はどれも鳴ったままで、変わるのは行の言い方だけ。
+# 数（実物 15件 に当てた）と 覆る条件 (6)(7)(8) は `script._QUOTE_COPY_MARK` の註。
+
+
+def _warn(notes: str) -> str:
+    ws = [w for w in _script(notes, SAYS).warnings() if "notes の" in w]
+    assert len(ws) == 1, ws
+    return ws[0]
+
+
+def test_書き直しの記録らしい行は消すなと言う():
+    """実物 9件（09/06 2・09/07 4・09/11 3）の形 —— 引用のすぐ右に書き直しの語。"""
+    w = _warn('480字に収めるため コマ2「20年までは1年で40万円ずつ」→「1年で40万円」。')
+    assert "作業の記録らしい" in w and "消さないこと" in w
+
+
+def test_記録の印は左にも在る():
+    """`…を落とした（…）` の向き（09/07 コマ4・コマ5 の形）。"""
+    w = _warn('95秒 を越えた → コマ2「20年までは1年で40万円ずつ」を落とした（コマ3 に同じ札）。')
+    assert "作業の記録らしい" in w
+
+
+def test_記録の鎖は継ぐ():
+    """印は 1つ目の左に在り、長い引用を跨ぐと 24字 から外れます（09/07 コマ3 の形）。"""
+    ws = [w for w in _script(
+        'だから単位そのものを捨てた: コマ2「20年までは1年で40万円ずつ」・'
+        'コマ3「はみ出た700万円も、半分にします」（式は説明欄）。', SAYS).warnings() if "notes の" in w]
+    assert len(ws) == 2, ws
+    assert all("作業の記録らしい" in w for w in ws)
+
+
+def test_写しの印が在る行は強い札のまま():
+    """`＝ 声の コマN「…」` ＝ notes が声を引いている所そのもの。実物の本物 6件 のうち 4件 がこの形。"""
+    w = _warn('国税庁 No.1420。\n＝ 声の コマ2「20年までは1年で40万円ずつふえます」は、この式そのもの。')
+    assert "写しを声に合わせる" in w and "作業の記録" not in w
+
+
+def test_写しの鎖も継ぐ():
+    ws = [w for w in _script(
+        '＝ 声の コマ2「20年までは1年で40万円ずつふえます」・'
+        'コマ3「はみ出た700万円も、半分にします」は、この2つの式。', SAYS).warnings() if "notes の" in w]
+    assert len(ws) == 2, ws
+    assert all("写しを声に合わせる" in w for w in ws)
+
+
+def test_写しの印は記録の語に勝つ():
+    """順は 写し → 記録。写しの印が在る行は、近くに `→` が在っても弱くしない（(6) の当て所）。"""
+    w = _warn('＝ 声の コマ2「20年までは1年で40万円ずつふえます」→ この式そのもの。')
+    assert "写しを声に合わせる" in w
+
+
+def test_どちらの印も無ければ今までの札():
+    """実物の本物 6件 のうち 2件（09/12 コマ11・コマ5）がこの側 ＝ **弱くしない**。"""
+    w = _warn('言い換えられない語は使わない（§3 の 2）ので、'
+              'コマ2「20年までは1年で40万円ずつふえます」と言っている。')
+    assert "作業の記録" not in w and "`＝ 声の`" not in w
+    assert "写しを声に合わせる" in w
+
+
+def test_陽性対照_印の表を空にすると記録の札が消える():
+    saved_r, saved_l = script._QUOTE_REC_RIGHT, script._QUOTE_REC_LEFT
+    notes = '480字に収めるため コマ2「20年までは1年で40万円ずつ」→「1年で40万円」。'
+    assert "作業の記録らしい" in _warn(notes)
+    try:
+        script._QUOTE_REC_RIGHT, script._QUOTE_REC_LEFT = (), ()
+        assert "作業の記録らしい" not in _warn(notes)
+    finally:
+        script._QUOTE_REC_RIGHT, script._QUOTE_REC_LEFT = saved_r, saved_l
+
+
+def test_陽性対照_写しの印を変えると強い札が素に落ちる():
+    saved = script._QUOTE_COPY_MARK
+    notes = '＝ 声の コマ2「20年までは1年で40万円ずつふえます」は、この式そのもの。'
+    assert "`＝ 声の`" in _warn(notes)
+    try:
+        script._QUOTE_COPY_MARK = "ありえない印"
+        assert "`＝ 声の`" not in _warn(notes)
+    finally:
+        script._QUOTE_COPY_MARK = saved
+
+
+def test_札を分けても鳴る件数は変わらない():
+    """**門は動かしていない** —— 3つ の形が、どれも 1件ずつ 鳴ること。"""
+    for notes in ('480字に収めるため コマ2「20年までは1年で40万円ずつ」→「1年で40万円」。',
+                  '＝ 声の コマ2「20年までは1年で40万円ずつふえます」は、この式そのもの。',
+                  'ので、コマ2「20年までは1年で40万円ずつふえます」と言っている。'):
+        _warn(notes)
