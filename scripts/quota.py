@@ -3014,9 +3014,12 @@ def pace_report(now: datetime | None = None) -> None:
                      f"（{p['pre']['at'].astimezone(JST):%m/%d %H:%M} までの実測）"
                      if p.get("per_lap_floored") and p.get("per_lap_raw") else ""))
         print(f"    持続できる間隔（**周から周**）: **{p['floor_min']:.0f}分**"
-              + (f"   ＊分母は周 {p['births']}件（サブは {p['subs']}体 ＝ "
-                 f"1周に {p['subs_per_lap']:.2f}体。**サブを分母にすると "
-                 f"{p['subs_per_lap']:.1f}倍 速い側へ倒れます**）"
+              # **この比の窓は `now` まで**（`subs_diag` / `births_diag`）＝ 床の分母（`births`）とは別物。
+              # 同じ行に 2つ の窓の数を混ぜると「周 0件 なのに 1周に 2.00体」と出ます（08:3x に踏んだ）。
+              + (f"   ＊この比の窓は**目盛りの刻ではなく いま**まで: 周 {p['births_diag']}件"
+                 f"（サブは {p['subs_diag']}体 ＝ 1周に {p['subs_per_lap']:.2f}体。"
+                 f"**サブを分母にすると {p['subs_per_lap']:.1f}倍 速い側へ倒れます**）"
+                 f"／床の分母は目盛りまでの 周 {p['births']}件"
                  if p.get("subs_per_lap") else ""))
         if p.get("floor_clipped") == "max" and p.get("floor_raw"):
             print(f"      [!] **これは測った数ではありません** —— 測って出たのは "
