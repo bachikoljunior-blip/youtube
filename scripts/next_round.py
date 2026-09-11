@@ -1073,17 +1073,23 @@ def _quota_mod():
     **覆る条件**: `quota.py` が `scripts/` の外へ出たら、この 2段の落ち先を書き直すこと。
     見張りは `tests/test_next_round_quota_import.py`。
     """
+    # **順は `quota` が先**（2026-09-12 06:3x に入れ替えた）。同じファイルは
+    # `quota` と `scripts.quota` の **2つ の module object** になり、片方に当てた
+    # `monkeypatch` はもう片方に効きません —— 先に `scripts.quota` を返す形にしたら、
+    # `tests/test_next_round_respawn_rounds.py` が **赤 1件**（`quota.MODEL_CHOICE_FILE` を
+    # 当てているのに `respawn_rounds` が別の object を読む）。
+    # **`scripts/` が `sys.path` に居る呼ばれ方では、従来と 1字も変わりません。**
+    try:
+        import quota as mod                                     # noqa: PLC0415
+        return mod
+    except Exception:                                           # noqa: BLE001
+        pass
     try:
         import importlib                                        # noqa: PLC0415
         # **`from scripts import quota` ではなく `import_module`** ——
         # 前者は `scripts` パッケージの **属性**を読むので、検査が偽を貼ったまま
         # 戻し忘れた回に、そちらを掴みます（2026-09-12 06:2x に実測・赤 41件）。
         return importlib.import_module("scripts.quota")
-    except Exception:                                           # noqa: BLE001
-        pass
-    try:
-        import quota as mod                                     # noqa: PLC0415
-        return mod
     except Exception:                                           # noqa: BLE001
         import importlib.util                                   # noqa: PLC0415
         spec = importlib.util.spec_from_file_location(
