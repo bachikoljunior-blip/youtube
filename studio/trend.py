@@ -1083,6 +1083,59 @@ def hold_lines(rows: list[dict]) -> list[str]:
 FIRST_VIEW_EARLY_H = 6.0
 """この問いに答えられる本の門 —— 台帳の**初点**がこの齢より浅い本だけ。"""
 
+SHORT_MAX_S = 180.0
+"""**Shorts フィードに乗る尺の上限**（`scripts/zero_start.py` の同名と同じ数・門は 1か所のはずなので
+`tests/test_trend_first_view_length.py` が **2つ が食い違ったら鳴らします**）。
+`scripts/` は `studio` を import しない造りなので（`scripts/*.py` 全部で 0件・
+2026-09-12 06:5x に数えた）、**借りずに写し、検査で縛る**形にしてあります
+（09/11 21:1x の「借りた物を借りた形で返していない」を踏まないため）。"""
+
+UPLOADED_JSONL = ROOT / "data" / "uploaded.jsonl"
+
+
+def durations(rows: list[dict], uploaded: list[dict] | None = None) -> dict[str, tuple[float, str]]:
+    """id → （尺の秒, 出どころ）。**分かる本だけ**（分からない本は入れない）。**API 0単位**。
+
+    2026-09-12 06:5x JST・optimizer・Opus。**口は 2つ**（どちらも repo の中・
+    `scripts/zero_start.durations` と同じ 2つ）:
+      * `data/uploaded.jsonl` の `duration_s`（旧道具が上げたときに書いた秒。873本 中 **353本**）
+      * 台帳 `scheduled`（video_id ↔ 台本の id）→ 台帳 `built` の `seconds`（studio の本）
+
+    **なぜ `trend` の側にも要るか**: `zero_start` は 09/11 08:0x に尺で列を割りましたが、
+    **毎周 印字される `first_view` は割っていません**。§7 の「いまの数」が毎周 写している
+    「**0回 のまま門を越えたのは N本**」の N に、**1580秒（26分20秒）の長尺 `fMlY_uzHOMw` が
+    90秒 の Short `2YZ_4FXC-XI` と同じ列で数えられて**いました（この回に `videos.list` 1単位 で
+    当て直して確かめた: `PT26M20S` 対 `PT1M30S`・privacy は両方 public）。
+    ＝ METHOD §5 の「**絞りを 1つ 書いた道具は、書いた絞りの側だけ守ります**」の 3例目。
+    """
+    if uploaded is None:
+        uploaded = []
+        if UPLOADED_JSONL.exists():
+            for line in UPLOADED_JSONL.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    uploaded.append(json.loads(line))
+                except ValueError:
+                    continue
+    out: dict[str, tuple[float, str]] = {}
+    for r in uploaded:
+        vid, d = r.get("video_id"), r.get("duration_s")
+        if vid and isinstance(d, (int, float)) and not isinstance(d, bool):
+            out[vid] = (float(d), "uploaded.jsonl")
+    built: dict[str, float] = {}
+    sched: dict[str, str] = {}
+    for r in rows:
+        if r.get("event") == "built" and r.get("id") and isinstance(r.get("seconds"), (int, float)):
+            built[r["id"]] = float(r["seconds"])
+        elif r.get("event") == "scheduled" and r.get("id") and r.get("video_id"):
+            sched[r["video_id"]] = r["id"]
+    for vid, script_id in sched.items():
+        if script_id in built:
+            out[vid] = (built[script_id], "台帳 built")
+    return out
+
 
 def first_view(rows: list[dict]) -> dict:
     """**1回目の再生が付いた齢**を、早い点を持つ本だけで挟む。API 0単位。
@@ -1126,6 +1179,7 @@ def first_view(rows: list[dict]) -> dict:
     """
     gone = set(returned_private(rows))
     mine = ours(rows)
+    durs = durations(rows)
     early: list[dict] = []
     late = 0
     for vid, pts in series(rows).items():
@@ -1143,6 +1197,7 @@ def first_view(rows: list[dict]) -> dict:
         zeros = [a for a, v in vals if v == 0]
         hi = min(pos) if pos else None
         lo = max([a for a in zeros if hi is None or a < hi], default=None)
+        sec, src = durs.get(vid, (None, None))
         early.append({
             "id": vid, "new": vid in mine,
             "first_age_h": vals[0][0], "first_views": vals[0][1],
@@ -1150,15 +1205,36 @@ def first_view(rows: list[dict]) -> dict:
             "zero_through_h": max(zeros) if (zeros and hi is None) else None,
             "views": ceiling(good),
             "day": published_at(pts).strftime("%m/%d"),
+            # 尺（**分からない本は None** ＝ 「短い」と決めつけない・`durations` の註）。
+            "seconds": sec, "dur_src": src,
+            "long": None if sec is None else sec > SHORT_MAX_S,
         })
     early.sort(key=lambda b: (b["day"], b["id"]))
     got = [b for b in early if b["hi"] is not None]
     zero = [b for b in early if b["hi"] is None]
     spans = [b["hi"] - b["lo"] for b in got if b["lo"] is not None]
     return {"books": early, "got": got, "zero": zero, "late": late,
+            # **0回 の列は尺で割って返す**（混ぜたまま数えると「配りが止まった」に見える・`durations` の註）。
+            "zero_short": [b for b in zero if b["long"] is False],
+            "zero_long": [b for b in zero if b["long"] is True],
+            "zero_unknown": [b for b in zero if b["long"] is None],
             "gate_h": FIRST_VIEW_EARLY_H,
             "latest_first": max([b["hi"] for b in got], default=None),
             "span_median": (sorted(spans)[len(spans) // 2] if spans else None)}
+
+
+def _dur_mark(b: dict) -> str:
+    """0回 の本に添える尺の印（`first_view_lines`・**1本 1行 のまま**）。
+
+    **尺が分からない本には「不明」と書きます**（`durations` の註 ＝ 「短い」と決めつけない）。
+    """
+    if b["seconds"] is None:
+        return "（**尺 不明** ＝ 短いとは決めつけない）"
+    mark = f'（尺 {b["seconds"]:.0f}秒'
+    if b["long"]:
+        mark += f' ＝ **{SHORT_MAX_S:g}秒 超・下敷きの外**（Shorts フィードに乗らない ＝ §1「長尺は 1〜25回」）'
+    mark += f'・{b["dur_src"]}）'
+    return mark
 
 
 def first_view_lines(rows: list[dict]) -> list[str]:
@@ -1171,7 +1247,7 @@ def first_view_lines(rows: list[dict]) -> list[str]:
     for b in f["books"]:
         mark = "新" if b["new"] else "旧"
         if b["hi"] is None:
-            got = f'**0回 のまま {b["zero_through_h"]:.1f}h**'
+            got = f'**0回 のまま {b["zero_through_h"]:.1f}h**{_dur_mark(b)}'
         elif b["lo"] is None:
             got = (f'初点 {b["first_age_h"]:.1f}h で既に {b["first_views"]}回'
                    f'（**1回目はそれより前** ＝ 下端が無い）')
@@ -1182,8 +1258,14 @@ def first_view_lines(rows: list[dict]) -> list[str]:
     if f["latest_first"] is not None:
         tail = (f'**1回目が付いた {len(f["got"])}本 は、どれも 齢 {f["latest_first"]:.1f}h までに'
                 f'付いていました**（挟みの上端）。')
+    split = (f'（**Shorts の尺 {len(f["zero_short"])}本**・'
+             f'**下敷きの外（{SHORT_MAX_S:g}秒 超）{len(f["zero_long"])}本**・'
+             f'尺の分からない {len(f["zero_unknown"])}本）') if f["zero"] else ""
+    warn = ('**この列を尺を混ぜたまま数えないこと** —— 長尺の 0回 は §1 の「長尺は 1〜25回」で'
+            '説明が付きます（`trend.durations` の註・`scripts/zero_start` が 09/11 08:0x に'
+            '同じ混ざりを直した側）。') if f["zero_long"] else ""
     out.append(
-        f'{tail}**0回 のまま門を越えたのは {len(f["zero"])}本**。'
+        f'{tail}**0回 のまま門を越えたのは {len(f["zero"])}本**{split}。{warn}'
         f'**この行は当たり外れを言いません** —— 判定は `hourly`（§5）。'
         f'n が小さいので**点で読まないこと**（覆る条件は `trend.first_view` の註）。'
         f'初点が {f["gate_h"]:.0f}h より遅い本 {f["late"]}本 は、この問いに答えられないので外してあります。')

@@ -126256,3 +126256,66 @@ GO は起こしを置かないので、親が次の GO まで **1度も起きな
 **この回のほかの手**: (a) `measure`（前の測りから 39.3分・帯の中）→ `trend`。**§7 の「いまの数」を 06:2x で上書き**。
 **数の側の覆る条件は 1つも引かれていません**（帯 1.454倍・振れ幅の上限 1.832／48h の後 0本／(5') 差 0.074）。
 **(f) 09/13 の本（§16）は `hourly` が 03:0x に閉じており、1文字も触っていません。**
+
+---
+
+## 2026-09-12 06:5x JST（06:4x〜07:0x・optimizer・Opus・session_01AHfq4FUVAd5fxDM29yG1Cm）—— **毎周 §7 へ写している「0回 のまま門を越えたのは 2本」の 2本 は、90秒 の Short と 26分20秒 の長尺でした**（API: `measure` ＋ `status` ＋ `videos.list` **1単位**・TTS 0回・whisper 0回・`claude -p` 0回・外の引き 0回・build 0回）
+
+**踏んだ所**: `trend.first_view` は台帳の `measured` だけで列を作り、**尺を1度も見ていません**。
+その締めの行（`first_view_lines`）が毎周 **「0回 のまま門を越えたのは 2本」** と印字し、
+§7 の「いまの数」がそれを毎周 写しています。**実物の 2本 はこれです**:
+
+    2YZ_4FXC-XI  09/10 10:02 公開・齢 44.7h・0回   **PT1M30S**（90秒 ＝ Shorts）
+    fMlY_uzHOMw  09/05 公開・齢 157.7h・0回        **PT26M20S（1580秒）** ＝ 長尺
+
+**確かめ方**（`videos.list` **1単位**・`part=status,contentDetails` で 5本 まとめて）:
+両方とも `privacyStatus public`・`madeForKids false`・`contentRating {}`・`regionRestriction null`
+＝ **0回 の出どころは、処理でも公開設定でも年齢・地域の制限でもありません**（`zero_probe` の `ok` と同じ向き）。
+そして `duration` が **PT26M20S 対 PT1M30S**。**長尺の 0回 は §1 の「長尺は 1〜25回」で説明が付く側**で、
+Short の 0回 とは別の物です。**混ぜたまま数えると「0回 の本が 2本 ＝ 配りが止まった」に読めます。**
+
+**同じ混ざりは 09/11 08:0x に `scripts/zero_start.py` で直してあります**（`durations` / `SHORT_MAX_S` /
+`tests/test_zero_start_length.py`）。**直っていなかったのは、毎周 印字される `trend` の側だけ**でした。
+＝ METHOD §5 の「**絞りを 1つ 書いた道具は、書いた絞りの側だけ守ります**」の **3例目**
+（1例目 `zero_start` が帯を書いて尺を混ぜた・2例目 §5 761行・**3例目がこれ**）。
+**`zero_start` は「下敷きの外を名指しする」と自分の docstring に書きながら、
+その名指しは `zero_start` を撃った回にしか出ません** —— 毎周 撃つのは `trend` のほうです。
+
+**当てたもの**（`studio/trend.py`・API 0単位）:
+
+    trend.durations(rows, uploaded=None)   id → （尺の秒, 出どころ）。口は 2つ とも repo の中
+                                           （`data/uploaded.jsonl` の `duration_s` 353本 ／
+                                             台帳 `scheduled`＋`built`）。**分からない本は入れない**
+    trend.SHORT_MAX_S = 180.0              `scripts/zero_start.SHORT_MAX_S` と同じ数
+    first_view の本                        `seconds` / `dur_src` / `long`（**分からなければ None**）
+    first_view の返り                      `zero_short` / `zero_long` / `zero_unknown`（足すと `zero`）
+    first_view_lines                       0回 の本の行に尺を足し（**1本 1行 のまま**）、
+                                           締めを「2本（**Shorts の尺 1本**・**下敷きの外（180秒 超）1本**・
+                                           尺の分からない 0本）」にした
+
+**なぜ `zero_start` から import しなかったか**: `scripts/*.py` は `studio` を **1件も import していません**
+（この回に数えた ＝ 0件）。`scripts/zero_start.py` は `python scripts/zero_start.py` で直に撃つので
+`sys.path` に repo の根が入らず、import を通すには `sys.path` を触る手が要ります ——
+**09/11 21:1x の「借りた物を借りた形で返していない（sys.path / sys.modules / 属性）」と同じ形**なので、
+**借りずに写し、門は検査で 1か所 に縛りました**（`tests/test_trend_first_view_length.py` の
+`test_SHORT_MAX_Sは2つの道具で同じ数` ＝ 片方だけ動かしたら鳴る）。
+
+**検査** `tests/test_trend_first_view_length.py` **7件**（**陽性対照つき** ——
+`durations` を空にすると「下敷きの外」の名指しと締めの警句が **2つ とも消える**ことを見る）。
+
+**覆る条件**:
+ (1) **尺の分からない 0回 の本が出たら**（`zero_unknown` が 1本 でも立ったら）、口が 2つ では足りない ＝
+     3つ目（`videos.list` の `contentDetails.duration` を台帳へ残す口）を足すこと。
+     **いまは 0本**（2本 とも尺が引けている）。
+ (2) **`SHORT_MAX_S` を動かす回が出たら、2か所 を同時に動かすこと**（検査が鳴る）。
+     **3か所目を作らないこと** —— 作るなら、そのとき初めて `scripts/` → `studio` の import を通す側へ倒す。
+ (3) **`zero_long` の本が「そのあと伸びた」回が出たら**、長尺を「下敷きの外」と読む側が崩れる ＝
+     `first_view` の覆る条件 (1) と一緒に数え直すこと。
+ (4) **この割りを §7 の判定に使うのは `hourly`** です（§5）—— optimizer は数を並べるまで。
+     「0回 の本が N本」を根拠に形を変える回は、**必ず `zero_short` の数のほうを読むこと**。
+
+**この回のほかの手**: (a) `measure`（前の測りから 19.9分・帯の中）→ `trend`。
+**§7 の数の側の覆る条件は 1つも引かれていません**（帯 1.426倍・振れ幅の上限 1.804／48h の後 0本／
+(5') 差 0.073／`method_growth` は 4塊 の合計も塊ごとも引かれず）。
+**(f) 09/13 の本（§16）は `hourly` の持ち場 ＝ 1文字も触っていません。**
+**`comments` は撃っていません**（`status` の新着 0件）。

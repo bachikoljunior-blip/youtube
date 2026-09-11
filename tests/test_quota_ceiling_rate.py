@@ -95,11 +95,25 @@ def test_landing_is_flat_so_the_staged_per_lap_is_not_worth_building():
 
 
 def test_pace_exposes_the_margin():
-    """`pace()` が余裕を出していること（出さなくなったら、この註ごと読めなくなる）。"""
+    """`pace()` が余裕を出していること（出さなくなったら、この註ごと読めなくなる）。
+
+    **枠を使い切った刻（`forward_rate == 0`）は、余裕そのものが在りません** ——
+    `pace()` は `reach_ceiling_margin` を `None` で返します（`pace()` の註・この行と同じ守り）。
+    **2026-09-12 06:5x に踏んだ**（optimizer・Opus）: この検査は割り算を守り無しで書いており、
+    **リセットの手前で必ず ZeroDivisionError の赤**になっていました（06:5x JST・リセット 07:00 の 5分 前）。
+    **その赤は道具の赤ではありません** —— 09/12 06:1x が直した「走る順で出る赤」と同じ形で、
+    **本物の赤を隠す側**です。**余裕の側は `forward_rate > 0` の枠でだけ見ます。**
+    **覆る条件**: `pace()` が `forward_rate == 0` でも数を返すようになったら、
+    この分岐を外して割り算だけに戻すこと（そのときは `pace()` の註のほうが正本）。
+    """
     p = quota.pace()
     if p is None or not p.get("per_lap"):
         pytest.skip("目盛りが無い")
     assert p["reach_ceiling_rate"] == pytest.approx(
         quota.ceiling_rate(p["per_lap"], p["reach_lag_min"]))
+    if not p.get("forward_rate"):
+        # **枠を使い切っている** ＝ 余裕は出せない側。**黙って通さず、None であることを見る。**
+        assert p["reach_ceiling_margin"] is None, p["reach_ceiling_margin"]
+        return
     assert p["reach_ceiling_margin"] == pytest.approx(
         p["reach_ceiling_rate"] / p["forward_rate"])
