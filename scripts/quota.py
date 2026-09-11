@@ -2015,6 +2015,127 @@ def short_words(reach_floor: float | None, reach_carry: float | None,
     return line
 
 
+def clamp_eta(used_now: float | None, left_hours: float | None,
+              per_lap: float | None, lag_min: float = 0.0,
+              floor_min: float = FLOOR_MIN_CLAMP) -> dict | None:
+    """**床が歯止め（`FLOOR_MIN_CLAMP`）に当たるのは、あと何周か。**
+
+    2026-09-12 03:5x・optimizer・Opus。**足したのは数ではなく「その数の出しかた」**です
+    （§5 教訓の形 7つ目 ＝ 覆る条件を註に書いたら、それを読む印字も一緒に作ること）。
+
+    **なぜ足したか —— この回に踏んだ。** `short_verdict` の覆る条件 (1') は
+    「床が歯止めに当たったら『床に従えば』は平らでなくなる」で、**当たった回の印字は
+    2026-09-12 00:5x に付きました**（`short_words` の 3行目）。ところが
+    **「いつ当たるか」は印字がどこにも無く、METHOD §7「いまの数」が
+    「この枠では 05:0x ごろの見込み」という手で運んだ数**を持っていました。
+
+    **その数は、METHOD が名指しで禁じている数え方で出ていました。**
+    出どころ（JOURNAL 00:5x）は `pace()` を**先の刻で撃った**もので、
+
+        `pace(未来の刻)` は `now` だけを進め、**`used_now` は進めません**
+        （`carry_mode` が `laps` の枠では、未来に立つ周を知りようがない）
+
+    ＝ **時間だけ運んで周を運ばない**形です。`--pace` 自身が同じ画面で
+    「**時間では運びません**（2026-09-06）… 枠を食うのは周」と書いている、その当のもの。
+
+    **向きも逆でした。** 00:5x は「周が積まれればもっと早い」と書いていますが、
+    `floor_raw = per_lap * left * 60 / (100 - used)` は **`used` について増加**します
+    （撃った: `used` +0.5 → 床 25.6 → 28.9分・+1.0 → 33.2分）。
+    1周 は `used` を上げ（床を上げ）、同時に `left` を食う（床を下げる）ので、
+    **閉じた輪の上では、ほとんど相殺します。**
+
+    実測（2026-09-12 03:5x・`used` 95.64・残り 3.42時間・`per_lap` 0.546・遅れ 1.66分）:
+
+        床に従って回る（＝ 門が読む側）   7周 で床 25.7 → **21.3分**・**当たらないままリセット**
+        周を積まずに時間だけ進める       **約 2.1時間 後（05:4x ごろ）に当たる**
+
+    ＝ **§7 が持っていた「05:0x ごろ」は、門が読まない側の数**でした。
+
+    **この関数は、門が読む側（床に従う）だけを返します** ——
+    `reach_at_reset()` と **同じ輪を同じ式で回し**、`floor_raw` が歯止めを
+    割る最初の周を探します（割らずにリセットが来たら `never`）。
+
+    返すもの: `laps`（当たるまでの周・いま当たっていれば 0）・`hours`（そこまでの時間）・
+    `never`（リセットが先に来る）・`raw_now`（いまの生の床）・`raw_end`（輪の終わりの生の床）・
+    `frozen_hours`（**周を積まない側**の見込み。`None` は「その側でも当たらない」）。
+    API 0単位。
+
+    **覆る条件**: (1) `forward_rate` がオーナーの上限（`owner_rate_cap`）で切られている枠では、
+    `pace()` の `floor_raw` はこの輪の式と違う数になります（`reach_at_reset` も同じ）——
+    切られた回に `raw_now` と `pace()['floor_raw']` が割れたら、この関数へ上限を足すこと。
+    (2) `never` と出た枠で、それでも `floor_clipped` が立った回が 1度でも出たら、
+    輪の式か `per_lap` の側が実物とずれている ＝ そこで数え直すこと
+    （**その回は `short_words` の 3行目 が出るので、黙って過ぎません**）。
+    (3) `frozen_hours` を判定に使わないこと —— 並べてあるのは、
+    **§7 が 2026-09-12 03:5x まで持っていた数がどちらの側だったか**を示すためだけです。
+    """
+    if per_lap is None or per_lap <= 0 or used_now is None:
+        return None
+    if left_hours is None or left_hours <= 0:
+        return None
+    used, left = float(used_now), float(left_hours)
+    fm, lag = float(floor_min), float(lag_min)
+    if used >= 100.0:
+        return None
+    raw_now = per_lap * left * 60.0 / (100.0 - used)
+    # **周を積まない側**（§7 が持っていた数の出どころ・判定には使わない）。
+    frozen = left - fm * (100.0 - used) / (per_lap * 60.0)
+    out = {"laps": None, "hours": None, "never": False,
+           "raw_now": raw_now, "raw_end": raw_now,
+           "frozen_hours": (frozen if frozen > 0 else None)}
+    laps, elapsed = 0, 0.0
+    for _ in range(10000):
+        if used >= 100.0 or left <= 0:
+            out["never"] = True
+            return out
+        fwd = (100.0 - used) / left
+        raw = per_lap / fwd * 60.0
+        out["raw_end"] = raw
+        if raw < fm:
+            out["laps"], out["hours"] = laps, elapsed
+            return out
+        step_h = (max(fm, raw) + lag) / 60.0
+        if step_h > left:
+            out["never"] = True
+            return out
+        left -= step_h
+        used += per_lap
+        laps += 1
+        elapsed += step_h
+    out["never"] = True
+    return out
+
+
+def clamp_words(used_now: float | None, left_hours: float | None,
+                per_lap: float | None, lag_min: float = 0.0,
+                floor_clipped: str | None = None,
+                floor_min: float = FLOOR_MIN_CLAMP) -> str | None:
+    """`clamp_eta()` を、`--pace` が印字する1行にする（**手で見込まないこと**）。
+
+    **当たった後の回は黙ります** —— そこは `short_words` の 3行目 の持ち場で、
+    2つ の口が同じことを言うと、読む側はどちらを引くか決められません
+    （`short_verdict` の (1') と同じ門を 2か所 に置かないため）。
+    """
+    if floor_clipped == "min":
+        return None                     # もう当たっている ＝ `short_words` の 3行目 が言う
+    v = clamp_eta(used_now, left_hours, per_lap, lag_min, floor_min)
+    if v is None:
+        return None
+    head = (f"      床が歯止め {floor_min:.0f}分 に当たるか"
+            "（**床に従って回った場合** ＝ 門が読む側・`quota.clamp_eta`）: ")
+    if v["never"]:
+        line = (head + f"**当たりません**（生の床 {v['raw_now']:.1f} → "
+                f"輪の終わりで {v['raw_end']:.1f}分・リセットが先に来る）")
+    else:
+        line = (head + f"**あと {v['laps']}周**（約 {v['hours'] * 60:.0f}分 後）")
+    if v["frozen_hours"]:
+        line += ("\n      ＊**周を積まずに時間だけ進めると "
+                 f"{v['frozen_hours']:.1f}時間 後**に当たります —— "
+                 "**その側では読まないこと**（`pace()` を先の刻で撃つと `used_now` が進まない ＝ "
+                 "**時間では運びません**・`clamp_eta` の註）")
+    return line
+
+
 def agree_run(n: int = 40) -> dict | None:
     """**「2つ の側が答えを違えた回」が何周 続いているか**（`short_verdict` の覆る条件 (2)）。
 
@@ -2869,6 +2990,13 @@ def pace_report(now: datetime | None = None) -> None:
         print(short_words(p.get("reach_floor"), p.get("reach_carry"),
                           (p["seg"] or {}).get("hours"), p.get("left_hours"),
                           p.get("floor_clipped")))
+        # **「いつ当たるか」も印字すること**（2026-09-12 03:5x・`clamp_eta` の註）——
+        # 当たった回の印字は 00:5x に付きましたが、手前の回は黙っており、
+        # §7「いまの数」が**周を積まない側**で出した見込みを手で運んでいました。
+        _cw = clamp_words(p.get("used_now"), p.get("left_hours"), p.get("per_lap"),
+                          p.get("reach_lag_min") or 0.0, p.get("floor_clipped"))
+        if _cw:
+            print(_cw)
         print(agree_line())
         if p["reach_floor"] - p["reach_carry"] > 2.0:
             print(f"      ＊差の **{p['reach_floor'] - p['reach_carry']:.0f} ポイント**は"
