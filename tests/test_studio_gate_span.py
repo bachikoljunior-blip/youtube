@@ -126,13 +126,42 @@ def test_窓を伸ばしても上限は下がらない(hours: float) -> None:
 # **この回に踏んだ**: 帯の外から `measure` を 1回 足すだけで 差が 0.101 → 0.020倍 に落ち、側が反転する
 # （本の側は 1冊も動いていない）。derivation は `trend.gate_span` の註と JOURNAL 12:3x。
 
-def test_側は振れ幅の上限で読む() -> None:
-    """`side` は `side_hi` と `GAP_SPLIT` だけで決まること（いまの点では決まらない）。"""
+def test_側は点で読む() -> None:
+    """**2026-09-12 04:0x に (5)(6) を畳みました** —— `side` は `side_now`（その刻の差）と
+    `GAP_SPLIT` だけで決まること（**上限では決まらない**）。畳んだ理由と (5') は `gate_span` の註。
+    """
     rows = _rows()
     g = trend.gate_span(rows)
     if g["side_hi"] is None:
         return
-    assert g["side"] == ("齢＋長さ" if g["side_hi"] >= trend.GAP_SPLIT else "齢だけ")
+    assert g["side"] == ("齢＋長さ" if g["side_now"] >= trend.GAP_SPLIT else "齢だけ")
+
+
+#: **2つ の読み方が食い違っていた刻**（2026-09-12 04:0x に台帳を切って列挙した・20回 のうちの 1つ）。
+#: 点は 0.0325（`齢だけ`）・24時間 の上限は 0.1993（`齢＋長さ`）で、上限の側は
+#: **09/11 02:13 の 1点** を 24時間 運んでいました。**畳みの陽性対照はこの刻**。
+SPLIT_CUT = "2026-09-11T22:59:21+09:00"
+
+
+def test_畳みの陽性対照_上限と点が食い違う刻では点を取ること() -> None:
+    """**上限へ戻したら落ちる検査**（2026-09-12 04:0x・optimizer・Opus）。
+
+    `side` を `max(diffs)` へ戻すと、この刻の答えは `齢＋長さ` になって落ちます
+    ＝ **畳みが本当に効いているか**を、実物の刻 1つ で押さえる。
+    """
+    rows = _rows()
+    keep = {o for o in _occasions(rows) if o <= SPLIT_CUT}
+    if SPLIT_CUT not in keep:
+        pytest.skip("台帳がこの刻を持っていない（切り詰めた台帳で走らせている）")
+    g = trend.gate_span(_truncated(rows, keep))
+    if g["side_hi"] is None:
+        return
+    assert g["side_now"] < trend.GAP_SPLIT <= g["side_hi"], (
+        f"この刻は 2つ の読み方が食い違う刻として選んであります"
+        f"（点 {g['side_now']:.4f}・上限 {g['side_hi']:.4f}）—— 台帳が変わったら選び直すこと")
+    assert g["side"] == "齢だけ", (
+        f"側が {g['side']} ＝ 上限（{g['side_hi']:.4f}）で読んでいます。"
+        "2026-09-12 04:0x に畳んで、**点（`side_now`）で読む**と決めました（`gate_span` の註）")
 
 
 def test_側の振れ幅は上限が下限以上であること() -> None:

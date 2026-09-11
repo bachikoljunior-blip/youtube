@@ -1463,19 +1463,15 @@ GATE_SPAN_H = 24.0
 #: ＝ **この門を入れないと、`side_hi` は「そろっていなかった時間帯」を読み続けます。**
 SIDE_MIN_PAIRS = 20
 
-#: `gate_span` の覆る条件 (6)（側の鋸の歯が消えたか）を「何周 続いたら」で引く数。
-#: (5) は 24時間 の**上限**で引くので周を数えませんが、(6) は幅なので周が要ります。
-SIDE_RUN_LAPS = 3
-
-
 def _span_points(rows: list[dict], hours: float) -> list[dict]:
     """`measured` の刻ごとに **門の比・その刻の側・両側の差** を出す
-    （`gate_span` と `side_verdict` の**共通の口**・2026-09-12 03:1x に切り出した）。
+    （2026-09-12 03:1x に切り出した口。**いま呼ぶのは `gate_span` だけ** ——
+    04:0x に `side_verdict` を畳んだ・derivation は JOURNAL 09/12 04:0x）。
 
     **`hours` は「どの刻から評価を始めるか」だけを決めます。** `informative` に渡すのは
     その刻までの**台帳まるごと**（`seen` は窓の外からも積む）なので、
-    **同じ刻の値は `hours` を広げても変わりません** —— だから `side_verdict` は
-    `hours*2` で呼んで、**過去の刻の 24時間 窓**を丸ごと持てます。
+    **同じ刻の値は `hours` を広げても変わりません** ＝ 広げて呼べば
+    **過去の刻の 24時間 窓**を丸ごと持てます（畳んだ `side_verdict` はそれで走っていました）。
     """
     occ = sorted({r["at"] for r in rows if r.get("event") == "measured"})
     if not occ:
@@ -1506,85 +1502,6 @@ def _span_points(rows: list[dict], hours: float) -> list[dict]:
                     "side": None if r is None else str(inf.get("gate_side")),
                     "ratio": None if r is None else float(r)})
     return out
-
-
-def side_verdict(rows: list[dict], hours: float = GATE_SPAN_H,
-                 laps: int = SIDE_RUN_LAPS) -> dict:
-    """**`gate_span` の覆る条件 (5)(6) を、毎周 印字するために数で引く**
-    （2026-09-12 03:1x JST・optimizer・Opus が足した）。
-
-    **なぜ要るか —— §5 の「教訓の形（7つ目）」そのものです**:
-    「覆る条件を註に書いたら、その条件を読む**印字**も一緒に作ること」。
-    (5)(6) は 2026-09-10 12:3x に `gate_span` の註へ書かれてから **この回まで印字が無く**、
-    `_side_line` は数（`side_lo`/`side_hi`/`side`）だけを出して
-    「覆る条件は `gate_span` の (5)(6)」と**場所を指すだけ**でした。
-    ＝ **引かれた回に、引かれたと言う口がどこにも無い。**
-
-    **実測（この回に踏んだ・API 0単位・台帳を測りの刻で切って読み直した）**:
-
-        09/11 19:18〜22:59 の 7周   `side_hi` **0.1993**   側 齢＋長さ
-        09/11 23:29〜00:55 の 4周   `side_hi` **0.1695**   側 齢＋長さ
-        09/12 01:38・02:07 の 2周   `side_hi` **0.1614**   側 齢＋長さ
-        09/12 **03:03**（この回）   `side_hi` **0.0747**   側 **齢だけ**
-
-    ＝ **(5) はこの回に初めて引かれました**（`side_hi` < `GAP_SPLIT`）。
-    **引いたのは新しい一致ではなく、24時間 の窓から 0.161 の点が 1つ 抜けたこと**です
-    —— それは (5) が**上限**で読むと決めた通りの引き方（窓の中の測り全部が門の下）ですが、
-    **「直った」ではありません。** (5) の註が「床（`quota.pace()`）が伸びていないかを
-    一緒に見ること」と書いているのはこのためで、**この回の床は 29分 → 26分（縮んだ）**
-    ＝ 帯の短い組が減ったからではない側でした（derivation は JOURNAL 09/12 03:1x）。
-
-    出すもの: `hi`/`lo`/`now`（24時間 の差の上限・下限・いま）・`side`（上限で読んだ側）・
-    `under`（(5) が引かれたか）・`run`（`hi` が門の下で続いた**測りの回数**）・
-    `narrow`（(6) の幅が門の下か）・`narrow_run`（それが続いた回数）・
-    `n`（24時間 の窓が丸ごと埋まっている点の数）。
-
-    **`run` は「周」ではなく「測り」で数えます** —— `measure` は 1周 に 1回 が建前ですが、
-    穴埋めの周（`parent_wakes.jsonl` の `patch`）では 1周 に 2回 立つことが在り、
-    **周で数えると道具が親の側の事情を読むことになります**（§5「周に 2体 そろわない回」）。
-    (6) の門 `SIDE_RUN_LAPS`（3）は**測り 3回**として読むこと。
-
-    **覆る条件**: (1) `run` が伸びているのに `side` が戻る回が出たら、`hi` の窓（`hours`）が
-    短すぎる ＝ まず `GATE_SPAN_H` を見ること。(2) `narrow_run` が `laps` に届いた回は、
-    (6) のとおり**側を点で読んでよい** ＝ そのとき `gate_span` の (5)(6) とこの関数を畳む。
-    (3) `n` が 24時間 の測りの回数より**少ない**まま `under` が立ったら、
-    それは「窓が埋まっていない」ほうの印 —— `_span_points` の `hours*2` が
-    足りていないので、そこを広げること。
-    """
-    pts = _span_points(rows, hours * 2)
-    ds = [(p["at"], float(p["diff"])) for p in pts if p["diff"] is not None]
-    res: dict[str, object] = {"hours": hours, "laps": laps, "n": 0, "side": None,
-                              "lo": None, "hi": None, "now": None,
-                              "under": False, "run": 0, "narrow": False, "narrow_run": 0}
-    if not ds:
-        return res
-    span = dt.timedelta(hours=hours)
-    first = _at({"at": ds[0][0]})
-    series: list[tuple[str, float, float]] = []
-    for i, (at, _d) in enumerate(ds):
-        t = _at({"at": at})
-        if t < first + span:
-            continue  # 24時間 の窓が埋まっていない点は、上限を低く見せる ＝ 数えない（覆る条件 (3)）
-        win = [d for a, d in ds[: i + 1] if _at({"at": a}) >= t - span]
-        series.append((at, min(win), max(win)))
-    if not series:
-        return res
-    _at_last, lo, hi = series[-1]
-    run = 0
-    for _a, _l, h in reversed(series):
-        if h >= GAP_SPLIT:
-            break
-        run += 1
-    narrow_run = 0
-    for _a, l, h in reversed(series):
-        if h - l >= GAP_SPLIT:
-            break
-        narrow_run += 1
-    res.update({"n": len(series), "lo": lo, "hi": hi, "now": ds[-1][1],
-                "side": "齢＋長さ" if hi >= GAP_SPLIT else "齢だけ",
-                "under": hi < GAP_SPLIT, "run": run,
-                "narrow": (hi - lo) < GAP_SPLIT, "narrow_run": narrow_run})
-    return res
 
 
 def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
@@ -1640,17 +1557,36 @@ def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
     ＝ **点で越えた門は、点で戻ります**（`_matched` の覆る条件 (0-新) の「3周 続いたら」は
     **周を数える形**ですが、周を数えても、その 3周 がどの刻に立ったかで答えが変わります）。
 
-    **読み方**: 側は **`side_hi`（24時間 の差の上限）**で読む。上限で読むのは比のときと同じ理由
-    —— **長さが 24時間 のどこかで効いているなら、そろえた側で読むほうが安全**
-    （そろえる側は組の中の偏りを1つ減らした推定なので、迷ったらこちら）。
-    出すもの: `side_lo`/`side_hi`/`side_now`（差の最小・最大・いま）と `side`（上限で読んだ側）。
+    ~~**読み方**: 側は `side_hi`（24時間 の差の上限）で読む。~~
+    ## **【2026-09-12 04:0x に (5)(6) が引かれ、畳みました】**（optimizer・Opus・API 0単位）
 
-    **覆る条件**: (5) `side_hi` が `GAP_SPLIT` を **24時間 まるごと** 下回ったら、長さはもう効いていない
-    ＝ 読む側は齢だけへ戻る（`side` が勝手に戻るので、そのときは §7 (2) の見出しを直すだけ。
-    **戻りは「直った」ではなく「帯の短い組が減った」印**なので、床（`quota.pace()`）が
-    伸びていないかを一緒に見ること —— `_matched` の (0-新) と同じ向き）。
-    (6) `side_hi` と `side_lo` の差が **`GAP_SPLIT` を下回ったまま 3周** 続いたら、
-    側の鋸の歯は消えている ＝ 側は点で読んでよい（そのとき (5) とこの行を畳む）。
+    **決め: 側は `side_now`（その刻の差）＝ 点で読む。**
+    (6) の門（幅が `GAP_SPLIT` の下で測り 3回）に届いた ＝ **24時間 の窓のどの点で撃っても
+    側が同じ**なので、上限で読む意味が消えています（実測 04:0x: 上限 **0.0758**・
+    下限 **0.0005**・いま **0.0746** ＝ 全部 門 0.1 の下・窓が埋まった点 39件）。
+
+    **畳んだ理由は「一致した」ではありません** —— **上限は、もう居ない 1点 を 24時間 運びます。**
+    実測（台帳を測りの刻で切って読み直した・API 0単位）: 門を越えた差の**最後の点は
+    09/11 02:13 の 0.1614** で、そこから **42回 の測り（25.6時間）が 1度も門へ届いていません**
+    （その 42点 の中央 0.024・最大 0.076）。それでも上限の側は **09/12 03:0x まで `齢＋長さ`** と
+    言い続け、**2つ の読み方は 20回 の測りで食い違っていました**（09/11 14:57〜09/12 02:07 ＝
+    点は全部 `齢だけ`・上限は 0.161〜0.199）。**03:0x に側が戻ったのは、その 1点 が
+    24時間 の窓から出た刻**であって、本の側でも組の側でも在りません。
+
+    **(6) は (5) と独立ではありませんでした** —— 差は絶対値（≧0）なので
+    `side_hi < GAP_SPLIT` なら必ず `side_hi - side_lo < GAP_SPLIT` ＝
+    **(6) は「(5) が測り 3回 続いた」以上のことを言いません**（実測 `run` 3 ＝ `narrow_run` 3）。
+    **覆る条件を 2つ 書くときは、片方がもう片方を含んでいないかを先に見ること。**
+    derivation は JOURNAL 09/12 04:0x。
+
+    出すもの: `side_lo`/`side_hi`/`side_now`（差の最小・最大・いま）と `side`（**点で読んだ側**）。
+
+    **覆る条件 (5')**: `side_hi`（24時間 の上限）が `GAP_SPLIT` へ戻ったら、鋸の歯も戻っています
+    ＝ **点で読む畳みを開き直し、上限で読む形へ戻すこと**（畳む前の形は git の 09/12 03:1x）。
+    **上限は畳んでも数え続けます**（`_side_line` が毎周 印字する ＝ この条件には印字が在る側・
+    見張りは `tests/test_studio_informative_matched.py`）。
+    **戻りを「直った」と読まないこと** —— 帯の短い組が減っただけの回が在るので、
+    床（`quota.pace()`）が伸びていないかを一緒に見ること（`_matched` の (0-新) と同じ向き）。
 
     **覆る条件**: (1) `hi` が 0.5 を切ったら、門 (2) は**刻では説明が付かない**
     ＝ そのときは本当に引かれた（判定は `hourly`・§5）。
@@ -1672,8 +1608,10 @@ def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
         for p in got if p["ratio"] is not None]
     diffs: list[float] = [float(p["diff"]) for p in got if p["diff"] is not None]
     if diffs:
+        # **側は点（`side_now`）で読む**（2026-09-12 04:0x に (6) を引いて畳んだ）。
+        # 上限（`side_hi`）は畳んでも数え続ける —— 覆る条件 (5') を読む口です。
         res.update({"side_lo": min(diffs), "side_hi": max(diffs), "side_now": diffs[-1],
-                    "side": "齢＋長さ" if max(diffs) >= GAP_SPLIT else "齢だけ"})
+                    "side": "齢＋長さ" if diffs[-1] >= GAP_SPLIT else "齢だけ"})
     if not points:
         return res
     vals = [p[2] for p in points]
@@ -1696,47 +1634,23 @@ def _span_line(rows: list[dict]) -> str:
             f"（帯の中の回は 0.5 へ・外の回は上へ。分子が動かないまま分母だけが増えるため）。"
             f"**門 (2) を引くのは、この振れ幅の上限 {hi:.3f} が 0.5 を切った回だけ**"
             f"（`trend.gate_span` の註・覆る条件 (1)）。"
-            + _side_line(g) + _side_verdict_line(rows))
+            + _side_line(g))
 
 
 def _side_line(g: dict) -> str:
-    """**どちらの側で読むかも、点では読まない**（2026-09-10 12:3x。註は `gate_span`）。"""
+    """**側は点で読む**（2026-09-12 04:0x に (5)(6) を畳んだ。註と derivation は `gate_span`）。"""
     if g.get("side_hi") is None:
         return ""
     lo, hi, now = float(g["side_lo"]), float(g["side_hi"]), float(g["side_now"])  # type: ignore[arg-type]
-    return (f"**側（齢だけ／齢＋長さ）も同じで、点では読みません** —— 差の振れ幅は "
-            f"**{lo:.3f}〜{hi:.3f}倍**（いま {now:.3f}・両側 {SIDE_MIN_PAIRS}組 以上 の点だけ）。"
-            f"**読む側は上限で決めます: {g['side']}**（門 {GAP_SPLIT}倍）。"
-            f"**実測 12:3x: 帯の外から `measure` を 1回 足すだけで 差は 0.101 → 0.020倍 に落ち、"
-            f"点で読むと側が反転しました**（本の側は 1冊も動いていない）。"
-            f"覆る条件は `gate_span` の (5)(6)。")
-
-
-def _side_verdict_line(rows: list[dict]) -> str:
-    """**(5)(6) が引かれたかを、毎周 言う**（註と derivation は `side_verdict`）。
-
-    §5 の「教訓の形（7つ目）」—— 覆る条件を註に書いたら、**その条件を読む印字も一緒に作る**。
-    印字が無ければ、引かれた回に引かれたと言う口がどこにも無い（この口が無かった 2周 で
-    (5) が引かれ、次の回が註を読むまで気づけませんでした）。
-    """
-    v = side_verdict(rows)
-    if not v["n"]:
-        return ""
-    hi, lo = float(v["hi"]), float(v["lo"])  # type: ignore[arg-type]
-    head = (f"**側の覆る条件 (5)**（`side_verdict`・門 {GAP_SPLIT}倍）: "
-            f"差の上限 **{hi:.3f}** ＝ ")
-    if v["under"]:
-        head += (f"**引かれています**（測り {v['run']}回 続けて門の下・24時間 の窓が埋まった点 {v['n']}件）"
-                 f" ＝ 読む側は **{v['side']}**・**§7 (2) の見出しを直すこと**。"
-                 f"**戻りは「直った」ではなく「帯の短い組が減った」印**なので、"
-                 f"床（`quota.py --pace`）が伸びていないかを一緒に見ること。")
-    else:
-        head += f"**引かれません**（読む側は **{v['side']}**）。"
-    head += (f" **(6)**: 幅 **{hi - lo:.3f}**（門 {GAP_SPLIT}倍）を"
-             + (f"測り **{v['narrow_run']}回** 続けて下回っています（{v['laps']}回 で"
-                f"側は点で読んでよい ＝ そのとき (5)(6) と `side_verdict` を畳む）。"
-                if v["narrow"] else "下回っていません。"))
-    return head
+    return (f"**側（齢だけ／齢＋長さ）は点で読みます: {g['side']}** —— 差 いま **{now:.3f}倍**"
+            f"（門 {GAP_SPLIT}倍・両側 {SIDE_MIN_PAIRS}組 以上 の点だけ）。"
+            f"24時間 の振れ幅は **{lo:.3f}〜{hi:.3f}倍** ＝ "
+            + ("**鋸の歯が戻りました ＝ `gate_span` の覆る条件 (5') を引くこと**"
+               "（点で読む畳みを開き直し、上限で読む形へ戻す。"
+               "**戻りは本の側とは限りません** —— 床を一緒に見ること）。"
+               if hi >= GAP_SPLIT else
+               f"**どの点で撃っても同じ側**（2026-09-12 04:0x に (5)(6) を畳んだ理由。"
+               f"上限が {GAP_SPLIT} へ戻った回が、覆る条件 (5') です）。"))
 
 
 def band_vs_age(rows: list[dict], iters: int = 2000, seed: int = 20260909) -> dict:
