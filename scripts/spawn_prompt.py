@@ -578,12 +578,24 @@ def _quota_block() -> str:
             # `quota.py --pace` は同じ数を 1桁 で印字するので、**2つの口が違うことを言う**形
             # （`trend.channel_line_short` の覆る条件 (2) と同じ族）。
             # **門と同じ桁で丸めないこと**（derivation は JOURNAL 09/11 11:4x）。
+            # **門に当てる側を名指しすること**（2026-09-11 13:2x・optimizer・Opus）——
+            # それまで この行は 2つ の数と門 98% を並べるだけで、**どちらに当てるかを言っていません**
+            # でした。2つ は `per_lap` が動くと大きく割れます（床は 0.20 まで平ら・間隔は比例して落ちる）
+            # ＝ **サブが読む側を選べてしまう**形です。決めは `quota.short_verdict` の註（13:1x）。
             lines.append(
                 f"    リセット時  床に従えば **すべて {land['all']:.1f}%**"
                 f"・いまの間隔のまま **{p['reach_carry']:.1f}%**"
-                f"（§5 15:1x の覆る条件 (1) の門は **98%**）"
+                f"（§5 15:1x の覆る条件 (1) の門は **98%**・"
+                f"**当てるのは「床に従えば」の側**・`quota.short_verdict` 13:1x）"
                 if p.get("reach_carry") is not None else
                 f"    リセット時  床に従えば **すべて {land['all']:.1f}%**")
+            seg_h = (p.get("seg") or {}).get("hours")
+            if (seg_h is not None and p.get("left_hours") is not None
+                    and float(seg_h) > float(p["left_hours"])):
+                lines.append(
+                    f"    ＊**「いまの間隔のまま」では門を読まないこと** —— 区間の窓 {seg_h:.1f}時間 ＞ "
+                    f"残り {p['left_hours']:.1f}時間 ＝ **この枠のうちに、短く終わった効きを1度も映せません**"
+                    "（その数は 1周の重さに比例して落ちるので、門は自分が許した手で下がります）")
         spent = land.get("fable_spent_h_before_reset")
         if spent is not None:
             lines.append(
