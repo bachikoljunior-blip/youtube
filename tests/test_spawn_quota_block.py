@@ -184,3 +184,27 @@ def test_positive_control_丸めの差は実在する(monkeypatch):
     _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
     got = sp._quota_block()
     assert "97.5%" in got and "床に従えば **すべて 99.7%**" in got
+
+
+def test_頭の行は模型の枠だと名乗ること(monkeypatch):
+    """**「この回に使ってよい速さ」の隣に「API 0単位」を置かないこと**
+    （2026-09-11 15:4x・optimizer・Opus。`_quota_block` の註）。
+
+    あの字は**この段を作る値段**で、**この回に使ってよい API の量ではありません。**
+    並べて置くと読み方は 1つ になり（「この回は API を 0単位 しか使えない」）、
+    同じ本文の (a)（`measure`・`status`）と METHOD §7 (o-4)（`cli reporting`）と食い違います。
+    """
+    _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
+    head = sp._quota_block().splitlines()[0]
+    assert "この回に使ってよい速さ" in head, head
+    assert "API 0単位" not in head, head
+    assert "模型の枠" in head, head
+    # **Data API は別の枠**だと、同じ行で言うこと（読む側が枠を取り違えない）。
+    assert "Data API" in head and "10,000単位/日" in head, head
+
+
+def test_positive_control_頭の行の門は実在する(monkeypatch):
+    """**陽性対照**: 古い字（`**API 0単位**` を頭に置く形）なら、上の検査は落ちること。"""
+    _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
+    old_head = "【枠 —— この回に使ってよい速さ】**API 0単位**。オーナー 21:13"
+    assert "API 0単位" in old_head and "模型の枠" not in old_head
