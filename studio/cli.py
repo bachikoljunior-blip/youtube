@@ -608,7 +608,16 @@ def cmd_critique(a):
         print(f"  [{it.get('severity')}] {it.get('where')}: {it.get('why')}\n        → {it.get('fix')}")
     done = critic.loop_done(c)
     print("輪:", "閉じてよい（1番目が言いがかり）" if done else "まだ（1番目が real）")
-    ledger("critique", a.id, understand=c.get("understand"), n_real=sum(1 for i in c.get("items") or [] if i.get("severity") == "real"), done=done, sig=s.loop_sig())
+    # `wheres` は **その周に critic が名指しした所**（2026-09-11 12:4x・hourly・Opus）。
+    # 実測: **同じ本文で コマ6 の語順だけを入れ替えた 2回**（4分 差・字の増減 0）で
+    # **理解度 4 → 2・real 0件 → 3件・done True → False**。**名指しされた所の集合は動かず、札だけが動きました。**
+    # ＝ 閉じるかを `done`（1回の draw）だけで決めると、同じ本が周ごとに開いたり閉じたりします。
+    # 次の回が「この周に出た所は、前の周までに判定ずみか」を**撃たずに**比べられるよう、所と札を残す。
+    # derivation は JOURNAL 09/11 12:4x・決めは §4 (1)。覆る条件もそこ。
+    ledger("critique", a.id, understand=c.get("understand"),
+           n_real=sum(1 for i in c.get("items") or [] if i.get("severity") == "real"),
+           done=done, sig=s.loop_sig(),
+           wheres=[{"where": (it.get("where") or "")[:40], "sev": it.get("severity")} for it in c.get("items") or []])
     return 0 if done else 1
 
 
