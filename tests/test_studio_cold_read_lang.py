@@ -115,3 +115,27 @@ def test_促しに日本語の指定が在る(monkeypatch):
     monkeypatch.setattr(critic, "ask", ask)
     critic.cold_read(_script())
     assert "かならず日本語で書いてください" in ask.prompts[0]
+
+
+# ---------- critique の側は「数えるだけ」（引き直しは置かない） ----------
+
+def test_critiqueの台帳に言語が残る(monkeypatch):
+    """`critique` の返しの言語は、いままで台帳に 1字 も残っていなかった
+    （`wheres` は「コマN」なので、どの回も仮名を含む ＝ 述語が空回りする）。
+    **引き直しは置かない** —— まだ 1件も見ていない形に手を当てないため
+    （`cold_read` の側は 6件 を列挙してから置いた）。"""
+    from studio import cli
+
+    rows = []
+    monkeypatch.setattr(cli, "ledger", lambda ev, vid, **kw: rows.append({"event": ev, **kw}))
+    monkeypatch.setattr(cli.script, "load", lambda vid: _script())
+    monkeypatch.setattr(cli.critic, "critique",
+                        lambda s: {"understand": 4, "takeaway": "Severance pay is taxed lightly.", "items": []})
+    cli.cmd_critique(type("A", (), {"id": "t-cold"})())
+    assert rows[-1]["lang"] == "en"
+
+    rows.clear()
+    monkeypatch.setattr(cli.critic, "critique",
+                        lambda s: {"understand": 4, "takeaway": "退職金は軽く課税されます。", "items": []})
+    cli.cmd_critique(type("A", (), {"id": "t-cold"})())
+    assert rows[-1]["lang"] == "ja"

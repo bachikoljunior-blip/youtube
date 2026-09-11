@@ -668,9 +668,17 @@ def cmd_critique(a):
     # ＝ 閉じるかを `done`（1回の draw）だけで決めると、同じ本が周ごとに開いたり閉じたりします。
     # 次の回が「この周に出た所は、前の周までに判定ずみか」を**撃たずに**比べられるよう、所と札を残す。
     # derivation は JOURNAL 09/11 12:4x・決めは §4 (1)。覆る条件もそこ。
+    # `lang` は **critique の返しの言語**（2026-09-11 23:4x・optimizer・Opus）。
+    # 冷読の側は 79 draw のうち 6件 が英語だったが（`critic.cold_read` の註）、
+    # **critique の側は台帳に 1字 も言語が残っておらず、「英語で返るか」を数える口がどこにも無い**
+    # （`wheres` は「コマN」なので、どの回も仮名を含む ＝ 述語が空回りする）。
+    # ここは**数えるだけ**で、引き直しは置いていない —— **まだ 1件も見ていない形に手を当てない**
+    # （`cold_read` の側は 6件 を列挙してから置いた）。
+    # **覆る条件**: `lang` が `en` の行が 1件 出たら、そのときに `cold_read` と同じ 2つ の手を当てること。
+    # 20行 たまっても 0件 なら、この欄は外してよい（critique の promt は長く、英語へ倒れにくい側）。
     ledger("critique", a.id, understand=c.get("understand"),
            n_real=sum(1 for i in c.get("items") or [] if i.get("severity") == "real"),
-           done=done, sig=s.loop_sig(),
+           done=done, sig=s.loop_sig(), lang=critic.lang_of(c.get("takeaway")),
            wheres=[{"where": (it.get("where") or "")[:40], "sev": it.get("severity")} for it in c.get("items") or []])
     return 0 if done else 1
 
