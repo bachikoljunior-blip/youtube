@@ -137,3 +137,50 @@ def test_写しは最新であること():
     """`--write-rendered` の出力と、commit されている写しが一致すること。"""
     got = (ROOT / "docs" / "spawn_prompt.rendered.md").read_text(encoding="utf-8")
     assert "【枠" in got, "写しを焼き直していません（`--write-rendered`）"
+
+
+# ---- 着地の数を、門と同じ桁で丸めないこと（2026-09-11 11:4x・optimizer・Opus）
+# **踏んだ形**: 「いまの間隔のまま」は METHOD 5 の 15:1x の覆る条件 (1)（門 **98%**）が読む数で、
+# `:.0f` は **97.5 を「98%」**と印字していた ＝ 受け取った側は門ちょうどの字を見て
+# 「越えた／越えていない」を判定することになる。`quota.py --pace` は同じ数を 1桁 で出すので、
+# **2つの口が違うことを言う**形でもあった（`trend.channel_line_short` の覆る条件 (2) と同じ族）。
+
+def _stub_landing(monkeypatch, reach_carry: float, land_all: float):
+    import datetime as _dt
+    import sys
+    import types
+    mod = types.ModuleType("quota_stub")
+    reset = _dt.datetime(2026, 9, 12, 7, 0, tzinfo=timezone(timedelta(hours=9)))
+    mod.pace = lambda *a, **k: {"per_lap": 0.552, "floor_min": 36.0, "used_now": 82.0,
+                                "left_hours": 19.0, "window_reset": reset,
+                                "carry_rate": 0.79, "reach_carry": reach_carry,
+                                "reach_lag_min": 1.7}
+    mod.fable_estimate = lambda *a, **k: {"est": 100.0}
+    mod.fable_rate = lambda *a, **k: {"rate": 1.0}
+    mod.landing = lambda *a, **k: {"all": land_all, "fable": None,
+                                   "fable_spent_h_before_reset": None, "laps": 0}
+    mod.JST = timezone(timedelta(hours=9))
+    for name in ("scripts.quota", "quota"):
+        monkeypatch.setitem(sys.modules, name, mod)
+
+
+def test_門ちょうどの字を出さない(monkeypatch):
+    """97.5% は「98%」ではなく **97.5%** と出ること（門 98% と見分けが付く）。"""
+    _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
+    got = sp._quota_block()
+    assert "いまの間隔のまま **97.5%**" in got, got
+    assert "いまの間隔のまま **98%**" not in got
+
+
+def test_門の数を段の中で名指しすること(monkeypatch):
+    """読む側が METHOD を開かずに比べられるよう、門 **98%** を同じ行に置くこと。"""
+    _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
+    assert "門は **98%**" in sp._quota_block()
+
+
+def test_positive_control_丸めの差は実在する(monkeypatch):
+    """**陽性対照**: 0桁 に戻すと門と同じ字になる並びで試していること。"""
+    assert f"{97.5:.0f}" == "98" and f"{97.5:.1f}" == "97.5"
+    _stub_landing(monkeypatch, reach_carry=97.5, land_all=99.7)
+    got = sp._quota_block()
+    assert "97.5%" in got and "床に従えば **すべて 99.7%**" in got

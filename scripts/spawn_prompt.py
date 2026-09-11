@@ -572,11 +572,18 @@ def _quota_block() -> str:
             f"    床        **{p['floor_min']:.0f}分**（周から周。1周 {p['per_lap']:.3f}%）",
         ]
         if land.get("all") is not None:
+            # **着地は小数第1位まで**（2026-09-11 11:4x・optimizer・Opus）——
+            # この 2つ は METHOD §5 15:1x の覆る条件 (1)（門 98%）が読む数で、
+            # `:.0f` は **門ちょうどの字**（97.5 → 「98%」）を出していた。
+            # `quota.py --pace` は同じ数を 1桁 で印字するので、**2つの口が違うことを言う**形
+            # （`trend.channel_line_short` の覆る条件 (2) と同じ族）。
+            # **門と同じ桁で丸めないこと**（derivation は JOURNAL 09/11 11:4x）。
             lines.append(
-                f"    リセット時  床に従えば **すべて {land['all']:.0f}%**"
-                f"・いまの間隔のまま **{p['reach_carry']:.0f}%**"
+                f"    リセット時  床に従えば **すべて {land['all']:.1f}%**"
+                f"・いまの間隔のまま **{p['reach_carry']:.1f}%**"
+                f"（§5 15:1x の覆る条件 (1) の門は **98%**）"
                 if p.get("reach_carry") is not None else
-                f"    リセット時  床に従えば **すべて {land['all']:.0f}%**")
+                f"    リセット時  床に従えば **すべて {land['all']:.1f}%**")
         spent = land.get("fable_spent_h_before_reset")
         if spent is not None:
             lines.append(
