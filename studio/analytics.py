@@ -58,9 +58,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from .common import env
 
@@ -159,7 +161,28 @@ def curve(vid: str, start: str, end: str) -> dict[float, float]:
     **覆る条件**: (1) 再生 `CURVE_MIN_VIEWS` を越えた本が 3本 続けて空で返ったら、
     下限ではなく**齢**の側（上流の作りが追いついていない）＝ 窓ではなく日を待つこと。
     (2) 500 が返る回がある（`9zkfjEH48PY` で 1度）——**エラーと空を分けること**。
+    **2度目は 2026-09-11 12:2x に `lQHX9LJ80Sg` で出ました** ＝ 一度きりではありません。
+    **1度だけ引き直します**（下の `CURVE_RETRY`）—— この口は **20時間 の門**の後ろに在るので、
+    通りすがりの 500 は「その本のカーブを 1日 落とす」ことと同じです（§7 (o-3) が待っている本でした）。
+    (3) 引き直しても 500 が返る回が 2本 続けて出たら、それは通りすがりではなく本の側 ＝
+    引き直しをやめて、窓（`CURVE_WINDOW_D`）と本の齢を疑うこと。
     """
+    try:
+        return _curve_once(vid, start, end)
+    except HttpError as e:
+        if getattr(getattr(e, "resp", None), "status", 0) < 500:
+            raise
+        # **5xx だけ引き直す**（400 は問いの側が違う ＝ 引き直しても同じ・註の覆る条件 (2)）。
+        time.sleep(CURVE_RETRY_WAIT_S)
+        return _curve_once(vid, start, end)
+
+
+#: 5xx で 1度 だけ引き直すときの待ち（秒）。**回数は増やさないこと** —— 註の覆る条件 (3)。
+CURVE_RETRY_WAIT_S = 2.0
+
+
+def _curve_once(vid: str, start: str, end: str) -> dict[float, float]:
+    """`curve()` の 1度ぶん（引き直しの外側が `curve`）。"""
     rows = _rows(_query(startDate=start, endDate=end, metrics="audienceWatchRatio",
                         dimensions="elapsedVideoTimeRatio", filters="video==" + vid))
     return {round(float(r["elapsedVideoTimeRatio"]), 2): float(r["audienceWatchRatio"])

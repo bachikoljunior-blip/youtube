@@ -229,3 +229,59 @@ def test_エラーで返った本は空とは別に数える():
     rows.append({"event": "analytics_curve", "id": "n2", "studio": True, "views": 150,
                  "marks": None, "error": "HttpError 500", "at": _at("2026-09-10 16:45")})
     assert trend.curve_state(rows)["empty"] == ["n2"]
+
+# ---- 維持率カーブの 5xx は 1度だけ引き直す（2026-09-11 12:2x・optimizer・Opus）----
+#
+# 実測: 20時間 の門の後ろで `lQHX9LJ80Sg`（§7 (o-3) が待っている本）が 500 を返し、
+# その本のカーブは **次の日まで引けない**ところでした（500 は 2度目 —— 1度目は `9zkfjEH48PY`）。
+
+
+class _Resp(dict):
+    def __init__(self, status):
+        super().__init__(status=status, reason="test")
+        self.status = status
+        self.reason = "test"
+
+
+def _http_error(status):
+    from googleapiclient.errors import HttpError
+    return HttpError(_Resp(status), b"{}")
+
+
+def _patch_once(monkeypatch, seq):
+    """`_curve_once` を並びで差し替える（例外なら投げ、辞書なら返す）。撃たれた回数を返す。"""
+    calls = []
+
+    def fake(vid, start, end):
+        calls.append(vid)
+        v = seq[len(calls) - 1]
+        if isinstance(v, Exception):
+            raise v
+        return v
+
+    monkeypatch.setattr(analytics, "_curve_once", fake)
+    monkeypatch.setattr(analytics.time, "sleep", lambda *_: None)
+    return calls
+
+
+def test_500_は1度だけ引き直して通ること(monkeypatch):
+    calls = _patch_once(monkeypatch, [_http_error(500), {0.1: 0.8}])
+    assert analytics.curve("v", "2026-08-25", "2026-09-08") == {0.1: 0.8}
+    assert len(calls) == 2                                   # 引き直しは 1度 だけ
+
+
+def test_positive_control_400_は引き直さないこと(monkeypatch):
+    """**陽性対照** —— 5xx だけを引き直す（400 は問いの側が違う ＝ 引き直しても同じ）。
+    引き直しの条件を外すと、この検査は落ちます。"""
+    calls = _patch_once(monkeypatch, [_http_error(400), {0.1: 0.8}])
+    with pytest.raises(Exception):
+        analytics.curve("v", "2026-08-25", "2026-09-08")
+    assert len(calls) == 1
+
+
+def test_2度とも500なら投げること(monkeypatch):
+    """**回数は増やさない**（註の覆る条件 (3)）—— 2本 続けて出たら本の側を疑う側へ回す。"""
+    calls = _patch_once(monkeypatch, [_http_error(500), _http_error(500)])
+    with pytest.raises(Exception):
+        analytics.curve("v", "2026-08-25", "2026-09-08")
+    assert len(calls) == 2
