@@ -2592,6 +2592,32 @@ REPLICA_LAG_H = 2.8
 #: 長さは **遅れの 2倍** ＝ 塊の中に「遅れの外」の区間が 遅れと同じだけ残ります
 #: （ちょうど `REPLICA_LAG_H` にすると `late` が末尾の 1点 だけになり、
 #: 数えるのは伸びではなく複製の揺れになります）。
+#: **刻みの周期からは、まだ引けません**（2026-09-12 02:2x・optimizer・Opus。
+#: `channel_steps` の覆る条件 (1)「刻みが 2つ 以上 載ったら、その間隔の中央値から
+#: `CHANNEL_BLOCK_MIN_H` を引き直すこと」は**この回に引かれ、そして引けないと分かりました**）。
+#:
+#: 実測の周期（`channel_steps(rows)["periods"]`）は **12.73時間・11.16時間**（中央値 11.94）
+#: ですが、**その刻みは 2種類 を混ぜています** —— 大きい配り **+1,625回**（1つ・左端は
+#: 台帳の先頭 ＝ `censored`）と、細かい刻み **+40 / +44回**（2つ）。
+#: 塊の長さを変えて `over` を数え直すと（この回に撃った・API 0単位）:
+#:
+#:     L= 5.6h  塊 5・連なり 0   (44,11,F) (40,252,T) (0,14,T) (1625,7,F) (0,1,T)
+#:     L= 8.0h  塊 3・連なり 2   (44,156,T) (40,408,T) (**1625**,14,**F**)
+#:     L=11.9h  塊 2・連なり 1   (84,368,T) (**1625**,24,**F**)
+#:     L=12.7h  塊 2・連なり 1   (84,532,T) (**1625**,29,**F**)
+#:     L=17.0h  塊 1・連なり 1   (84,940,T)
+#:     （かっこの中は `d_views`・確かめられた本の伸び・`over`）
+#:
+#: **＝ `over` が偽になるのは「大きい配りを含んだ塊」だけ**で、長さを伸ばすほど
+#: 分子（本の伸び）だけが積もり、連なりは**速く**埋まります（L=8.0 で既に 2/3）。
+#: **細かい刻みの周期（12時間）は、この門が要る周期ではありません** ——
+#: 要るのは**大きい配りの間隔**で、それは **1度しか観測しておらず、左端が見えていません**。
+#: だから **`2 * REPLICA_LAG_H` のまま据え置きます**（複製の遅れから来た数のまま ＝
+#: **刻みの周期からは、いまも 1度も引かれていません**）。
+#: **覆る条件**: (1) **2つ目の大きい配り**（`channel_steps` の `bulk`）が載ったら、
+#: その間隔から引き直すこと —— そのときは中央値でも上端でもなく、**塊が配りを 1つ 含む**
+#: ことが要件です。(2) それまでのあいだ、`channel_over_streak` の連なりを
+#: 「(m) が壊れた」と読まないこと（連なりの塊が配りを含んでいるかは `streak_bulk` が言う）。
 CHANNEL_BLOCK_MIN_H = 2 * REPLICA_LAG_H
 
 
@@ -2754,6 +2780,21 @@ def _flat_span_h(ps: list[dict]) -> float:
     return (ps[-1]["t1"] - ps[len(ps) - n]["t0"]).total_seconds() / 3600.0
 
 
+def _bench_words(g: dict) -> str:
+    """時間の門の手本が**何例から**取られたかを、印字の中で1語にする
+    （2026-09-12 02:2x・optimizer・Opus）。
+
+    **なぜ道具の側で言うか**: 手本が 1例 だった頃の「**ただし手本は 1例**なので、
+    これは『刻みの周期より長い』ではありません」は、**例が増えたら偽になる字**です。
+    印字に数を焼くと、次の回はその字を読んで n＝1 のつもりで判断します
+    （§5 教訓の形 6つ目 ＝ 検査にも印字にも「きょうの状態」を書かないこと）。
+    """
+    n = g.get("step_bench_n")
+    if not n or n <= 1:
+        return "1例"
+    return f"{n}例 のうちいちばん長い1つ"
+
+
 def _flat_window(ps: list[dict]) -> tuple | None:
     """**いまの平ら（包絡が同じ）の、両端の刻。** 無ければ None（2026-09-11 13:2x・optimizer・Opus）。
 
@@ -2879,6 +2920,19 @@ def channel_steps(rows: list[dict]) -> dict:
     **3周 ＝ 1.8時間** で埋まり、刻みを「チャンネルが止まった」と読んで
     (m) の当て所を作り直していたはずです（21:4x の直しの、実物での陽性）。
 
+    **返すもの（2026-09-12 02:2x に足した 3つ・上の覆る条件 (1) が引かれた回）**:
+      `steps[i]["censored"]`  その平らの**左端が台帳の先頭**か（＝ 見始めた刻。**周期にならない**）
+      `periods`               **刻み → 刻み の間隔**（`censored` でない刻みの `flat_h_hi`。
+                              挟みは同じ刻みの `flat_h_lo`〜`flat_h_hi`）と、その `med` / `max`
+      `bench`                 **時間の門の手本**（`flat_readable` が当てる側）＝
+                              `censored` でない刻みのうち**いちばん長い平ら 1つ**の挟み。
+                              **直近の 1つ ではありません** —— 直近で読むと、手本は
+                              刻みごとに ±1.5時間 揺れ、**すでに実測した 12.73時間 の平ら
+                              （その後 刻んだ ＝ 止まっていなかった）より短い平ら**を
+                              「チャンネルが止まった」と読みます（`channel_growth` の決め 02:2x）。
+                              `censored` でない刻みが 1つも無いあいだは、`last` の挟みで代用し
+                              `censored_only` を立てます（**上端は本当の上端ではありません**）。
+
     **観測した平らは、刻みの周期の「下端」です**（2026-09-11 02:3x に撃った検算）——
     この回の刻み **+1,625回** は、チャンネルの長い窓の平均（09/05 の手写し 80,483 → 02:12 の 86,406 ＝
     **+5,923 / 122〜146時間 ＝ 40.5〜48.5回/時**）で割ると **33.5〜40.1時間ぶん**に当たります。
@@ -2890,10 +2944,22 @@ def channel_steps(rows: list[dict]) -> dict:
     **決めないこと** —— 2つ目の刻みが載れば、**間隔そのもの**が測れます（下の (1)）。
 
     **覆る条件**:
-      (1) 刻みが 2つ 以上 台帳に載ったら、**その間隔の中央値**をここに書き、
-          **`CHANNEL_BLOCK_MIN_H` をその中央値から引き直すこと**（いまは `REPLICA_LAG_H` の 2倍 ＝
-          複製の遅れから来た数で、**刻みの周期からは 1度も引かれていません**）。
-          いまは n＝1 なので「10.8時間」は**1例**であって刻みの周期ではありません。
+      (1) ~~刻みが 2つ 以上 台帳に載ったら、その間隔の中央値をここに書き、
+          `CHANNEL_BLOCK_MIN_H` をその中央値から引き直すこと~~
+          → **2026-09-12 02:2x に引かれました**（optimizer・Opus）。刻みは **3つ** 載り、
+          そのうち**周期が測れるのは 2つ**です（1つ目は `t0` が台帳の先頭 09/10 15:24 ＝
+          **左端が見えていない** ＝ `censored`。その +1,625 は長い窓の平均で 33〜40時間ぶん ＝
+          **見始めた時点で `viewCount` が既に古かった**側・02:3x の検算）。
+          **実測の周期（`periods`・刻み → 刻み）: 12.73時間・11.16時間**（挟みの下端 12.11／10.68）
+          ＝ **中央値 11.94時間・上端 12.73時間**。
+          **`CHANNEL_BLOCK_MIN_H` は上端から引き直しました**（`CHANNEL_STEP_PERIOD_H` の註）——
+          **中央値では、塊の半分が平らの中に丸ごと入ります**（塊が刻みを 1つも含まなければ
+          `d_views` は 0 になり、`over`（合計 ＞ チャンネル）は**量子化だけ**で引かれる）。
+          **読む側は端で決める**のは `gate_span` / `margin_line` と同じ規則です。
+          **新しい覆る条件**: (1-a) 刻みが 4つ目 を載せたら `periods` を数え直し、
+          上端が伸びていたら `CHANNEL_STEP_PERIOD_H` も一緒に動かすこと（n＝2 の上端は**下からの押さえ**）。
+          (1-b) `over` の塊に **`stepped` が偽**（刻みが 1つも入っていない）が出たら、
+          長さはまだ足りません ＝ そのときは中央値ではなく**その塊の長さ**から引き直すこと。
       (2) 刻みの大きさが同じ窓の `d_views` とほぼ同じ回（＝ `one_step`）が 3回 続いたら、
           `channel_line` の `views_per_h` は**印字ごとやめる**こと（率として読める窓が来ない）。
       (3) 逆に `n_values` が 4 を越える窓が出たら、`viewCount` は滑らかに動いている ＝
@@ -2923,7 +2989,23 @@ def channel_steps(rows: list[dict]) -> dict:
             })
             cur_v, cur_t0, cur_last, cur_n = v, t, t, 1
     n_values = len({v for _, v in pts})
+    # **左端が台帳の先頭の平らは、周期にも手本にもなりません**（覆る条件 (1)・2026-09-12 02:2x）
+    # —— 見始めた刻より前がどれだけ平らだったかは、台帳に在りません。
+    for i, st in enumerate(steps):
+        st["censored"] = bool(pts) and i == 0 and st["t0"] == pts[0][0]
+    fresh = [st for st in steps if not st["censored"]]
+    per = [st["flat_h_hi"] for st in fresh]
+    periods = {"h": per, "lo": [st["flat_h_lo"] for st in fresh], "n": len(per),
+               "med": _median(per) if per else None,
+               "max": max(per) if per else None}
+    src = fresh or steps
+    bench = None
+    if src:
+        b = max(src, key=lambda st: st["flat_h_hi"])
+        bench = {"lo": b["flat_h_lo"], "hi": b["flat_h_hi"],
+                 "n": len(src), "censored_only": not fresh}
     return {"steps": steps, "last": steps[-1] if steps else None,
+            "periods": periods, "bench": bench,
             "n_values": n_values, "one_step": n_values <= 2 and len(steps) >= 1,
             "laps": len(laps)}
 
@@ -3143,10 +3225,20 @@ def channel_over_streak(rows: list[dict]) -> dict:
         if not b["over"]:
             break
         n += 1
+    # **連なりが「配りの間隔」で埋まっていないか**（2026-09-12 02:2x・`CHANNEL_BLOCK_MIN_H` の註）。
+    # 実測: `over` が偽になるのは**大きい配りを含んだ塊だけ**で、塊を伸ばすほど
+    # 分子（本の伸び）だけが積もる ＝ **連なりは「止まった」ではなく「配りを跨がなかった」で埋まります。**
+    # 物差しは**台帳でいちばん大きい配り**（勝手な閾値を置かないため）。
+    steps = channel_steps(rows)["steps"]
+    max_step = max((st["d"] for st in steps), default=0)
+    streak_dv = [b["d_views"] for b in bs[:n]]
     return {"streak": n, "blocks": len(bs), "need": CHANNEL_FLAT_LAPS,
             "block_h": CHANNEL_BLOCK_MIN_H,
             "ready": len(bs) >= CHANNEL_FLAT_LAPS,
-            "drawn": n >= CHANNEL_FLAT_LAPS}
+            "drawn": n >= CHANNEL_FLAT_LAPS,
+            "max_step": max_step, "streak_dv": streak_dv,
+            "streak_bulk": (any(d >= max_step for d in streak_dv)
+                            if (max_step and streak_dv) else None)}
 
 
 def channel_growth(rows: list[dict]) -> dict:
@@ -3205,7 +3297,9 @@ def channel_growth(rows: list[dict]) -> dict:
             "vid_confirmed": None, "vid_unconfirmable": None,
             "mismatch": None, "over": False,
             "over_streak": 0, "over_blocks": 0, "over_ready": False, "over_drawn": False,
-            "step_flat_h": None, "step_flat_h_hi": None, "flat_readable": True,
+            "over_max_step": 0, "over_streak_dv": [], "over_streak_bulk": None,
+            "step_flat_h": None, "step_flat_h_hi": None, "step_bench_n": None,
+            "flat_readable": True,
             "flat_vid_confirmed": None, "flat_alive": None}
     if len(cs) < 2:
         return {**base, "span_h": None, "d_subs": None, "d_views": None,
@@ -3227,8 +3321,14 @@ def channel_growth(rows: list[dict]) -> dict:
     # **平らを「止まった」と読めるのは、実測の刻みの手前の平らより長いときだけ**
     # （2026-09-11 04:0x・`_flat_span_h` の註。**full と短い行が同じ口から読むこと** ——
     #  `channel_line_short` の覆る条件 (2)「2つが違う verdict を言ったら片方を消す」）
-    st_last = channel_steps(rows)["last"] or {}
-    step_lo, step_hi = st_last.get("flat_h_lo"), st_last.get("flat_h_hi")
+    # **手本は「直近の 1つ」ではなく「いちばん長い平ら」**（2026-09-12 02:2x・`channel_steps`
+    # の `bench`）—— 直近で読むと手本は刻みごとに ±1.5時間 揺れ、**すでに実測した
+    # 12.73時間 の平ら（その後 刻んだ ＝ 止まっていなかった）より短い平ら**を
+    # 「チャンネルが止まった」と読みます（同じ台帳が反証を持っている側）。
+    st_all = channel_steps(rows)
+    st_bench = st_all["bench"] or {}
+    step_lo, step_hi = st_bench.get("lo"), st_bench.get("hi")
+    bench_n = st_bench.get("n")
     flat_h = _flat_span_h(ps)
     fv = flat_video_gain(rows)
     return {**base, "span_h": g["span_h"], "d_subs": g["d_subs"], "d_views": g["d_views"],
@@ -3241,7 +3341,9 @@ def channel_growth(rows: list[dict]) -> dict:
             "mismatch": g["mismatch"], "over": g["over"],
             "over_streak": st["streak"], "over_blocks": st["blocks"],
             "over_ready": st["ready"], "over_drawn": st["drawn"],
-            "step_flat_h": step_lo, "step_flat_h_hi": step_hi,
+            "over_max_step": st["max_step"], "over_streak_dv": st["streak_dv"],
+            "over_streak_bulk": st["streak_bulk"],
+            "step_flat_h": step_lo, "step_flat_h_hi": step_hi, "step_bench_n": bench_n,
             # **時間の門**（手本 1例 の挟みの上端）と、**平らの中の反証**は別の口です
             # （`flat_video_gain` の註・2026-09-11 13:2x）。反証のほうが強い ＝
             # 平らの中に確かめられた伸びが在れば、上端を越えていても「止まった」とは読めません。
@@ -3249,6 +3351,29 @@ def channel_growth(rows: list[dict]) -> dict:
             "flat_vid_confirmed": fv["confirmed"], "flat_alive": fv["proves_alive"],
             # **`confirmed == 0` の 2つ の意味を分ける欄**（`flat_video_gain` の註・19:5x）
             "flat_grew": fv["grew"], "flat_blind": fv["blind"]}
+
+
+def _bulk_words(g: dict) -> str:
+    """**連なりが「止まった」ではなく「大きい配りを跨がなかった」で埋まっていないか**
+    （2026-09-12 02:2x・optimizer・Opus。`CHANNEL_BLOCK_MIN_H` の註の実測）。
+
+    実測（塊の長さを 5.6〜17時間 で振った）: **`over` が偽になったのは、台帳でいちばん
+    大きい配り（+1,625回）を含んだ塊だけ**でした。塊を伸ばすほど分子（本の伸び）だけが
+    積もるので、**連なりは長さを伸ばすほど速く埋まります**（L=8.0時間 で 2/3）。
+    ＝ **連なりが測っているのは、いまのところ「配りの間隔」です。**
+
+    物差しは**台帳でいちばん大きい配り**（勝手な閾値を置かないため）。
+    **覆る条件**: 2つ目の大きい配りが載って間隔が測れたら、この行ではなく
+    `CHANNEL_BLOCK_MIN_H` を引き直すこと（同 (1)）。
+    """
+    big, dv = g.get("over_max_step"), g.get("over_streak_dv") or []
+    if not big or not dv or g.get("over_streak_bulk"):
+        return ""
+    return ("。**ただし、この連なりの塊の総再生の増えは "
+            + "／".join(f"{d:+d}回" for d in dv)
+            + f" で、実測でいちばん大きい配り **{big:+d}回** を 1つも含んでいません** ＝ "
+            "**いま埋まっているのは「配りの間隔」で、「チャンネルが止まった」ではありません**"
+            "（`trend._bulk_words`・`CHANNEL_BLOCK_MIN_H` の註 02:2x）")
 
 
 def channel_line(rows: list[dict]) -> str:
@@ -3303,14 +3428,16 @@ def channel_line(rows: list[dict]) -> str:
         # （2026-09-11 04:0x に下端で置き、**11:3x に上端へ移した** ——`channel_growth` の決め）
         step_lo, step_hi = g["step_flat_h"], g["step_flat_h_hi"]
         if not g["flat_readable"]:
-            flat += (f"**ただし、この平らは {g['flat_h']:.1f}時間 で、直近に実測した刻みの手前の平ら "
-                     f"{step_lo:.1f}〜{step_hi:.1f}時間（挟み・手本は 1例）の**上端**に届いていない ＝ "
+            flat += (f"**ただし、この平らは {g['flat_h']:.1f}時間 で、実測した刻みの手前の平らで"
+                     f"いちばん長いもの {step_lo:.1f}〜{step_hi:.1f}時間"
+                     f"（挟み・手本は {_bench_words(g)}）の**上端**に届いていない ＝ "
                      "「チャンネルが止まった」とは読めません**"
-                     "（`trend.channel_steps`・`channel_growth` の決め 11:3x）。")
+                     "（`trend.channel_steps`・`channel_growth` の決め 11:3x／02:2x）。")
         elif step_hi is not None:
             flat += (f"**この平らは手本の挟みの上端 {step_hi:.1f}時間 を越えました** ——"
-                     "**ただし手本は 1例**なので、これは「刻みの周期より長い」ではありません"
-                     "（`channel_steps` の覆る条件 (1)）。")
+                     f"**ただし手本は {_bench_words(g)}**なので、"
+                     "これは「刻みの周期より長い」ではありません"
+                     "（`channel_steps` の覆る条件 (1-a)）。")
         # **平らの中の反証は、時間の門より強い**（`flat_video_gain` の註・2026-09-11 13:2x）——
         # 手本 1例 の挟みを要らず、同じ台帳の中だけで決まります。**向きは片側だけ。**
         if g["flat_alive"]:
@@ -3355,7 +3482,7 @@ def channel_line(rows: list[dict]) -> str:
                 + ("。**引かれました ＝ (m) の当て所ごと作り直すこと**" if g["over_drawn"]
                    else "。**この窓の `over` を「1周ぶん」と数え足さないこと** —— "
                         "同じ +N が次の周もこの窓に居ます")
-                + "。")
+                + _bulk_words(g) + "。")
     elif conf is None:
         tail = (f"（**窓 {g['span_h']:.1f}時間 ＜ 遅れ {REPLICA_LAG_H:.1f}時間** ＝ "
                 "**この窓では伸びを確かめられません** —— `sum` の側だけで門を引かないこと。"
@@ -3471,7 +3598,10 @@ def channel_line_short(rows: list[dict]) -> str:
                    + (f"。**塊が {CHANNEL_FLAT_LAPS} に届きました ＝ "
                       "(m) の当て所ごと作り直すこと**" if g["over_drawn"] else
                       "（**この窓の `over` を「1周ぶん」と数え足さないこと** —— "
-                      "同じ +N が次の周もこの窓に居ます）"))
+                      "同じ +N が次の周もこの窓に居ます）")
+                   # **短い行も同じ口から言うこと**（`channel_line_short` の覆る条件 (2)
+                   # 「2つ が違う verdict を言ったら片方を消す」・2026-09-12 02:2x）
+                   + _bulk_words(g))
     elif g["flat_laps"] >= CHANNEL_FLAT_LAPS and g["flat_alive"]:
         # **平らの中の反証は、時間の門より強い**（`flat_video_gain` の註・2026-09-11 13:2x）。
         # **full はこの反証を言い、短い行は言っていませんでした**（2026-09-11 14:0x に実物で割れた ＝
@@ -3501,8 +3631,9 @@ def channel_line_short(rows: list[dict]) -> str:
     elif g["flat_laps"] >= CHANNEL_FLAT_LAPS:
         # **門は周で引けても、読みは引けません**（`_flat_span_h` の註・full と同じ口）
         # **門は挟みの上端**（2026-09-11 11:3x・`channel_growth` の決め）
-        verdict = (f"**平らは {g['flat_h']:.1f}時間 で、実測の刻みの手前の平ら "
-                   f"{g['step_flat_h']:.1f}〜{g['step_flat_h_hi']:.1f}時間（挟み・1例）の"
+        verdict = (f"**平らは {g['flat_h']:.1f}時間 で、実測の刻みの手前の平らで"
+                   f"いちばん長いもの {g['step_flat_h']:.1f}〜{g['step_flat_h_hi']:.1f}時間"
+                   f"（挟み・{_bench_words(g)}）の"
                    "**上端**に届いていない ＝ 「チャンネルが止まった」とは読めません**"
                    "（`trend.channel_steps`）")
     else:
