@@ -37,8 +37,12 @@ def _block_and_words() -> tuple[str, str] | None:
     p = quota.pace()
     if not p or p.get("reach_floor") is None:
         return None
+    # **床が歯止めに当たったかも同じ入力で渡すこと**（2026-09-12 00:5x）——
+    # 段の側は渡しているので、ここで落とすと「段だけが出す行」が生まれ、
+    # **この検査がその行を見ないまま緑になります**（§5 教訓の形 6つ目の裏）。
     words = quota.short_words(p.get("reach_floor"), p.get("reach_carry"),
-                              (p.get("seg") or {}).get("hours"), p.get("left_hours"))
+                              (p.get("seg") or {}).get("hours"), p.get("left_hours"),
+                              p.get("floor_clipped"))
     return spawn_prompt._quota_block(), words
 
 

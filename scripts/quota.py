@@ -1864,7 +1864,8 @@ def sweep_words(margin: float | None, per_lap: float | None) -> str:
 
 def short_verdict(reach_floor: float | None, reach_carry: float | None,
                   seg_hours: float | None = None,
-                  left_hours: float | None = None) -> dict:
+                  left_hours: float | None = None,
+                  floor_clipped: str | None = None) -> dict:
     """**この回、持ち場に何も無ければ短く終わってよいか。** METHOD §5 15:1x の覆る条件 (1) の、印字の側。
 
     2026-09-11 13:1x・optimizer・Opus。`sweep_verdict`（11:2x）と**同じ型**で、
@@ -1899,34 +1900,67 @@ def short_verdict(reach_floor: float | None, reach_carry: float | None,
     「いまの間隔のまま」は**この枠のうちに、自分が許した手の効きを1度も映せません**。
     その回は `blind` を立てて印字します（**窓 ＞ 残り** のときだけ）。
 
-    返すもの: `short`（短く終わってよいか）・`side`（読んだ側）・`read`（読んだ数）・
-    `agree`（もう一方の側も同じ答えか）・`blind`（上の窓の話）。
+    **床が `FLOOR_MIN_CLAMP` に当たったら、その「平ら」は消えます**
+    （2026-09-12 00:5x・optimizer・Opus が `floor_clipped` を受け取る口を足して撃った）。
+    床は毎周 `per_lap / fwd` で引き直されるので閉じた輪ですが、**歯止めに当たった先は縮まない**
+    ＝ 1周の長さが `FLOOR_MIN_CLAMP + 遅れ` で固定され、**周の数も固定**されるので、
+    着地は `per_lap` に**そのまま比例**します（`reach_at_reset()` の覆る条件 (2) の当のもの）。
+    撃った盤（この回・`used` 92.91 / 遅れ 1.7分・`per_lap` だけを落とした）:
 
-    **覆る条件**: (1) 床の側が **`FLOOR_MIN_CLAMP` に当たる**回が来たら（`floor_clipped`）、
-    床の側も `per_lap` で動き始めるので、この「平ら」は引かれます —— そのとき掃き直すこと。
+        per_lap   床に従えば（残り 6.4時間・床 29.8分・当たっていない）   床に従えば（残り 1.4時間・生の床 6.6分 ＝ **当たった**）
+        0.900       99.21                                             **99.21**
+        0.700       99.91                                             **97.81**
+        0.546       99.47                                             **96.74**
+        0.350       99.91                                             **95.36**
+        0.200       99.31                                             **94.31**
+        0.150       97.71                                             **93.96**
+                    ＝ 平ら（振れ 2.2 ポイント・向き無し）              ＝ **単調 +5.25 ポイント**
+
+    ＝ 当たった回の床の側は、**間隔の側と同じ性質**（自分が許した手で下がる数）になります。
+    **そこで決まるのは「答え」ではなく「側」です** —— どちらを門に当てるかを引き直すのは
+    METHOD §5 13:1x の (1') で、**この関数は「引かれた」と言うところまで**（判定は回の側）。
+
+    返すもの: `short`（短く終わってよいか）・`side`（読んだ側）・`read`（読んだ数）・
+    `agree`（もう一方の側も同じ答えか）・`blind`（上の窓の話）・
+    **`floor_flat`**（床の側がまだ平らか ＝ 閉じた輪か。`floor_clipped` を渡さない呼びは None）。
+
+    **覆る条件**: (1) ~~床の側が `FLOOR_MIN_CLAMP` に当たる回が来たら~~ →
+    **2026-09-12 00:5x に印字の側を足しました**（`floor_flat` False ＝ `short_words` が
+    「(1') が引かれました」と言う）。**次に見るのは、その印字が出た回が側を引き直したか**
+    —— 引き直した回は METHOD §5 13:1x の (1') を書き換えること（数は この註の盤ではなく
+    その回に撃った盤を置く）。**当たる手前で気づく数は `ceiling_rate()` の余裕**（門 3.0倍）。
+    (1-b) `floor_clipped` が `"spent"`（枠が尽きている）の回は、着地はもう 100% 側で決まっており、
+    この行の問いそのものが立ちません —— **`"min"` だけを平らの破れとして数えます**
+    （`"max"` は逆側 ＝ 床が天井に当たっている回で、そこは縮む側の余地が在ります）。
     (2) 2つ の側が**答えを違える回**（`agree` False）が出たら、その回の数を METHOD §5 へ並べること
     —— いまは 2つ が重なっている点なので、**側を決めた効きはまだ 1度も出ていません**。
     (3) METHOD §5 の (1) の数（98%）が動いたら `SHORT_LANDING_GATE` を動かすこと（2か所に持たない）。
     """
+    floor_flat = None if floor_clipped is None else (str(floor_clipped) != "min")
     side, read = "floor", reach_floor
     if read is None:
         side, read = "carry", reach_carry
     if read is None:
-        return {"short": None, "side": None, "read": None, "agree": None, "blind": None}
+        return {"short": None, "side": None, "read": None, "agree": None,
+                "blind": None, "floor_flat": floor_flat}
     short = float(read) > SHORT_LANDING_GATE
     other = reach_carry if side == "floor" else reach_floor
     agree = None if other is None else ((float(other) > SHORT_LANDING_GATE) == short)
     blind = (None if (seg_hours is None or left_hours is None)
              else float(seg_hours) > float(left_hours))
     return {"short": short, "side": side, "read": float(read),
-            "agree": agree, "blind": blind}
+            "agree": agree, "blind": blind, "floor_flat": floor_flat}
 
 
 def short_words(reach_floor: float | None, reach_carry: float | None,
                 seg_hours: float | None = None,
-                left_hours: float | None = None) -> str:
-    """`short_verdict` を、`--pace` が印字する1行にする（**手で引き比べないこと**）。"""
-    v = short_verdict(reach_floor, reach_carry, seg_hours, left_hours)
+                left_hours: float | None = None,
+                floor_clipped: str | None = None) -> str:
+    """`short_verdict` を、`--pace` が印字する1行にする（**手で引き比べないこと**）。
+
+    `floor_clipped` を渡した回は、**床の側がまだ平らか**も言います（`short_verdict` の盤）。
+    """
+    v = short_verdict(reach_floor, reach_carry, seg_hours, left_hours, floor_clipped)
     if v["short"] is None:
         return "      **短く終わってよいか: 着地が読めません**（§5 15:1x の (1) は当てられない）"
     head = ("**引かれました ＝ 持ち場に何も無ければ短く終わってよい**" if v["short"]
@@ -1944,6 +1978,15 @@ def short_words(reach_floor: float | None, reach_carry: float | None,
                  "**この枠のうちに、短く終わった効きを1度も映せません**"
                  "（その数は `per_lap` に比例して落ちるので、門は自分が許した手で下がります"
                  "・`short_verdict` の盤）")
+    if v["floor_flat"] is False:
+        # **床が歯止め（`FLOOR_MIN_CLAMP`）に当たった回**（2026-09-12 00:5x）。
+        # ここで黙ると、読む側は「床に従えば」を**平らな数だと思ったまま**当てます
+        # ——§5 教訓の形 7つ目（覆る条件を註に書いたら、その条件を読む印字も一緒に作ること）。
+        line += ("\n      ＊**床が歯止め "
+                 f"{FLOOR_MIN_CLAMP:.0f}分 に当たりました ＝ 床の側はもう平らではありません**"
+                 "（§5 13:1x の (1') が引かれました）—— **この回は、読む側そのものを引き直すこと**"
+                 "（当たった先は縮まないので、床の側も `per_lap` に比例して落ちます"
+                 "・盤は `short_verdict` の註）")
     return line
 
 
@@ -2744,7 +2787,8 @@ def pace_report(now: datetime | None = None) -> None:
               f"（＝ 直近の区間の {p['carry_rate']:.3f} %/時。"
               f"**残す {100.0 - p['reach_carry']:.0f}% は、リセットで消えます**）")
         print(short_words(p.get("reach_floor"), p.get("reach_carry"),
-                          (p["seg"] or {}).get("hours"), p.get("left_hours")))
+                          (p["seg"] or {}).get("hours"), p.get("left_hours"),
+                          p.get("floor_clipped")))
         if p["reach_floor"] - p["reach_carry"] > 2.0:
             print(f"      ＊差の **{p['reach_floor'] - p['reach_carry']:.0f} ポイント**は"
                   f"**間隔だけ**で決まります。**「いく／いかない」ではなく「床に乗るか」。**")

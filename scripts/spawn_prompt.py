@@ -659,7 +659,9 @@ def _short_lines(reach_floor: float | None, p: dict) -> list[str]:
 
     **覆る条件**: (1) `--pace` の印字の字数が増えて、この段に載せるには長すぎる回が来たら、
     運ぶのは1行目（判定の行）だけにすること —— **判定を落とすのではなく、註のほうを落とす**。
-    (2) `short_words` が 2行 より増えたら、この関数は畳まずに全部 運ぶ（判定と註は対で意味を持つ）。
+    (2) `short_words` が 2行 より増えたら、この関数は畳まずに全部 運ぶ（判定と註は対で意味を持つ）
+    —— **2026-09-12 00:5x に 3行目 が出る回ができました**（床が歯止めに当たった回・下の `floor_clipped`）。
+    この関数は全部 運びます（畳んでいません）。
     (3) 門の数（98%）が動くのは `SHORT_LANDING_GATE` の 1か所 だけ ＝
     この段に数を書き戻さないこと（検査 `tests/test_spawn_quota_gate_side.py`）。
     """
@@ -671,8 +673,19 @@ def _short_lines(reach_floor: float | None, p: dict) -> list[str]:
     if not callable(fn):
         return miss
     try:
-        line = fn(reach_floor, p.get("reach_carry"),
-                  (p.get("seg") or {}).get("hours"), p.get("left_hours"))
+        # **床が歯止めに当たったかも渡すこと**（2026-09-12 00:5x・`short_verdict` の
+        # 覆る条件 (1)）—— 当たった回の「床に従えば」は平らではなくなり、
+        # **側そのものを引き直す回**になります。渡さないと、この段は
+        # 引かれた覆る条件を持たない古い字のまま出ます（§5 教訓の形 7つ目）。
+        # 口を持たない `quota` に差し替えられた回は、**4引数の形へ落として運ぶ**
+        # （この 1行 のために段を丸ごと落とさない —— 上の `miss` の註）。
+        try:
+            line = fn(reach_floor, p.get("reach_carry"),
+                      (p.get("seg") or {}).get("hours"), p.get("left_hours"),
+                      p.get("floor_clipped"))
+        except TypeError:
+            line = fn(reach_floor, p.get("reach_carry"),
+                      (p.get("seg") or {}).get("hours"), p.get("left_hours"))
     except Exception:                                          # noqa: BLE001
         return miss
     if not line:
