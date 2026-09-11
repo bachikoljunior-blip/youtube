@@ -3261,3 +3261,12 @@
 {"views": 0, "likes": 0, "comments": 1, "age_h": 139.0, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受", "n_values": 1, "at": "2026-09-11T12:00:18+09:00", "id": "fMlY_uzHOMw", "event": "measured"}
 {"views": 191, "likes": 0, "comments": 1, "age_h": 146.0, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-11T12:00:18+09:00", "id": "a23e696j0f8", "event": "measured"}
 {"views": 190, "likes": 0, "comments": 1, "age_h": 147.0, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-11T12:00:18+09:00", "id": "kzefG44_APU", "event": "measured"}
+{"subs": 28, "views": 86406, "videos": 270, "at": "2026-09-11T11:59:28+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"views_live": 957, "views_ledger": 948, "over": 9, "age_h": 50.0, "src": "status", "at": "2026-09-11T11:59:28+09:00", "id": "gv1u7n_pCAQ", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-11T11:59:28+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"takeaway": "退職金にかかる税金は勤続年数で決まる非課税枠によって決まり、長く働くほど税負担が軽くなる仕組みになっている。", "unclear": [], "at": "2026-09-11T12:04:14+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "cold_read"}
+{"understand": 3, "n_real": 2, "done": false, "at": "2026-09-11T12:06:43+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "critique"}
+{"takeaway": "退職金は勤続年数に応じた非課税の枠があり、長く働くほど枠が大きくなるため、税金が少なくなる仕組みについての説明。", "unclear": ["「枠」という概念の定義（税金がかからない上限金額という理解で正しいのか）", "なぜ「はみ出た金額を半分にする」のか、その理由や計算ルール", "「とどかない日数も1年になり」という表現の意味", "税率が「人によって変わる」具体的な理由や要因", "「決まり」がどの法律や制度を指しているのか"], "at": "2026-09-11T12:09:48+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "cold_read"}
+{"takeaway": "退職金には勤続年数に基づいた非課税枠があり、その枠を超えた金額の半分に対して税金がかかる。", "unclear": ["なぜ超えた分を『半分にする』のか、その理由", "『税率は人によって変わる』の詳細な理由", "複数の計算例が示されたが、実際の最終的な税金額を求める具体的な手順", "『1年にとどかない日数も、1年ぶん』というルールの詳細"], "at": "2026-09-11T12:11:04+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "cold_read"}
+{"understand": 3, "n_real": 5, "done": false, "at": "2026-09-11T12:12:35+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "critique"}
+{"takeaway": "退職金の非課税枠は勤続年数で決まり、長く働くほど1年あたりの枠が増えるため、同じ退職金額でも税負担が大きく変わる。", "unclear": [], "sig": "e0f64dafa357", "at": "2026-09-11T12:14:16+09:00", "id": "2026-09-12-taishoku-koujo-70man", "event": "cold_read"}

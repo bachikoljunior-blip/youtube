@@ -475,6 +475,29 @@ def cmd_status(a):
         print("  " + json.dumps(r, ensure_ascii=False)[:160])
 
 
+def loop_stale(vid: str, sig: str, rows=None) -> str:
+    """**輪（§4 (1)）の答えが、いまの本文のものか**（2026-09-11 12:3x・hourly・Opus）。
+    返すのは印字する1行（古くなければ空）。derivation と覆る条件は `script.Script.loop_sig` の註。
+
+    **印字は註より先に目に入ります**（§5 の教訓 7つ目）ので、ここで言うのは
+    **次の1手だけ**にします —— 「read → critique を撃ち直す」。字数や秒数には触れません
+    （それは別の門で、混ぜると書き手はどちらに従うか分かりません ＝ §3 の 9 の「年に」の族）。"""
+    rows = ledger_rows() if rows is None else rows
+    last = None
+    for r in rows:
+        if r.get("id") == vid and r.get("event") in ("cold_read", "critique"):
+            last = r
+    if last is None:
+        return ""
+    old = last.get("sig")
+    if old is None:       # 指紋を書く前の回の行 —— 古いかどうかを言えないので、黙る（嘘より安い）
+        return ""
+    if old == sig:
+        return ""
+    return (f"輪は古い本文で閉じています（{last['event']} {last.get('at', '?')[:16]} は指紋 {old}・"
+            f"いまは {sig}）＝ **read → critique を撃ち直すこと**（§4 (1)「直す → 最初から評価し直す」）")
+
+
 def cmd_lint(a):
     s = script.load(a.id)
     ps = s.problems()
@@ -483,6 +506,9 @@ def cmd_lint(a):
         print("  [!]", p)
     for w in s.warnings():
         print("  [?]", w)
+    stale = loop_stale(s.id, s.loop_sig())
+    if stale:
+        print("  [?]", stale)
     return 1 if ps else 0
 
 
@@ -494,6 +520,11 @@ def cmd_build(a):
         return 1
     for w in s.warnings():
         print("  [?]", w)
+    # **ここが、11:0x の回が見ていたはずの所**（§4 (1) の順）—— 直したあとに必ず通るのは build で、
+    # lint は通らない回がある（この回の 11:0x は build → hear → sheet → crosscheck だけ撃った）。
+    stale = loop_stale(s.id, s.loop_sig())
+    if stale:
+        print("  [?]", stale)
     img = image_for(a.id)
     r = render.build(s, img)
     print(f"mp4: {r['mp4']}  {r['total']:.1f}秒  背景: {img.name if img else '無し（単色）'}")
@@ -565,7 +596,7 @@ def cmd_read(a):
     print("言い返し:", r.get("takeaway"))
     for u in r.get("unclear") or []:
         print("  分からない:", u)
-    ledger("cold_read", a.id, takeaway=r.get("takeaway"), unclear=r.get("unclear"))
+    ledger("cold_read", a.id, takeaway=r.get("takeaway"), unclear=r.get("unclear"), sig=s.loop_sig())
     return 0
 
 
@@ -577,7 +608,7 @@ def cmd_critique(a):
         print(f"  [{it.get('severity')}] {it.get('where')}: {it.get('why')}\n        → {it.get('fix')}")
     done = critic.loop_done(c)
     print("輪:", "閉じてよい（1番目が言いがかり）" if done else "まだ（1番目が real）")
-    ledger("critique", a.id, understand=c.get("understand"), n_real=sum(1 for i in c.get("items") or [] if i.get("severity") == "real"), done=done)
+    ledger("critique", a.id, understand=c.get("understand"), n_real=sum(1 for i in c.get("items") or [] if i.get("severity") == "real"), done=done, sig=s.loop_sig())
     return 0 if done else 1
 
 
