@@ -642,7 +642,15 @@ def cmd_read(a):
     print("言い返し:", r.get("takeaway"))
     for u in r.get("unclear") or []:
         print("  分からない:", u)
-    ledger("cold_read", a.id, takeaway=r.get("takeaway"), unclear=r.get("unclear"), sig=s.loop_sig())
+    # **引き直しは印字する**（§5 の教訓 7つ目「覆る条件を註に書いたら、それを読む印字も一緒に作る」）。
+    # 註は次の回が読む前提だが、印字は読むより先に目に入る ＝ 黙って引き直すと、
+    # `critic.cold_read` の覆る条件 (1)(2) を数える回が「何回 引き直したか」に気づけない。
+    for d in r.get("dropped") or []:
+        print("  ＊英語で返ったので引き直した:", str(d)[:60])
+    if r.get("lang") == "en":
+        print("  ＊**英語のまま**（§4 (1) は日本語の draw だけで比べる ＝ この行を件数の比べに入れないこと）")
+    ledger("cold_read", a.id, takeaway=r.get("takeaway"), unclear=r.get("unclear"), sig=s.loop_sig(),
+           lang=r.get("lang"), dropped=r.get("dropped"))   # 言語と捨てた draw（`critic.cold_read` の覆る条件を次の回が数えるため）
     return 0
 
 

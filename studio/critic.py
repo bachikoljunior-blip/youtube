@@ -39,11 +39,62 @@ def narration(s: Script) -> str:
     return "\n".join(seg.say for seg in s.segments)
 
 
-def cold_read(s: Script) -> dict:
+JA = re.compile(r"[ぁ-んァ-ヴ一-龥]")
+
+
+def lang_of(text) -> str:
+    """`takeaway` の言語（`"ja"` / `"en"`）。**仮名か漢字が 1字でも在れば `ja`**。
+
+    **なぜ この雑な述語でよいか**（2026-09-11 23:4x・optimizer・Opus が台帳 79件 で数えた）:
+    冷読の返しは「日本語の1文」か「英語の1文」かのどちらかで、**混ざった行は 1件も在りません**
+    （英語の 6件 は 1字も仮名漢字を含まず、日本語の 73件 は必ず含む）。
+    ＝ 実物の形を列挙してから置いた門です（§5 の教訓 4つ目）。
+
+    **覆る条件**: (1) 日本語の中に英語の語だけが混ざる行（「iDeCo は…」の類）を
+    `en` と読んだ回が出たら、ここは**割合**（仮名漢字の字数 ÷ 全体）へ移すこと。
+    (2) `takeaway` は日本語なのに `unclear` に英語が混ざる行が出たら、
+    見る先を `takeaway` から `takeaway + unclear` へ広げること —— いまは広げていません。
+    **`takeaway` が日本語だった 73行 は、`unclear` も 1つ残らず日本語**（73/73）で、
+    英語が混ざるのは **`takeaway` が英語だった 6行 のうち 5行 だけ**
+    ＝ **takeaway 1つ を見れば、その行ぜんぶの言語が決まります**（引き直しは 1 draw ぶんの値段）。
+    """
+    return "ja" if JA.search(str(text or "")) else "en"
+
+
+def cold_read(s: Script, tries: int = 2) -> dict:
+    """**返しが英語で来たら、1回だけ引き直す**（2026-09-11 23:4x・optimizer・Opus。§15 の申し送り）。
+
+    **なぜ**: 冷読は `unclear` の**件数**を周をまたいで比べる口（§4 (1)）ですが、
+    **英語の draw は件数が別物になります**（実測 09/11 23:1x・hourly: 英語 0件 と 3件 対 日本語 5件）。
+    台帳 79件 のうち **6件（7.6%）が英語**で、**その 6件 は全部 `takeaway` が丸ごと英語**でした。
+
+    **手は 2つ**（どちらも `ask` の側は触らない ＝ 他の口に影響しない）:
+      (1) 促しに「**日本語で**」を 1行 足す（値段 0）
+      (2) それでも英語なら **1回だけ引き直す**（値段は 7.6% の回にだけ 1 draw）
+
+    **捨てた draw は消さずに返します**（`dropped`）—— `cli read` が台帳へ書くので、
+    次の回は「(1) が効いたか」を **引き直しの回数**で数えられます（印字も `cli read` が出す）。
+
+    **覆る条件**:
+      (1) `dropped` が **10回** たまっても 1回目の英語率が 7.6% から下がらなければ、
+          (1) の促しは効いていない ＝ 促しを戻して (2) だけ残すこと（値段が同じで、字が減る）。
+      (2) 引き直した 2回目まで英語だった回が **2回** 出たら、`tries` を上げるのではなく
+          **模型の側**を見ること（haiku → sonnet は 1 draw の値段が変わる ＝ §5 の模型の割り当て）。
+      (3) `unclear` だけが英語で返る行が 2件 目に出たら、`lang_of` の覆る条件 (2) の側へ。
+    """
     p = ("次は、60秒のショート動画のナレーション全文です。あなたは、この話題を知らない一般の視聴者です。\n"
          "一度だけ聞いた前提で、(1) この動画が言いたいことを1文で、(2) 分からなかった言葉や文を箇条書きで、\n"
-         "JSON {\"takeaway\": \"...\", \"unclear\": [\"...\"]} だけを返してください。\n\n---\n" + narration(s))
-    return _json(ask(p, "haiku", 120))
+         "JSON {\"takeaway\": \"...\", \"unclear\": [\"...\"]} だけを返してください。\n"
+         "**takeaway も unclear も、かならず日本語で書いてください**（英語では返さない）。\n\n---\n" + narration(s))
+    draws = []
+    for _ in range(max(1, tries)):
+        draws.append(_json(ask(p, "haiku", 120)))
+        if lang_of(draws[-1].get("takeaway")) == "ja":
+            break
+    r = draws[-1]
+    r["lang"] = lang_of(r.get("takeaway"))
+    r["dropped"] = [d.get("takeaway") for d in draws[:-1]]
+    return r
 
 
 def critique(s: Script) -> dict:
