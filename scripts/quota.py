@@ -2521,6 +2521,20 @@ def pace(now: datetime | None = None) -> dict | None:
     # 09/05 で止まっており、**この行は 14体・1周に 0.16体**（＝ 1周に 1体も立っていない）
     # と印字していました。`_subs_from_choices` の註。
     subs = _subs_from_choices(start, at)
+    # **この診断の窓は、目盛りの刻ではなく `now` まで取ること**（2026-09-12 08:3x）。
+    # 比（1周に何体）は枠の残量とは関係が無いので、**窓は広いほど確かです**。
+    # `at`（目盛りの刻）で切ると、**枠が回った直後は窓が 20分 ＝ 周 0件** になり、
+    # `subs_per_lap` が None に落ちます ——`tests/test_quota_fable_cost_per_sub.py` の
+    # 「1周に N体」の検査が、**枠が回るたびに赤**になっていた側です
+    # （§5 教訓の形 11つ目 ＝ **走る刻で色が変わる検査は、赤 1件 として数える**）。
+    # **`hours` / `births` / `per_lap` の側は動かしていません**（そちらは「使った%」の分母 ＝
+    # 目盛りの刻で閉じていなければならない）。
+    # **覆る条件**: 枠の頭からまだ 1周も立っていない刻（リセット直後の 1周ぶん）は、
+    # それでも None です ＝ そこも埋めるなら、窓を「直近 24時間」の固定にすること
+    # （**そのときは枠の窓と別物になる**ので、印字にそう書くこと）。
+    subs_lap_from, subs_lap_to = start, max(at, now)
+    subs_diag = _subs_from_choices(subs_lap_from, subs_lap_to)
+    births_diag = _births_between(rows, subs_lap_from, subs_lap_to)
 
     # **リセット直後は `hours`／`births` がどちらも上限**（窓の下限を採っている）
     # なので、そこから出る `rate` も `per_lap` も**下限**にしかなりません。
@@ -2583,6 +2597,35 @@ def pace(now: datetime | None = None) -> dict | None:
     # ＝ 窓をいちばん広く取っている ＝ 周をいちばん多く数えている ＝
     # `per_lap` は**最小**に出ます。**1周の重さは枠が戻っても軽くなりません**ので、
     # リセット前に測れていた数のほうが大きければ、そちらを採ること。
+    # --- **枠が「本当に回った」回は、`pre` が None のまま落ちます**（2026-09-12 08:1x に踏んだ） ---
+    # `_gauge_reset()` が見るのは「**同じ枠の中で**%が戻された」回だけです
+    # （2026-09-02 の実物 ＝ `resets_at_iso` が動かないまま目盛りだけ 73% → 3%）。
+    # **`resets_at_iso` が 7日 進んだ回 ＝ 本当のリセットでは、そこが引っかかりません。**
+    # その回の目盛りは新しい枠の **0%**・この枠の `births` も 0 なので `per_lap` が出ず、
+    # `floor_min` ごと None になって、**下流が 4つ とも黙ります**:
+    #     `next_round.floor_minutes()`      → `FALLBACK_MIN`（90分）へ落ちる
+    #     `spawn_prompt._quota_block()`     → 【枠】の段を**まるごと落とす**
+    #     `short_words` / `margin_line` / `sweep_verdict` / `clamp_eta`  → 何も言わない
+    # 実測 2026-09-12 08:1x（目盛り 07:20 の 0%・枠 09/12 07:00 → 09/19 07:00）:
+    # 前の枠で測れていた `per_lap` は **0.546%** ＝ 床 **54.6分** なのに、親は **90分** で回りました
+    # （`data/parent_wakes.jsonl` の `source` が「目盛りが無いか…」＝ 定数の側）。
+    # **＝ 枠が戻った回は、新しい目盛りが貼られるほうが、貼られないより悪くなっていました**
+    # （貼られなければ下の `rolled` の枝が、前の枠の `per_lap` でそのまま運びます）。
+    # **1周の重さは枠が戻っても軽くなりません**（この関数がもう 2か所 でそう書いている側）ので、
+    # **この枠で測れない回だけ**、前の枠の数を床に当てます。
+    # **当てるのは `per_lap` だけで、`rate` には当てません** —— 新しい枠の使用済みは
+    # 本当に 0% から始まっており、そこを前の枠の速さで運ぶと **推定が上に外れます**
+    # （＝「速すぎてよい」ではなく「遅すぎる」側へ倒れるが、どちらも実測ではない）。
+    # **覆る条件**: (1) 新しい枠で `per_lap` が測れた回からは、この床は当たりません
+    #   （`per_lap` が出ていれば下の比較で負ける ＝ 手で外さないこと）。
+    # (2) 枠をまたいで 1周の重さが本当に変わる回（模型の割り当てを変えた枠）が来たら、
+    #   前の枠の数は床ではなく**古い数**です ＝ そのときは `_per_lap_before` の窓を
+    #   「同じ模型で回った枠まで」に絞ること。**その回は `per_lap_floored` が True のまま
+    #   新しい目盛りが 2点 入るので、`--pace` の区間の側と突き合わせて見分けられます。**
+    # (3) 目盛りが機械から読めるようになったら、この枝ごと要りません。
+    if not per_lap and pre is None:
+        pre = _per_lap_before(anchors, start)
+
     per_lap_raw, per_lap_floored = per_lap, False
     if pre and (per_lap is None or pre["per_lap"] > per_lap):
         per_lap, per_lap_floored = pre["per_lap"], True
@@ -2710,7 +2753,8 @@ def pace(now: datetime | None = None) -> dict | None:
         "gauge_window_start": start, "gauge_window_reset": resets,
         "rolled": rolled,
         "hours": hours, "births": births, "subs": subs,
-        "subs_per_lap": (subs / births) if births else None,
+        "subs_per_lap": (subs_diag / births_diag) if births_diag else None,
+        "subs_diag": subs_diag, "births_diag": births_diag,
         "rate": rate, "per_lap": per_lap, "per_lap_cum": per_lap_cum,
         "seg": seg, "seg_weight": weight,
         "reset_at": reset_at, "reset_from": reset_from,
@@ -2945,11 +2989,23 @@ def pace_report(now: datetime | None = None) -> None:
           f"   → 通算は **{p['over']:+.0%}**")
     print(f"      ＊枠の頭から見た 0.595 %/時ではなく、**すでに使ったぶんを引いた線**を"
           f"基準にしています（追い越したぶんは取り返せない）")
-    if p["births"]:
+    # **床が在れば印字すること**（2026-09-12 08:1x）—— ここは長らく「この枠で周を数えられたか」
+    # だけを見ており、**枠が戻った直後（`births` 0・`per_lap` は前の枠からの床）に
+    # 床の行ごと消えて**いました。`next_round` はその床で回るのに、
+    # **`--pace` を撃ったサブには「誕生を1件も数えられていません」しか出ません**
+    # （METHOD が「空欄を『余裕がある』と読まないこと —— `--pace`」と指している当の口）。
+    if p["births"] or p.get("per_lap"):
         if seg and seg["per_lap"]:
             print(f"    1周いくらか: 通算 {p['per_lap_cum']:.3f}%（{p['births']}周）／"
                   f"区間 {seg['per_lap']:.3f}%（{seg['births']}周）"
                   f" → 区間に **{p['seg_weight']:.0%}** 寄せて **{p['per_lap']:.3f}%**")
+        elif not p["births"]:
+            print(f"    **この枠ではまだ 1周も数えられていません**（枠が戻った直後）"
+                  f" → 1周 **{p['per_lap']:.3f}%** は "
+                  f"{p['pre']['at'].astimezone(JST):%m/%d %H:%M} までの実測の床"
+                  f"（`_per_lap_before`。**1周の重さは枠が戻っても軽くなりません**）"
+                  if p.get("pre") else
+                  f"    1周 **{p['per_lap']:.3f}%**")
         else:
             print(f"    {p['hours']:.1f}時間で **{p['births']}周** "
                   f"→ **1周 {p['per_lap']:.3f}%**"
@@ -2978,7 +3034,13 @@ def pace_report(now: datetime | None = None) -> None:
     # **枠が戻る瞬間に何%まで行くか**（2026-09-09 21:5x・optimizer・Opus）。
     # オーナー 21:13「全てのモデル100％いきそう？」に答えるのはこの2行で、
     # 下の `exhaust_at` の行では答えられません（`reach_at_reset()` の註）。
-    if p.get("reach_floor") is not None and p.get("reach_carry") is not None:
+    # **「いまの間隔のまま」が読めない回にも、床の側は印字すること**（2026-09-12 08:1x）——
+    # 枠が戻った直後は区間が引けず `reach_carry` は None ですが、
+    # **§5 15:1x の門（98%）が当てる側は「床に従えば」のほう**です。
+    # ここが両方そろうまで黙っていたので、**門の判定ごと消えて**いました
+    # （`spawn_prompt._short_lines()` は `reach_carry` が None でも `short_words` を運ぶ側 ＝
+    # **2つ の口が違うことを言っていました**）。
+    if p.get("reach_floor") is not None:
         print(f"    **リセット（{p['window_reset'].astimezone(JST):%m/%d %H:%M} JST）"
               f"に何%まで行くか**")
         print(f"      床に従えば **{p['reach_floor']:.1f}%**"
@@ -2998,9 +3060,14 @@ def pace_report(now: datetime | None = None) -> None:
                      if m < CEILING_MARGIN_GATE else f"（門 {CEILING_MARGIN_GATE:.1f}倍）")
                   + sweep_words(m, p.get("per_lap")))
             print(margin_line(per_lap=p.get("per_lap")))
-        print(f"      いまの間隔のまま **{p['reach_carry']:.1f}%**"
-              f"（＝ 直近の区間の {p['carry_rate']:.3f} %/時。"
-              f"**残す {100.0 - p['reach_carry']:.0f}% は、リセットで消えます**）")
+        if p.get("reach_carry") is not None:
+            print(f"      いまの間隔のまま **{p['reach_carry']:.1f}%**"
+                  f"（＝ 直近の区間の {p['carry_rate']:.3f} %/時。"
+                  f"**残す {100.0 - p['reach_carry']:.0f}% は、リセットで消えます**）")
+        else:
+            print("      いまの間隔のまま **読めません**（同じ枠の中に2点目がない ＝ "
+                  "区間が引けない）。**空欄を「余裕がある」と読まないこと** —— "
+                  "当てる側は上の「床に従えば」です（§5 13:1x）")
         print(short_words(p.get("reach_floor"), p.get("reach_carry"),
                           (p["seg"] or {}).get("hours"), p.get("left_hours"),
                           p.get("floor_clipped")))
@@ -3012,7 +3079,7 @@ def pace_report(now: datetime | None = None) -> None:
         if _cw:
             print(_cw)
         print(agree_line())
-        if p["reach_floor"] - p["reach_carry"] > 2.0:
+        if p.get("reach_carry") is not None and p["reach_floor"] - p["reach_carry"] > 2.0:
             print(f"      ＊差の **{p['reach_floor'] - p['reach_carry']:.0f} ポイント**は"
                   f"**間隔だけ**で決まります。**「いく／いかない」ではなく「床に乗るか」。**")
     if p["exhaust_at"]:
