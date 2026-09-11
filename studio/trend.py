@@ -2787,7 +2787,20 @@ def flat_video_gain(rows: list[dict]) -> dict:
 
     返すもの: `t0`/`t1`（平らの両端）・`h`（長さ）・`sum`（見えるようになった分）・
     `confirmed`（**遅れで説明が付かない分** ＝ 門に当てるのはこちら）・`n`（読み直した本）・
+    `grew`/`blind`（`channel_video_delta` の註）・
     `proves_alive`（`confirmed` が 0 より大きいか。`None` ＝ まだ言えない）。
+
+    **`proves_alive` が `False` になるのは、伸びた本が 1本 も測れなかった回を外したあとだけ**
+    （2026-09-11 19:5x・optimizer・Opus）: `confirmed == 0` には **2つ の意味**が在ります ——
+    **(a) 伸びが確かめられなかった**（`blind > 0` ＝ 窓の確かめられる部分に `measure` が
+    1回 しか入っていない）と、**(b) 伸びた本が 1本 も無かった**（`blind == 0`）。
+    **(a) を `False` と読むと、§7 (m) の「平らの中の伸びが 0 の回（＝ そのとき初めて
+    時間の門が独りで立つ）」が、測れなかっただけの回で引かれます。** だから (a) は `None`。
+    ＝ `cli.comments_to_show` / `trend.pair_gap` / `reporting.missing_days` と**同じ族**
+    （数は出るのに、その数がそろっているかが出ない）。
+
+    **覆る条件（`blind` の側）**: `blind` が **0 のまま** `proves_alive is False` の回が
+    3周 続いたら、そのとき初めて §7 (m) の「平らの中の伸びが 0」を数に使ってよい。
 
     **覆る条件**: (1) `confirmed` が正なのに、そのあとチャンネルの総再生が
     **その分を受け取らないまま刻みを 2つ 跨いだ**回が出たら、そのときは伸びの側（`measure`）の
@@ -2799,13 +2812,22 @@ def flat_video_gain(rows: list[dict]) -> dict:
     win = _flat_window(ps)
     if win is None:
         return {"t0": None, "t1": None, "h": None, "sum": None,
-                "confirmed": None, "n": None, "proves_alive": None}
+                "confirmed": None, "n": None, "grew": None, "blind": None,
+                "proves_alive": None}
     t0, t1 = win
     vd = channel_video_delta(rows, t0, t1)
     conf = vd["sum_confirmed"]
+    if conf is None:
+        alive = None
+    elif conf > 0:
+        alive = True
+    else:
+        # **0 の意味は 2つ**（上の註）—— 測れなかった側は `False` に倒さない
+        alive = None if vd["blind"] else False
     return {"t0": t0, "t1": t1, "h": (t1 - t0).total_seconds() / 3600.0,
             "sum": vd["sum"], "confirmed": conf, "n": vd["n"],
-            "proves_alive": None if conf is None else conf > 0}
+            "grew": vd["grew"], "blind": vd["blind"],
+            "proves_alive": alive}
 
 
 def _flat_laps(ps: list[dict]) -> int:
@@ -2952,9 +2974,22 @@ def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> d
     「再生は増えるだけ」が崩れるので上の抑えは効かない ＝ `sum_confirmed` ごと外すこと
     （いまの実測は 1本 -1〜-2回）。(3) `REPLICA_LAG_H`（2.8時間）は `envelope` の註の実測です
     —— `ENVELOPE_LAG_H` を動かす回は、**同じ回にこちらも**動かすこと（片方だけ動かさない）。
+
+    **`blind`（2026-09-11 19:5x・optimizer・Opus。実物で踏んだ）**: 伸びた本のうち、
+    **`[t0 + 遅れ, t1]` の読みが 1つ しか無くて `sum_confirmed` に 0 しか出せなかった本**の数。
+    **窓の長さが遅れより長くても、確かめられる部分は `t1 - t0 - 遅れ` しかありません** ——
+    実測 2026-09-11 19:1x: 平ら 4.35時間 の窓で、確かめられる部分は **1.55時間**、
+    そこに入った `measure` は **1回 だけ**（床 37分 でも、`measure` は 1周 1回）。
+    ＝ 抑え `min(late)` は最後の読み（＝ `b`）そのものになり、**伸びた 2本 とも 0**。
+    そのとき `sum_confirmed == 0` は「伸びなかった」ではなく **「測れなかった」**です。
+    **`grew` は窓の中で伸びた本の数**（`blind` の分母）。
+    **覆る条件 (4)**: `measure` が 1周 に 2回 以上 撃たれるようになったら、`blind` は自然に減ります
+    —— **減らないまま `blind == grew` の回が 3周 続いたら**、抑えの取り方（`REPLICA_LAG_H` の側）を
+    疑うこと。(5) 逆に `blind == 0` の回が 7周 続いたら、この欄は外してよい。
     """
     out = {"sum": 0, "n": 0, "fresh": 0, "skipped": 0,
-           "sum_confirmed": None, "unconfirmable": 0, "lag_h": REPLICA_LAG_H}
+           "sum_confirmed": None, "unconfirmable": 0, "lag_h": REPLICA_LAG_H,
+           "grew": 0, "blind": 0}
     # **窓が遅れより短ければ、確かめられる伸びは 1回 も無い**（抑えに使える読みが窓の中に無い）
     measurable = (t1 - t0).total_seconds() / 3600.0 >= REPLICA_LAG_H
     if measurable:
@@ -2988,10 +3023,20 @@ def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> d
             continue
         if b - a <= 0:
             continue          # 伸びていない本は、抑えが無くても食い違いを作りません
+        out["grew"] += 1
         if not late:
             out["unconfirmable"] += 1   # 遅れの外に読みが無い ＝ この窓では分けられない
+            out["blind"] += 1
             continue
-        out["sum_confirmed"] += max(0, b - min(late))
+        gain = max(0, b - min(late))
+        # **読みが 1つ しか無い窓では、この抑えは伸びを 1回 も返せません**
+        # （2026-09-11 19:5x・optimizer・Opus。**実物で踏んだ**）: 並びがふつう
+        # （遅れた複製に当たっていない）なら、`[cut, t1]` の唯一の読みは **最後の読み ＝ b** なので
+        # `b - min(late)` は **恒等的に 0** です。＝ その 0 は「伸びなかった」ではなく
+        # **「この窓では測れない」**。`blind` に数え、verdict は `None`（まだ言えない）へ倒します。
+        if gain == 0 and len(late) < 2:
+            out["blind"] += 1
+        out["sum_confirmed"] += gain
     return out
 
 
