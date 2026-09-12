@@ -94,3 +94,102 @@ def test_間隔は周で運んだ推定から出る(tmp_path, monkeypatch):
     # 12時間 待っても、使った%は動かず、残り時間が 12時間 減るぶんしか間隔は伸びない
     assert b["used_now"] == a["used_now"]
     assert b["floor_min"] / a["floor_min"] < 1.15
+
+
+# --- **借りた床（`_per_lap_before`）でも周で運ぶこと**
+#     （2026-09-12 12:3x JST・optimizer・Opus。実測の形をそのまま固定する） ---
+#
+# 09/06 17:xx の門は `laps_in_window and per_lap` で、**`laps_in_window == 0` ＝ 1周の重さが無い**
+# が前提でした。08:2x に `_per_lap_before` が入ってからその同値は切れています
+# （この枠で 1周も測れていなくても、前の枠から借りた重さが在る）。
+# 実測 09/12 12:2x: laps_in_window 0・per_lap 0.546（借り）・carried_laps 5 →
+# 門が偽 → 時間で運ぶ側へ落ち、`carry_rate` 0.000 %/時（同じ枠に2点目が無い）→
+# **5周 立っても used_now 0.0%**（実際は 2.73%）＝ 床が短い側（速すぎてよい側）へ外れる。
+
+PREV_RESET = RESET - timedelta(days=7)
+PREV_START = PREV_RESET - timedelta(days=7)
+
+
+def _setup_two_windows(tmp_path, monkeypatch, *, anchors, rounds):
+    """`anchors` は (刻, %, その点が属する枠のリセット) の並び。"""
+    usage = tmp_path / "usage.jsonl"
+    _jsonl(usage, [{"fetched_at": at.isoformat(), "window_id": "seven_day",
+                    "used_percent": used, "resets_at_iso": reset.isoformat()}
+                   for at, used, reset in anchors])
+    rl = tmp_path / "rounds.jsonl"
+    _jsonl(rl, [{"at": at.isoformat(), "role": "hourly", "round": at.isoformat()}
+                for at in rounds])
+    monkeypatch.setattr(quota, "USAGE_LOG", usage)
+    monkeypatch.setattr(quota, "ROUNDS_LOG", rl)
+    monkeypatch.setattr(quota, "LOG", tmp_path / "quota.jsonl")
+    monkeypatch.setattr(quota, "RUNS_LOG", tmp_path / "runs.jsonl")
+
+
+def _just_rolled(tmp_path, monkeypatch):
+    """前の枠には周も目盛りも在り、新しい枠の目盛りは**頭の 20分 後の 0%**（09/12 の実物）。"""
+    prev_g = PREV_START + timedelta(hours=120)                        # 前の枠で 1周の重さが測れる点
+    prev_rounds = [PREV_START + timedelta(hours=h) for h in range(2, 120, 6)]
+    new_g = RESET + timedelta(minutes=20)                             # 枠の頭 20分 後 ＝ そこまで周 0
+    new_rounds = [RESET + timedelta(hours=h) for h in (1, 2, 3, 4, 5)]  # 目盛りの後に 5周
+    _setup_two_windows(
+        tmp_path, monkeypatch,
+        anchors=[(new_g, 0.0, RESET), (prev_g, 60.0, PREV_RESET)],
+        rounds=prev_rounds + new_rounds,
+    )
+
+
+def test_枠が戻った直後は借りた床で周で運ぶ(tmp_path, monkeypatch):
+    """**陽性対照**: 門を `laps_in_window and per_lap` へ戻すと、この 4件 が落ちる
+    （`carry_mode` が `hours`・`used_now` が 0.0 になる）。撃って確かめてある。"""
+    _just_rolled(tmp_path, monkeypatch)
+    p = quota.pace(RESET + timedelta(hours=6))
+
+    assert p["laps_in_window"] == 0           # 目盛りが枠の頭 20分 後 ＝ そのあいだに周は無い
+    assert p["per_lap_floored"] is True       # 1周の重さは前の枠からの借り
+    assert p["carried_laps"] == 5
+    assert p["carry_mode"] == "laps"          # **門は `laps_in_window` ではなく `per_lap`**
+    assert p["used_now"] == pytest.approx(5 * p["per_lap"])
+    assert p["used_now"] > 0                  # 時間で運ぶ側なら 0.0% のまま（`carry_rate` 0）
+
+
+def test_周で運ばないと床が短い側へ外れる(tmp_path, monkeypatch):
+    """**向きを固定する** —— `used_now` が低いほど `forward_rate` は高く、床は**短く**なる。
+
+    「速すぎてよい」側へ外れるので、黙って走り切れてしまう（＝ 色では出ない）。
+    """
+    _just_rolled(tmp_path, monkeypatch)
+    now = RESET + timedelta(hours=6)
+    p = quota.pace(now)
+
+    hours_side_forward = (100.0 - 0.0) / p["left_hours"]   # used_now 0.0% で運んだ場合
+    assert hours_side_forward > p["forward_rate"]
+    assert p["floor_min"] is not None and p["floor_min"] > 0
+
+
+def test_前の枠にも周が無ければ従来どおり時間で運ぶ(tmp_path, monkeypatch):
+    """覆る条件 (a) は生きている —— 借りる先が無ければ `per_lap_floored` は False。"""
+    new_g = RESET + timedelta(minutes=20)
+    _setup_two_windows(tmp_path, monkeypatch,
+                       anchors=[(new_g, 0.0, RESET),
+                                (PREV_START + timedelta(hours=120), 60.0, PREV_RESET)],
+                       rounds=[RESET + timedelta(hours=h) for h in (1, 2, 3)])
+    p = quota.pace(RESET + timedelta(hours=6))
+    assert p["per_lap_floored"] is False
+    assert p["carry_mode"] == "hours"
+
+
+def test_門は_per_lap_だけでは足りない(tmp_path, monkeypatch):
+    """**単位が違う 2つ を掛けないこと。**
+
+    `per_lap` の分母は `_births_between`（周が無ければ `quota.jsonl` の誕生へ落ちる）、
+    `carried_laps` は `rounds.jsonl` の周だけ。**`per_lap` が在るかだけを門にすると**、
+    周の台帳が空で誕生だけが在る枠（`tests/test_pace.py` の 08/21 の形）が
+    周の側へ落ち、`carried_laps` が構造的に 0 のまま**推定が凍ります**。
+    ＝ 門は `laps_in_window or per_lap_floored`（どちらも周の台帳から出た数）。
+    """
+    g = START + timedelta(hours=30)
+    _setup(tmp_path, monkeypatch, anchors=[(g, 10)], rounds=[])   # 周の台帳が空
+    p = quota.pace(g + timedelta(hours=10))
+    assert p["laps_in_window"] == 0
+    assert p["per_lap_floored"] is False
+    assert p["carry_mode"] == "hours"
