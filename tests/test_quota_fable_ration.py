@@ -189,3 +189,31 @@ def test_古い_quota_でも親を止めない(monkeypatch) -> None:
     for name in ("scripts.quota", "quota"):
         monkeypatch.setitem(sys.modules, name, mod)
     assert sp._fable_ration_words() == ""
+
+
+def test_印字の側は_この周に立った模型を並べる(tmp_path, monkeypatch) -> None:
+    """**2026-09-12 23:1x・hourly・Fable が踏んだ形**: 親は周を記録してから立て、本文の【枠】は
+    その あと に撃たれるので、`fable_ration()` の「fable N体」はこの周の 1体 を含み、境目では
+    「線の上 → この周は Opus」と印字しながら立っていたのは Fable でした（記録 23:01・fable 10体）。
+    印字の側（`stood` つき）は「次に立てる」と言い、**記録の模型**を並べる。
+    陽性対照: `stood` を渡さない決めの側は前と同じ字（「この周は Opus」）。
+    """
+    now = datetime(2026, 9, 12, 23, 6, tzinfo=quota.JST)
+    f = tmp_path / "model_choice.jsonl"
+    f.write_text(
+        '{"at": "2026-09-12T22:06:46+09:00", "work_kind": "hourly:leverage", "model": "opus"}\n'
+        '{"at": "2026-09-12T23:01:42+09:00", "work_kind": "hourly:leverage", "model": "fable"}\n'
+        '{"at": "2026-09-12T23:01:42+09:00", "work_kind": "optimizer:other", "model": "opus"}\n',
+        encoding="utf-8")
+    monkeypatch.setattr(quota, "MODEL_CHOICE_FILE", f)
+    stood = quota.hourly_stood(now)
+    assert stood and stood["model"] == "fable"
+    # 30分 より古い記録は「この周」ではない
+    assert quota.hourly_stood(now + timedelta(hours=2)) is None
+    r = {"line": 9.5, "est": 10.2, "over": True, "elapsed_h": 16.0, "per_sub": 0.93,
+         "subs_since": 11, "gauge": {"pct": 0.0}, "rolled": False}
+    printed = quota.fable_ration_words(r, stood=stood)
+    assert "この周は Opus" not in printed
+    assert "次に立てる `hourly` は Opus" in printed and "この周に立った `hourly` は fable" in printed
+    decided = quota.fable_ration_words(r)
+    assert "この周は Opus" in decided and "この周に立った" not in decided

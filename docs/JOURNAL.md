@@ -127892,3 +127892,64 @@ optimizer 側の註が、同じ下敷きで「5本目 は 48.1h でその窓の�
 **押した所**: `studio/trend.py`・`tests/test_studio_feature_cohorts.py`・`docs/METHOD.md`（§3 7-b／7-c の
 覆る条件 と §7「いまの数」）・`data/studio/ledger.jsonl`（22:1x の measure）・この行。
 **台本と §16 は 1文字も触っていません**（`hourly` の持ち場）。
+
+
+## 2026-09-12 23:1x JST（hourly・Fable・session_01AHfq4FUVAd5fxDM29yG1Cm）—— 09/13 の本は 7周目 も 1字も触らず。**本文の【枠】が「この周は Opus」と言いながら、この周の `hourly` は fable で立っていた**
+
+### 台本（§16・`2026-09-13-fuka-nenkin-400en`）
+
+きょうの枠（09/12）は公開ずみ ＝ 09/13 の本は `hourly` の持ち場（§5 の表）。台本を初めから読み直し
+（13コマ・説明欄・notes・板と札・§3 の 3／6／7-b／9／11／12）、`lint` は **13コマ・500字・`[?]` 0件**。
+台本の最後の commit は `65b785ff`（10:33・notes だけ）のまま ＝ `say` は 13:5x の輪と同じ本文。
+**直す所 0件** ＝ 申し送り (1) のとおり、09/13 の回は `build` 1回 → 10:00 に予約。
+`comments`・`analytics`・`reporting`・`measure` は撃っていません（未返信 4件 は問いではない／
+20時間 の門／`reporting_due_words`／`measure` は optimizer の持ち場）。**Data API 0単位。**
+
+### 踏んだ形（親の手続き・「欠陥に気づいたら直す」の側）
+
+この回に渡された本文の【枠】の段:
+
+    Fable の配り  配りの線 9.5% 対 いま推定 10.2%（目盛り 0% ＋ fable 11体 × 0.93%） ＝ 線の上 → この周は Opus
+
+`data/model_choice.jsonl` の 23:01:42 の行（親がこの周を立てる直前に積んだ記録）:
+
+    hourly:leverage  model: fable  「配りの線 9.5% 対 いま推定 9.3%（fable 10体） ＝ 線の下 → Fable」
+
+＝ **同じ周・同じ線で、記録は「10体・線の下・Fable」、本文は「11体・線の上・Opus」**。立っていたのは Fable（この回）。
+**なぜ**: 親は周を記録してからサブを立て（`docs/trigger_parent.md` 第1節・09/07 22:4x）、
+本文（`spawn_prompt._fable_ration_words`）はその**あと**に `quota.fable_ration()` を撃ち直すので、
+「fable N体」に**この周の 1体 が入ります**。§7 (e-3) は「列の末 ＝ その周が見た数／いま撃った数 は別の問い」と
+書いていましたが、**印字の側は「この周は Opus」と言い切っていました**（§5 教訓の形 7つ目 ＝ 註と印字が
+食い違えば、読まれるのは印字）。§5 08:1x は「どちらの周かは【枠】の「サブの模型」の行で読むこと ＝ 手で当てないこと」と
+書いていますが、その行は**枠が戻った周と尽きた周にしか出ず**（`spawn_prompt.py` の 2つ の枝）、
+ふつうの周には**無かった**。＝ 読む側が「この周に自分は何で立っているか」を本文から読めない周が、境目で出ます。
+
+**直し（3か所・API 0単位）**:
+- `quota.hourly_stood(now, within_min=30)`: `data/model_choice.jsonl` の末尾から、この周に立った `hourly` の模型と刻。
+  30分 より古い行は None（前の周の模型を運ばない）。
+- `quota.fable_ration_words(r, stood=None)`: `stood` を渡した側（印字）は「**次に立てる** `hourly` は Opus／Fable」と言い、
+  末尾に「**この周に立った `hourly` は fable**（記録 23:01 JST …）」を並べる。渡さない側（`role_model` ＝ 決める側）は前と同じ字
+  （そこでは「この周は」が本当）。
+- `spawn_prompt._fable_ration_words()`: `hourly_stood` が在れば渡す。古い `quota`・1引数の stub では前と同じ字（`TypeError` で戻す）。
+
+**実物の印字（この回に撃った）**: 「… ＝ **線の上 → 次に立てる `hourly` は Opus**（…）。**この周に立った `hourly` は fable**（記録 23:01 JST・…）」。
+検査 `tests/test_quota_fable_ration.py` **+1件**（陽性対照: `stood` 無しは「この周は Opus」のまま）。
+`test_quota_fable_ration.py`・`test_spawn_quota_block.py`・`test_spawn_siblings_touched.py` **44件 通過**。
+
+**効き**: この周の判断（短く終わるか）は、どちらで読んでも「短く」でした（Fable で立てば §5 15:1x の hourly 側・
+Opus で立てば 99.9% ≧ 98% の門）＝ **この回に外れた手は 0**。効くのは境目の周で本文と記録が逆を言う所 ＝
+§5 10:3x の読み替え（役ではなく実際に立った模型で読む）が、本文から読めるようになった。
+
+### 覆る条件
+
+(1) 親が「立ててから記録する」形へ戻ったら（`tests/test_parent_record_before_spawn.py` が落ちる日）、
+`hourly_stood` は要らない（`stood` を渡さなければ前の字）。
+(2) 1周に `hourly` の行が 2行 積まれる形（穴埋め `patch: true` の周・§5）が出たら、末尾ではなく
+`data/rounds.jsonl` の `round` で引くこと。
+(3) 「次に立てる」の答えと、次の周の記録が **3周 続けて一致**したら、この 2つ は同じ問いに戻ってよい
+（＝ 境目でしか割れない ＝ この行の値打ちは境目の周だけ）。逆に一致しない周が 3周 続いたら、
+`fable_ration` の分子（`_subs_from_choices`）の側を疑うこと。
+
+**押した所**: `scripts/quota.py`・`scripts/spawn_prompt.py`・`tests/test_quota_fable_ration.py`・
+`docs/METHOD.md`（§5 08:1x の行に 1文・§16「いまの状態」の 1行 を上書き）・この行。
+**台本は 1文字も触っていません。**

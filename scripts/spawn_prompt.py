@@ -644,8 +644,24 @@ def _fable_ration_words() -> str:
     words = getattr(q, "fable_ration_words", None)
     if not callable(fn) or not callable(words):
         return ""
+    # **この段は記録の あと に撃たれる**（2026-09-12 23:1x・hourly・Fable）: 「この周は Opus」と
+    # 印字した周に立っていたのは Fable でした（`quota.hourly_stood` の註）。印字の側は
+    # 「次に立てる」と言い、**この周に実際に立った模型**を並べる。古い `quota` では前と同じ字。
+    stood_fn = getattr(q, "hourly_stood", None)
+    stood = None
+    if callable(stood_fn):
+        try:
+            stood = stood_fn()
+        except Exception:                                      # noqa: BLE001
+            stood = None
     try:
-        return words(fn()) or ""
+        r = fn()
+        if stood:
+            try:
+                return words(r, stood=stood) or ""
+            except TypeError:
+                pass
+        return words(r) or ""
     except Exception:                                          # noqa: BLE001
         return ""
 
