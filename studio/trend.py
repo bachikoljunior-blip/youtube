@@ -2235,6 +2235,10 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # §7 末尾「1日1本」の覆る条件（500回 が 7本 続いたら 2本/日 を試す）の連
     #  —— **同じ族の 5つ目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`）。
     out.append(views_streak_line(rows))
+    # §3 の 7-b（板）／7-c（しくみ）の覆る条件（その型の本 3本 の 48h が、持たない直近 3本 の
+    #  中位を下回ったら 絞るか外す）を数える口 —— **同じ族の 7例目・8例目**
+    #  （`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・`views_streak`・`rev7_run`）。
+    out.append(feature_line(rows))
     out.append(analytics_line(rows, now=now))
     # §7 の収益の節の 覆る条件 (4)（直近7日の平均が続けて上がったら、分子はチャンネルの回復の側）の連
     #  —— **同じ族の 6例目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・
@@ -3253,6 +3257,195 @@ def outside_line(method: "Path | None" = None) -> str:
     body += (f"  直近は §{last['sec']}（公表ページ {last['page']}・改正 {last['reform']}）。"
              "**行の無い本は数えません**（連は復元しない ＝ §4 19:4x の決め）。")
     return body
+
+
+#: §3 の 7-b（板 `board`）／7-c（札「しくみ」）の覆る条件の門（**本**で数える）。
+FEATURE_RUN_GATE = 3
+#: 型ごとの 48h を挟むときの齢（§3 の両方の覆る条件が「48h」と書いている）。
+FEATURE_AGE = 48.0
+
+
+def views_at_age(pts: list[dict], env: list[int | None], h: float = FEATURE_AGE) -> dict:
+    """齢 `h` の再生を **挟み**（lo／hi）で返す（包絡・API 0単位）。
+
+    **なぜ挟みか**: 測りは 1時間 ごとなので、**齢 48.0h ちょうどの点を持つ本は ほとんどありません**
+    （実物 7本 のうち **0本**）。§7「形」の行が `536〜613` と書いているのは この挟みで、
+    **点を 1つ 選ぶと、選び方しだいで判定が動きます**（実物 3本目 は 536 と 613 ＝ 1.14倍）。
+
+    返り: ``reached``（h を越えた点が在るか）・``lo``（h 以下の最後の包絡）・
+    ``hi``（h を越えた最初の包絡）・``exact``（lo と hi が同じ ＝ 挟みが閉じた）。
+    **`reached` が偽の本は、まだ答えを持ちません**（`lo` は下端としてしか読めない）。
+    """
+    below = [v for p, v in zip(pts, env) if float(p["age_h"]) <= h]
+    above = [v for p, v in zip(pts, env) if float(p["age_h"]) > h]
+    lo = below[-1] if below else None
+    hi = above[0] if above else None
+    return {"reached": hi is not None, "lo": lo, "hi": hi,
+            "exact": hi is not None and lo == hi}
+
+
+def _has_board(d: dict) -> bool:
+    return any(s.get("board") for s in d.get("segments", []))
+
+
+def _has_shikumi(d: dict) -> bool:
+    return any(s.get("tag") == "しくみ" for s in d.get("segments", []))
+
+
+#: 台本の「型」—— (名, §3 のどの行に覆る条件が在るか, 台本から引く述語)。
+#: **足すのは §3 に覆る条件が在る型だけ** ——決めの無い数を印字しても、次の回が読む所が増えるだけです。
+FEATURES: tuple = (
+    ("板", "§3 7-b", _has_board),
+    ("しくみ", "§3 7-c", _has_shikumi),
+)
+
+
+def script_features(scripts: "Path | None" = None) -> dict[str, dict]:
+    """台本ごとの型の印（`data/studio/scripts/*.json` を読むだけ・**API 0単位**）。"""
+    from .script import SCRIPTS
+    base = Path(scripts) if scripts is not None else SCRIPTS
+    out: dict[str, dict] = {}
+    for p in sorted(base.glob("*.json")):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        out[p.stem] = {name: bool(fn(d)) for name, _sec, fn in FEATURES}
+    return out
+
+
+def _script_video_ids(rows: list[dict]) -> dict[str, str]:
+    """台本の id → 上げた video_id（**最後の `scheduled` 行**。差し替えた本は新しいほう）。"""
+    out: dict[str, str] = {}
+    for r in rows:
+        if r.get("event") == "scheduled" and r.get("id") and r.get("video_id"):
+            out[str(r["id"])] = str(r["video_id"])
+    return out
+
+
+def _median_bracket(bs: list[dict]) -> dict:
+    """挟みの束の中央値を、**挟みのまま**返す（lo の中央値／hi の中央値）。"""
+    return {"lo": statistics.median(sorted(b["lo"] for b in bs)),
+            "hi": statistics.median(sorted(b["hi"] for b in bs)),
+            "exact": False, "n": len(bs)}
+
+
+def feature_cohorts(rows: list[dict], scripts: "Path | None" = None) -> list[dict]:
+    """**§3 の 7-b／7-c の「N本 の 48h」を数える口**（台本 ＋ 台帳だけ・**API 0単位**）。
+
+    **なぜ（2026-09-12 22:2x JST・optimizer・Opus）**: §3 の 7-b（板 `board`）と 7-c（札「しくみ」）は
+    どちらも「**その型の本 3本 の 48h が、持たない直近 3本 の中位を下回ったら** 絞るか外す」と
+    書いていますが、**その 3本 を数える物が 1つも在りませんでした** ——
+    `late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・`views_streak`・`rev7_run` と
+    **同じ族の 7例目・8例目**（「N本 続いたら」と覆る条件に書いて、N を数える口が無い）。
+    しかも §16 の覆る条件 (1) は「**次の1本で 3本 そろう**」と書いており、
+    **そろったかを数える手が、書いた回の頭の中にしかありませんでした。**
+
+    **この口が答えるのは 3つ だけ**:
+
+    * その型を持つ本が **何本** 在り、うち **48h に着いた本が何本** か（＝ 門までの残り）
+    * 比べる相手（**その型を持たない、48h に着いた直近 3本**）が誰で、いくつか
+    * 門に届いた回に、**中位が下回ったか**（**挟みが重なったら「分けられない」** ＝ 言い切らない）
+
+    **48h は挟みで読みます**（`views_at_age`）—— 実物 7本 に 齢 48.0h ちょうどの点は **0本**で、
+    点を 1つ 選ぶ形にすると 3本目 は 536 と 613 の**どちらにもできます**（1.14倍）。
+    ＝ **中位も挟みのまま比べ、重なったら「分けられない」を返します。**
+
+    **0回 の本も 1本 として数えます**（§7「形」の 決め (5) と同じ側 ——
+    外す口が道具に無いのに外すと、読む側が都合で選べます）。
+
+    **判定は `hourly`**（§5 ＝ 形を変えるかは台本を持つ側・optimizer はこの数を並べるまで）。
+
+    **覆る条件**: (1) 門に届いた回に挟みが重なったら（``verdict == "分けられない"``）、
+    **そこで判定を下さないこと** —— 要るのは齢 48h ちょうどの点で、いまの測りの間隔（約 55分）では
+    取れません。取りにいくなら `measure` の刻を 48h に合わせる側で、**その値段は 1周ぶん**です。
+    (2) **型は台本から引いています**（`board` が 1コマでも在るか・`tag == "しくみ"` が 1コマでも在るか）。
+    §3 が「板は 3行 に絞る」「しくみ は 1コマ に絞る」と**量**を決め直したら、**ここの述語も一緒に直すこと**
+    （いまは「在るか」だけを見ており、量は見ていません ＝ 絞ったあとの本も「持つ」側に入ります）。
+    (3) 比べる相手は「持たない、48h に着いた直近 3本」に固定しています —— その 3本 が同じ週に
+    入っているうちは、日の良し悪しと分けられません（§7「形」の 決め (2)）。
+    (4) 2つ の型は**同じ本に同時に乗ります**（09/12 の本は 板 と しくみ の両方）＝
+    **どちらが効いたかは、この口では分けられません**。分けるには片方だけの本が要ります。
+    """
+    feats = script_features(scripts)
+    vids = _script_video_ids(rows)
+    mine = ours(rows)
+    ser = series(rows)
+    books: list[dict] = []
+    for sid in sorted(feats):
+        vid = vids.get(sid)
+        pts = ser.get(vid or "", [])
+        at48: dict = {"reached": False, "lo": None, "hi": None, "exact": False}
+        day = sid[:10]
+        published = bool(vid and vid in mine and pts)
+        if published:
+            at48 = views_at_age(pts, envelope(pts))
+            day = published_at(pts).strftime("%Y-%m-%d")
+        books.append({"sid": sid, "id": vid, "day": day, "published": published,
+                      "at48": at48, **{name: feats[sid][name] for name, _s, _f in FEATURES}})
+    out: list[dict] = []
+    for name, sec, _fn in FEATURES:
+        has = [b for b in books if b[name]]
+        ready = [b for b in has if b["at48"]["reached"]]
+        base = [b for b in books if not b[name] and b["at48"]["reached"]][-FEATURE_RUN_GATE:]
+        row: dict = {
+            "name": name, "sec": sec, "gate": FEATURE_RUN_GATE,
+            "books": has, "n": len(has), "ready": ready, "n_ready": len(ready),
+            "short": max(0, FEATURE_RUN_GATE - len(ready)),
+            "base": base, "verdict": "まだ", "mid": None, "base_mid": None,
+        }
+        if len(ready) >= FEATURE_RUN_GATE and len(base) >= FEATURE_RUN_GATE:
+            mid = _median_bracket([b["at48"] for b in ready[-FEATURE_RUN_GATE:]])
+            bmid = _median_bracket([b["at48"] for b in base])
+            row["mid"], row["base_mid"] = mid, bmid
+            if mid["hi"] < bmid["lo"]:
+                row["verdict"] = "下回りました"
+            elif mid["lo"] > bmid["hi"]:
+                row["verdict"] = "下回りません"
+            else:
+                row["verdict"] = "分けられない"
+        out.append(row)
+    return out
+
+
+def _bracket_words(b: dict) -> str:
+    if b["lo"] is None:
+        return "—"
+    if b["lo"] == b["hi"]:
+        return f"{b['lo']:g}回"
+    return f"{b['lo']:g}〜{b['hi']:g}回"
+
+
+def feature_line(rows: list[dict], scripts: "Path | None" = None) -> str:
+    """`feature_cohorts` を1行にする（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
+    parts: list[str] = []
+    for c in feature_cohorts(rows, scripts):
+        body = (f"**{c['name']}（{c['sec']}）: {c['n']}本"
+                f"（48h に着いた {c['n_ready']}本／門 {c['gate']}本）**")
+        if c["books"]:
+            body += "＝ " + "・".join(
+                f"{b['day'][5:]}{'' if b['published'] else '（未公開）'} "
+                + (_bracket_words(b["at48"]) if b["at48"]["reached"] else "まだ")
+                for b in c["books"])
+        if c["base"]:
+            bm = _median_bracket([b["at48"] for b in c["base"]])
+            body += (f"　対 **持たない直近 {len(c['base'])}本** "
+                     + "・".join(f"{b['day'][5:]} {_bracket_words(b['at48'])}" for b in c["base"])
+                     + f"（中位 {_bracket_words(bm)}）")
+        if c["verdict"] == "まだ":
+            body += f"　→ **まだ引けません**（48h に着く本が あと {c['short']}本）"
+        elif c["verdict"] == "分けられない":
+            body += "　→ !! **門に届きましたが、挟みが重なって分けられません**（覆る条件 (1)）"
+        else:
+            body += (f"　→ !! **中位（{_bracket_words(c['mid'])}）は"
+                     f"{c['verdict']}**（**判定は `hourly`**・§5）")
+        parts.append(body)
+    return ("**台本の型ごとの 48h**（§3 7-b／7-c の覆る条件を数える口・"
+            "`trend.feature_cohorts`・台本と台帳だけ・**API 0単位**）: "
+            + "　／　".join(parts)
+            + "　**48h は挟みで読みます**（齢 48.0h ちょうどの点を持つ本は 0本 ＝ "
+              "点を 1つ 選ぶと判定が動く・`views_at_age` の註）。"
+              "**2つ の型は同じ本に乗るので、どちらが効いたかは分けられません**（覆る条件 (4)）。")
 
 
 def image_orders(rows: list[dict], orders: "Path | None" = None,
