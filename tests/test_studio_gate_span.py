@@ -82,27 +82,44 @@ def test_連の門は註の数と同じ場所から来ること() -> None:
     assert r["need"] == trend.SPAN_NARROW_NEED == 3
 
 
-def test_連の陽性対照_門を緩めれば連は伸びること() -> None:
+def test_連の陽性対照_門を動かせば連が動くこと() -> None:
     """**陽性対照**（§5 教訓の形 3つ目「壊したら落ちるまで撃つ」）。
 
-    門を実測の幅より大きく取れば、同じ台帳で連は**必ず 1 以上 伸びます**。
-    伸びなければ、数えているのは幅ではありません。
+    **緩める側だけでは測れません**（2026-09-13 02:5x に踏んだ・optimizer・Opus）——
+    `span_narrow_run` は `need`+1 回ぶんしか遡らないので、**連は need+1 で頭打ち**です。
+    窓の刻が全部 門の下に入った回（この回: 幅 0.168倍 が **4刻 とも**・連 4 ＝ 頭打ちの 4）は、
+    **門をいくら緩めても連は 1 も伸びません** ＝ この向きの対照は、
+    **状態が飽和した日に、道具を 1行 も壊さずに赤くなります**
+    （§5 教訓の形 6つ目「検査に『きょうの状態』を不変条件として書かないこと」の、
+    **陽性対照の向き**の側。書いた 00:1x の回は連が **1** で、頭打ちが見えていなかった）。
+
+    **締める側は頭打ちを持ちません** —— 全部の幅より下へ門を落とせば、連は必ず **0** です。
+    だから対照は「締めたら 0・緩めたら 刻の数」の **両側**で見ます。
+
+    **覆る条件**: `span_narrow_run` が `need`+1 の頭打ちをやめて窓の刻を全部 数えるように
+    変わったら、緩める側にも頭打ちが無くなる ＝ そのときは `loose["run"]` の当て先
+    （いま「刻の数」）を数え直すこと。
     """
     rows = _rows()
     base = trend.span_narrow_run(rows)
     widths = [float(w["width"]) for w in base["widths"]]
-    if len(widths) < 2:
-        pytest.skip("窓に刻が 2つ 無い")
-    loose = max(widths) + 1.0
+    if not widths:
+        pytest.skip("窓に幅の作れる刻が無い")
     saved = trend.SPAN_NARROW_GATE
     try:
-        trend.SPAN_NARROW_GATE = loose
-        got = trend.span_narrow_run(rows)
+        trend.SPAN_NARROW_GATE = min(widths) / 2.0        # 全部の幅より下
+        tight = trend.span_narrow_run(rows)
+        trend.SPAN_NARROW_GATE = max(widths) + 1.0        # 全部の幅より上
+        loose = trend.span_narrow_run(rows)
     finally:
+        # **借りた物は借りた形で返す**（§5 教訓の形 11つ目）
         trend.SPAN_NARROW_GATE = saved
-    assert got["run"] > base["run"], (
-        f"門を {loose:.3f} まで緩めても連が {got['run']} のまま ＝ 幅を読んでいません")
-    # **借りた物は借りた形で返す**（§5 教訓の形 11つ目）
+    assert tight["run"] == 0, (
+        f"門を {min(widths) / 2.0:.3f} まで締めても連が {tight['run']} ＝ 幅を読んでいません")
+    assert loose["run"] == len(widths), (
+        f"門を {max(widths) + 1.0:.3f} まで緩めても連が {loose['run']} "
+        f"（窓の刻 {len(widths)}）＝ 幅を読んでいません")
+    assert tight["run"] < loose["run"]
     assert trend.SPAN_NARROW_GATE == 0.2
 
 
