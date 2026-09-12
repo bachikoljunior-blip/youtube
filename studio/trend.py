@@ -1907,8 +1907,14 @@ def gate_span(rows: list[dict], hours: float = GATE_SPAN_H) -> dict:
 
     **覆る条件**: (1) `hi` が 0.5 を切ったら、門 (2) は**刻では説明が付かない**
     ＝ そのときは本当に引かれた（判定は `hourly`・§5）。
-    (2) `hi` と `lo` の差が **0.2倍 を下回ったまま 3周** 続いたら、鋸の歯は消えている
-    （＝ 帯と外の両方が同じ速さで積まれている）ので、点で読んでよい。そのときこの註を書き直すこと。
+    (2) `hi` と `lo` の差が **`SPAN_NARROW_GATE`（0.2倍）を下回ったまま `SPAN_NARROW_NEED`（3回）**
+    続いたら、鋸の歯は消えている（＝ 帯と外の両方が同じ速さで積まれている）ので、点で読んでよい。
+    そのときこの註と `tests/test_studio_gate_span.py` を書き直すこと。
+    **連を数えるのは `span_narrow_run`**（2026-09-13 00:1x に足した。それまで数える口が無く、
+    **見張りが 1点 で赤くなっていました** ＝ 註の「続いたら」と食い違っていた側）。
+    **単位は「測り」で、周ではありません**（測っていない周は幅を動かさないので、
+    周で数えると連は引かれる側へ甘くなる ＝ `span_narrow_run` の註）。
+    **数は `_narrow_line` が毎周 印字する ＝ ここにも §7 にも写さないこと。**
     (3) 測りの間隔（`quota.pace()` の床）が変われば 1日に帯へ入る回数が変わるので、
     振れ幅も一緒に動きます —— **幅が広がった回は、まず床を見ること**（`_matched` の (0-新) と同じ向き）。
     (4) `hours` を変えたら `lo`/`hi` は当然 動きます。**24時間 なのは、帯が 1日に 1度しか回らないから**で、
@@ -1951,7 +1957,106 @@ def _span_line(rows: list[dict]) -> str:
             f"（帯の中の回は 0.5 へ・外の回は上へ。分子が動かないまま分母だけが増えるため）。"
             f"**門 (2) を引くのは、この振れ幅の上限 {hi:.3f} が 0.5 を切った回だけ**"
             f"（`trend.gate_span` の註・覆る条件 (1)）。"
+            + _narrow_line(rows)
             + _side_line(g))
+
+
+#: `gate_span` の覆る条件 (2) の門（**幅**がこれを下回った刻は「鋸の歯が消えている」側）。
+SPAN_NARROW_GATE = 0.2
+#: 同 覆る条件 (2) の連の門。**単位は「測り」** —— 下の `span_narrow_run` の註。
+SPAN_NARROW_NEED = 3
+
+
+def span_narrow_run(rows: list[dict], hours: float = GATE_SPAN_H,
+                    need: int = SPAN_NARROW_NEED) -> dict:
+    """**`gate_span` の覆る条件 (2)（幅が 0.2倍 を下回ったまま続いたら点で読んでよい）の連を数える**
+    （2026-09-13 00:1x JST・optimizer・Opus が足した）。
+
+    **なぜ（この回に踏んだ）**: 09/13 00:0x の測りで 24時間 の幅が **0.168倍** ＝ 門 0.2 の下へ入り、
+    見張り `tests/test_studio_gate_span.py::test_振れ幅は鋸の歯で点ではない` が**赤になりました**。
+    ところが註の (2) は「**0.2倍 を下回ったまま 3周 続いたら**」で、**その連を数える物が在りませんでした**
+    —— `late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・`views_streak`・`rev7_run`・
+    `feature_cohorts` と**同じ族の 8例目**（「N 続いたら」と覆る条件に書いて、N を数える口が無い）。
+    **この族の中で、これは初めて「見張りの側が先に赤くなった」型です** ——
+    註は 3回 と言い、検査は **1点** で鳴りました（§5 教訓の形 7つ目「註と印字が食い違えば、
+    読まれるのは印字のほう」の、印字ではなく**検査**の側での例）。
+    実測: この刻の連は **1** で、1つ 手前は **0.221倍**（門の上）＝ **条件はまだ引かれていません。**
+
+    **単位は「測り」（`measured` の刻）で、周ではありません。** `gate_span` の幅が動くのは
+    `measure` が撃たれた刻だけなので、測っていない周を 1つ 数えると、その周は**必ず
+    「下回ったまま」に見えます** ＝ 連は**引かれる側へ甘く**なります。
+    実測（この回・直近24時間）: 測り **31回** 対 周 **32周** ＝ **測らなかった周が 1周** 在ります。
+    （`rev7_run` が 09/12 21:2x に「周」→「引き」へ直したのと同じ族。**あちらは分母が速すぎて
+    連が永久に切れる側**・**こちらは分母が遅すぎて連が伸びる側**）。
+
+    **数え方**: `_span_points` を 24時間 より **`need`+1 回ぶんだけ広い窓**で 1度 呼び、
+    各刻について「その刻から遡る 24時間 の比の最大 − 最小」を出して、新しいほうから数えます
+    （`_span_points` の註: **同じ刻の値は `hours` を広げても変わりません** ＝ 過去の刻の
+    24時間 窓を、1回の呼び出しで丸ごと持てる）。広げるのを `need`+1 回に止めているのは、
+    それ以上 遡っても**連の答えが変わらない**からです（`informative` の呼び出しは 1回 1〜2秒）。
+
+    返すもの: ``run``（連）・``need``・``gate``・``drawn``（門に届いたか）・``now``（いまの幅）・
+    ``widths``（新しい順の (刻, 窓の点の数, 幅)。**判定した実物を返り値に残す** ＝ §5 教訓の形 4つ目）。
+
+    **覆る条件**: (1) `drawn` が立ったら、**点で読んでよい ＝ `gate_span` の註 (2) と
+    `tests/test_studio_gate_span.py` を書き直すこと**（判定は `hourly`・§5 —— optimizer はここまで）。
+    (2) 幅が作れない刻（24時間 の窓に比の点が 1つ しか無い刻）で連は**切ります**。
+    そこを「続いた」に数えると、測りが止まった周が連を伸ばします（上の単位の話と同じ向き）。
+    **床（`quota.pace()`）が 24時間 に 1点 しか置けないほど伸びた回**が出たら、
+    そのときは `hours` の側（覆る条件 (4)）を先に見ること。
+    (3) `SPAN_NARROW_GATE` は `gate_span` の註 (2) の 0.2 の**唯一の置き場**です
+    —— 註の中の数を動かすときは、ここを動かすこと（**門を 2か所 に置かないこと**）。
+    """
+    occ = sorted({r["at"] for r in rows if r.get("event") == "measured"})
+    res: dict[str, object] = {"run": 0, "need": need, "gate": SPAN_NARROW_GATE,
+                              "drawn": False, "now": None, "widths": [], "unit": "測り"}
+    if not occ:
+        return res
+    newest = _at({"at": occ[-1]})
+    k = min(len(occ), need + 1)
+    back_h = (newest - _at({"at": occ[-k]})).total_seconds() / 3600.0
+    vals = [(_at({"at": p["at"]}), float(p["ratio"]))
+            for p in _span_points(rows, hours + back_h) if p["ratio"] is not None]
+    widths: list[dict] = []
+    for i in range(len(vals) - 1, -1, -1):
+        at = vals[i][0]
+        win = [v for (a, v) in vals if at - dt.timedelta(hours=hours) < a <= at]
+        if len(win) < 2:
+            break                      # 幅が作れない刻 ＝ 連はここで切る（覆る条件 (2)）
+        widths.append({"at": at.strftime("%m/%d %H:%M"), "n": len(win),
+                       "width": max(win) - min(win)})
+        if len(widths) >= k:
+            break
+    run = 0
+    for w in widths:
+        if float(w["width"]) < SPAN_NARROW_GATE:
+            run += 1
+        else:
+            break
+    res.update({"run": run, "drawn": run >= need, "widths": widths,
+                "now": widths[0]["width"] if widths else None})
+    return res
+
+
+def _narrow_line(rows: list[dict]) -> str:
+    """`span_narrow_run` を1文にする（`trend` が毎周 印字 ＝ **手で数えないこと**）。"""
+    r = span_narrow_run(rows)
+    if r["now"] is None:
+        return ""
+    body = (f"**その振れ幅そのものが狭まっていないか**（`gate_span` の覆る条件 (2)・"
+            f"`trend.span_narrow_run`）: 幅 いま **{float(r['now']):.3f}倍**（門 {SPAN_NARROW_GATE}倍）"
+            f"・**狭い側の連 {r['run']}/{r['need']}回**（**単位は「測り」＝ 周ではありません** —— "
+            f"幅が動くのは `measure` を撃った刻だけで、測っていない周を数えると連が甘くなります・同 註）。")
+    if r["drawn"]:
+        body += ("  !! **門に届きました ＝ 鋸の歯は消えています** —— "
+                 "**点で読んでよい形になったので、`gate_span` の註 (2) と "
+                 "`tests/test_studio_gate_span.py` を書き直すこと**（判定は `hourly`・§5）。")
+    else:
+        shown = r["widths"][:int(r["run"]) + 1]   # 連＋**それを切った刻**まで（実物を並べる）
+        body += ("  **引かれていません**（新しいほうから: "
+                 + "・".join(f"{w['at']} {float(w['width']):.3f}倍" for w in shown)
+                 + "）。")
+    return body
 
 
 def _side_line(g: dict) -> str:
