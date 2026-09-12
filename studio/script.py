@@ -34,6 +34,49 @@ MAX_TOTAL_CHARS = 480   # Chirp3-HD 1.2 で実測 5.16字/秒（09/05・458字�
                         # この回に実際に踏んだ: 481字 で鳴り、「60秒」と読めば本を半分に削る向きへ行く。
                         # 検査は tests/test_studio_total_chars_advice.py（**助言文の側の検査**）。
                         # 覆る条件: MAX_SECONDS が 60秒 に変わったら、この註ごと戻すこと。
+                        # **この 480 は「まだ1度も焼いていない本」だけの代理です**（2026-09-12 13:4x・hourly・Opus）。
+                        # 焼いたことが在る本は `chars_gate()` が**その本の実測 字/秒**から門を引き直します（下）。
+
+MAX_SECONDS = 95.0      # **秒数の上限の正本**（`studio/cli.MAX_SECONDS` はここを読む ＝ 門は1か所・§5 の教訓 7つ目）
+BUILD_JITTER = 0.03     # 同じ本でも焼くたびに揺れる幅（§2 の ±3%）。門はこのぶん手前に置く
+
+# **字/秒 は本ごとに違います**（2026-09-12 13:4x・hourly・Opus が台帳 `built` 105件・8本 で数えた。API 0単位）。
+# 実測（本ごとの最小 字/秒）: 09/08 **4.823** 〜 09/13 **5.552** ＝ **15%** 開いています。
+# 同じ本の中は狭い（09/13 は 10回 焼いて 5.427〜5.552 ＝ 2.3%・09/12 は 3回 で 0.9%）。
+# **同じ本文を焼き直した組（`sig` が同じ）は 1組 あり、そこは 90.4秒 → 90.4秒 で 0.00%**
+# ＝ §2 の「焼くたびに ±3% 揺れる」は**同じ本文の揺れではなく、本文が違えば字/秒 が違う**ことのほうでした
+# （組が 1組 しか無いので §2 は書き換えていません。**2組目が出た回が判定すること**）。
+# **＝ 全部の本に同じ 480 を当てると、両側に外れます**:
+#   遅い本  09/07 は **480字 で 96.9秒**（`MAX_SECONDS` 超え）を焼いています ＝ 門が**通してしまった**
+#   速い本  09/11（503字ぶん）・09/13（500字ぶん）・09/09（486）・09/12（481）＝ 門が**削らせていた**
+# だから、焼いたことが在る本は**その本の実測**で引く。8本 に当て直した表は JOURNAL 2026-09-12 13:4x。
+# 覆る条件: (1) `sig` の同じ組が 3組 たまって、秒数が 1% 以上 振れていたら `BUILD_JITTER` をその実測へ。
+#   (2) この門を越えた本が build で `MAX_SECONDS` を超えたら、`BUILD_JITTER` が足りない ＝ その実測で上げる。
+#   (3) 本ごとの最小 字/秒 の差が 5% 未満に縮んだら、本ごとに引く値打ちが無い ＝ 480 の1つに戻す。
+
+
+def built_rate(vid: str, rows: list[dict] | None = None) -> float | None:
+    """その本の実測 字/秒 のうち **いちばん遅いもの**（台帳 `built`）。焼いていなければ None。
+
+    いちばん遅いほうを採るのは、門が**越える側に外れない**ため（上の (2)）。
+    """
+    from .common import ledger_rows
+    rows = ledger_rows() if rows is None else rows
+    rates = [r["chars"] / r["seconds"] for r in rows
+             if r.get("event") == "built" and r.get("id") == vid
+             and r.get("chars") and r.get("seconds")]
+    return min(rates) if rates else None
+
+
+def chars_gate(vid: str, rows: list[dict] | None = None) -> tuple[int, str]:
+    """字数の門と、その出どころの1行（助言文に出す）。"""
+    rate = built_rate(vid, rows)
+    if rate is None:
+        return MAX_TOTAL_CHARS, (f"{MAX_TOTAL_CHARS}まで ＝ **まだ1度も焼いていない本の代理**"
+                                 f"（`studio/script.MAX_SECONDS` {MAX_SECONDS:.0f}秒 の代理）")
+    gate = int(rate * MAX_SECONDS * (1 - BUILD_JITTER))
+    return gate, (f"{gate}まで ＝ **この本の実測 {rate:.3f}字/秒** × {MAX_SECONDS:.0f}秒 × "
+                  f"{1 - BUILD_JITTER:.2f}（焼き直しの揺れ）。台帳 `built` から引いた")
 
 # 書き手が人間のふりをする言い方（収益化ポリシー: AI が人間の専門家を装って sensitive topic を語る形）
 # 裸の「年」＋数字（「年66万円」）。Chirp3-HD は「とし」と読む（実測 09/05・09/06）
@@ -437,8 +480,9 @@ class Script(BaseModel):
                     out.append(f"コマ{i} board の行「{ln}」が {len(ln)}字（{MAX_BOARD_CHARS}まで）")
                 if TEN.search(ln):
                     out.append(f"コマ{i} board に「{TEN.search(ln).group()}」（点・小数）。整数で言い換える")
-        if self.total_chars() > MAX_TOTAL_CHARS:
-            out.append(f"合計 {self.total_chars()}字（{MAX_TOTAL_CHARS}まで ＝ build が測る秒数の上限"
+        gate, why = chars_gate(self.id)
+        if self.total_chars() > gate:
+            out.append(f"合計 {self.total_chars()}字（{why} ＝ build が測る秒数の上限"
                        f"（`studio/cli.MAX_SECONDS`）に当たる字数。**60秒の門ではありません**"
                        f" —— §2 は 60〜95秒。削るのは秒数であって、分かる説明に要る長さではない）")
         if "#Shorts" not in self.title and "#shorts" not in self.title:
