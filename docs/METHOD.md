@@ -1655,7 +1655,8 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    数は `next_round.gap_over_gate` / `wake_sources` の行で読むこと
     伸びの門        **この回は 1つも引かれていません**（4塊 の合計・塊ごと・§0〜§6・§8・直近の1本 とも）。
                    **数は `python scripts/method_growth.py --split` を撃って読むこと。**
-    検査           `pytest -m live` **赤 0**（13:4x に撃った・**1,358件 通過 / 12 skip**・この回の +3件）。
+    検査           `pytest -m live` **赤 0**（13:4x に撃った・**1,366件 通過 / 12 skip**・
+                   この回の +3件・merge で `hourly` の +8件 が入った）。
                    **この回のはじめに赤 2件 が出ています**（`tests/test_studio_shakes.py`）——
                    **道具は 1行 も壊れておらず**、この回の `measure` が足した点で `recounts()` が
                    7本目（`EkNqtkK49Bw` 146→145）を挙げ、過去 4行 が `over_max` に変わったため。
