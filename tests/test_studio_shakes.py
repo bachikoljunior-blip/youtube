@@ -39,11 +39,24 @@ def test_本物の台帳に_maxが高すぎた行は無い() -> None:
     あとの点が高い側なら低い読みは捨ててよい側（`max` が正解）・低い側で水準になれば
     それは数え直しで、包絡を落とすのは `recounts()` の仕事です。
     **＝ 割れの決着は、どちらへ転んでも `settle_stats` を動かしません**（`trend.shakes` の註）。
+
+    **【2026-09-12 13:3x に、この検査の主張を「行が 0」から「大きさが門の下」へ移しました】**
+    （optimizer・Opus）。**行は実物で 4行 出ました**（`EkNqtkK49Bw` 145 対 146・本物の掘り起こし）。
+    **それでも `settle_stats` は動かしません** —— 掘り起こし 1回 対 割れ 249回 ＝ 0.4%
+    （門 10%）。**数と決めと覆る条件は `trend.over_verdict` の註**（ここには写さない）。
+    ＝ **回数で赤くする検査は、1回 の掘り起こしで 249回 を直している側の物差しを倒せました。**
     """
     sh = trend.shakes(_rows())
     assert sh, "本物の台帳に `n_values > 1` の行が 1つも無い —— measure が n_values を書いていない"
-    over = [s for s in sh if s["over_max"]]
-    assert not over, f"`max` が確定した水準より高い値を書いた。覆る条件 (1) を撃つこと: {over}"
+    ov = trend.over_verdict(_rows())
+    assert not ov["drawn"], (
+        "掘り起こしの大きさが門を越えた。`trend.over_verdict` の覆る条件 (1) を撃つこと"
+        f"（`reads=5` の中央値と最大を並べる）: {ov}")
+    # **(2) 形の見張り** —— 3本 以上 の別々の本で出たら、比が門の下でも形を見直すこと
+    assert len(ov["ids"]) < 3, f"掘り起こしが 3本 以上 で出た ＝ 覆る条件 (2): {ov}"
+    # **(3) 分母が読めない台帳になったら、比ではなく絶対値で切る**
+    if ov["worst_span"] < 10:
+        assert ov["worst_over"] < 5, f"割れの最大が 10回 未満 ＝ 絶対値の門で見ること: {ov}"
     # **決着の内訳を、次の回が手で数えなくてよいように押さえる**（20:2x の実測: high 26 / low 1）
     settled = [s for s in sh if s["after"] in ("high", "low")]
     assert settled, "決着した行が 1行も無い ＝ `_settled_after` が動いていない"
@@ -146,10 +159,49 @@ def test_陽性対照_齢で切る古い門なら_実物が第3の口になる()
     # → **`still` が在ることを前提にした行は、合成の対照のほうへ移しました**
     #   （`test_studio_shakes_confirmed.py` の陰性／陽性 2件）。ここに残すのは
     #   **実物で分子が 0 であること**だけ ＝ 実物と合成の役目を分ける。
-    assert not [s for s in sh if s["over_max"]], \
-        "実物で掘り起こしが出た ＝ `trend.shakes` の覆る条件 (1) を撃つこと"
+    #
+    # **2026-09-12 13:3x に、ここも「行 0」から「大きさが門の下」へ移しました**
+    # （`trend.over_verdict` の註。実物は 4行 出ており、行では 0 に戻りません）。
+    assert not trend.over_verdict(_rows())["drawn"], \
+        "実物の掘り起こしが大きさの門を越えた ＝ `trend.over_verdict` の覆る条件 (1) を撃つこと"
     assert not [s for s in sh if s["verdict"] == "still" and s["over_max"]], \
         "`still` と `over_max` が同じ答え ＝ 門を足しても増えていない"
+
+
+def test_陽性対照_掘り起こしが割れと同じ大きさなら門を越える() -> None:
+    """**2026-09-12 13:3x の大きさの門**（`trend.over_verdict`）。
+
+    水準 287 に落ち切ってから `max` が **350** を書いた ＝ 掘り起こし **+63回**。
+    同じ台帳の割れの最大も 63回 なので比は 100% ＝ **門 10% を越える**。
+    """
+    base = 85.0
+    rows = [_row("C", base + 0.7 * i, 287) for i in range(14)]
+    rows += [_row("C", base + 0.7 * 14, 350, n=2, lo=287)]
+    rows += [_row("C", base + 0.7 * (15 + i), 287) for i in range(12)]
+    s = [x for x in trend.shakes(rows) if x["over_max"]]
+    assert len(s) == 1 and s[0]["over_by"] == 63
+    ov = trend.over_verdict(rows)
+    assert ov["drawn"] is True and ov["worst_over"] == 63 and ov["worst_span"] == 63
+    assert "門を越えました" in trend.shakes_line(rows)
+
+
+def test_陰性対照_1回の掘り起こしは_249回の割れを倒さない() -> None:
+    """**この回に実物で出た形**（`EkNqtkK49Bw` 145 対 146 ＝ 掘り起こし +1回）を、
+    `max` が直している側の割れ（249回）と同じ台帳に置く。**比 0.4% ＝ 門の下。**
+
+    **回数の門（「1行 でも出たら」）はここで倒れました** —— 行は在るのに、
+    `settle_stats` を動かす理由にならない（`trend.over_verdict` の註）。
+    """
+    rows = [_row("A", a, 145) for a in (128.0, 130.0, 132.0, 134.0)]
+    rows += [_row("A", 134.9, 146, n=2, lo=145), _row("A", 136.1, 145),
+             _row("A", 137.5, 146, n=2, lo=145), _row("A", 138.3, 146, n=2, lo=145)]
+    rows += [_row("A", a, 145) for a in (140.7, 142.2, 143.1, 144.1, 145.0, 145.9, 146.8)]
+    # 伸び中の本の遅れた複製（`max` が直している側・実測 637 対 886）
+    rows += [_row("B", 8.0, 637), _row("B", 10.0, 886, n=2, lo=637), _row("B", 11.0, 886)]
+    ov = trend.over_verdict(rows)
+    assert ov["rows"] == 3 and ov["worst_over"] == 1 and ov["worst_span"] == 249
+    assert ov["drawn"] is False, "1回 の掘り起こしで 249回 を直している側を倒している"
+    assert "門の下" in trend.shakes_line(rows)
 
 
 def test_周の門と範囲の門は_実物で1行_割れる() -> None:

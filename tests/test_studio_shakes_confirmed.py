@@ -157,9 +157,14 @@ def test_陽性対照_水準が落ちたあとに掘り起こしたら分子に�
     s = [x for x in trend.shakes(rows) if x["age_h"] == dig["age_h"]][0]
     assert s["floor"] == 287, "窓の先頭は落ちたあとの水準"
     assert s["over_max"] is True, "掘り起こしを分子に数えていない"
+    # **2026-09-12 13:3x に、進む条件が「行が出た」から「大きさが門を越えた」へ移りました**
+    # （`trend.over_verdict` の註）。この形は 掘り起こし +3回 対 割れの最大 3回 ＝ 100% で越えます。
+    assert s["over_by"] == 3
+    ov = trend.over_verdict(rows)
+    assert ov["drawn"] is True and ov["worst_over"] == 3 and ov["worst_span"] == 3
     line = trend.shakes_line(rows)
     assert "掘り起こした行 1行" in line
-    assert "ここで初めて `settle_stats` の覆る条件" in line
+    assert "門を越えました" in line
 
 
 def test_1度目の数え直しはrecountsに挙がりようがないこと():
