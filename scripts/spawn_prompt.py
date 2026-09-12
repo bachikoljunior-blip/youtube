@@ -609,6 +609,25 @@ def _fable_rolled(fe: dict) -> bool:
         return False
 
 
+def _per_lap_words(p: dict) -> str:
+    """**借りた床だと言う句** —— 出どころは `quota.per_lap_words`（**1か所**）。
+
+    読めない古い `quota` では空（＝ 前と同じ字を出す・`_fable_rolled()` と同じ構え）。
+    **ここで文言を書き直さないこと** —— 親の台帳の `source`（`next_round.floor_minutes`）と
+    この段が同じ句を読むので、2か所 に書くと片方だけ古くなります
+    （`quota.per_lap_words` の覆る条件 (2)・derivation は JOURNAL 2026-09-12 09:3x）。
+    **段ごと落とす側へ倒さないこと** —— 空欄は「余裕がある」と読まれます（この段の註）。
+    """
+    q = _quota_mod()
+    fn = getattr(q, "per_lap_words", None)
+    if not callable(fn):
+        return ""
+    try:
+        return fn(p) or ""
+    except Exception:                                          # noqa: BLE001
+        return ""
+
+
 def _fable_ration_words() -> str:
     """**Fable の配りの 1行**（`quota.fable_ration` / `fable_ration_words`）。読めなければ空。
 
@@ -796,6 +815,7 @@ def _quota_block() -> str:
         fable_now = (ration.get("est") if (rolled and ration) else fe.get("est"))
         fr = fable_rate() or {}
         ratio = ((fr.get("rate") or 0.0) / p["carry_rate"]) if p.get("carry_rate") else 0.0
+        borrowed = _per_lap_words(p)
         land = landing(p["used_now"], p["left_hours"], p["per_lap"],
                        fable_now, p["per_lap"] * ratio,
                        lag_min=p.get("reach_lag_min") or 0.0)
@@ -810,7 +830,13 @@ def _quota_block() -> str:
                if fable_now is not None else "")
             + f"（リセット {p['window_reset'].astimezone(JST):%m/%d %H:%M} JST まで"
               f" {p['left_hours']:.0f}時間）",
-            f"    床        **{p['floor_min']:.0f}分**（周から周。1周 {p['per_lap']:.3f}%）",
+            # **1周の重さが「借りた床」の回は、そう言うこと**（2026-09-12 09:3x・optimizer・Opus）。
+            # この行は長らく素で「周から周。1周 N%」としか出さず、**枠が本当に回った直後**
+            # （この枠で 1周も数えられていない回）も同じ字でした ＝ 毎周 2体 が読む側だけが、
+            # §7 (e-1c) の見張り（`per_lap_floored`）を知らないまま回ります。
+            # **句は `quota.per_lap_words()` 1か所**（親の台帳の `source` も同じ所を読む）。
+            f"    床        **{p['floor_min']:.0f}分**（周から周。1周 {p['per_lap']:.3f}%"
+            + (f"・{borrowed}" if borrowed else "") + "）",
         ]
         if land.get("all") is not None:
             # **着地は小数第1位まで**（2026-09-11 11:4x・optimizer・Opus）——

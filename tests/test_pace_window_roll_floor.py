@@ -152,3 +152,92 @@ def test_pace_report_は床を印字する(tmp_path, capsys):
     assert "持続できる間隔" in out
     assert "床に従えば" in out, "§5 15:1x の門（98%）が当てるのは床の側"
     assert "いまの間隔のまま **読めません**" in out, "空欄で出さないこと"
+
+
+# --- **値は戻ったのに、名乗りだけが送られていなかった側**（2026-09-12 09:3x に踏んだ） ---
+#
+# 08:1x の直しは `pace()` に `_per_lap_before()` を足して **値**（床 54.3分）を戻しましたが、
+# **その床が「借りた床」だと言う口**は 3つ のうち **1つ**（`--pace`）しか送られていません
+# でした。残る 2つ は、毎周 かならず読まれる側です:
+#
+#     next_round.floor_minutes()[1]    親が `data/parent_wakes.jsonl` の `source` に書く
+#     spawn_prompt._quota_block()      サブの本文の【枠】の段（毎周 2体 が読む）
+#
+# `floor_minutes()` の枝は `per_lap_floored` **かつ** `births` で見ており、
+# **枠が本当に回った直後は `births` が 0** なので素通りして、裸の
+# **「quota.py の実測」**を返していました（実物 09/12 08:43〜09:05 の 3件）。
+# ＝ **値は正しく、名乗りだけが「いまの枠で測れた」と読める側の嘘**で、
+# §7 (e-1c) が次の回に見張らせている `per_lap_floored` を打ち消す向きに出ます。
+# METHOD §5 の教訓の形 **10つ目**（枠を送る直しをしたら、その枠を分母に使っている行を
+# 全部 数えること）と **7つ目**（覆る条件を註に書いたら、それを読む印字も一緒に作ること）。
+
+
+def test_借りた床は句を返し_測れている枠は空(tmp_path):
+    """**句の出どころは `quota.per_lap_words()` 1か所**（覆る条件 (2)）。"""
+    p = _rolled(tmp_path)
+    words = quota.per_lap_words(p)
+    assert words, "借りた床の回に空を返すと、下の 2つ の口が黙る"
+    assert "この枠で測った数ではありません" in words
+    assert "0件" in words, "`births` 0 の回は、その 0 を言うこと"
+    assert "09/11 19:23" in words, "どこまでの実測を借りたかを言うこと"
+
+    # **陽性対照の裏側** —— 測れている枠では空でなければならない
+    # （空でないと、普通の枠が毎周「借りた床」と名乗ります）
+    _write(tmp_path, [(OLD_AT_1, 83, OLD_RESET), (OLD_AT_2, 88, OLD_RESET)])
+    ok = quota.pace(datetime.fromisoformat(OLD_AT_2).astimezone(UTC))
+    assert quota.per_lap_words(ok) == ""
+    assert quota.per_lap_words({}) == ""
+    assert quota.per_lap_words(None) == ""
+
+
+def _patched_quota(tmp_path, monkeypatch):
+    """**借りた床の `pace()` を返す `quota` を、`scripts.quota` としても見せる。**
+
+    `next_round` / `spawn_prompt` は `from scripts.quota import ...` で引くので、
+    **同じファイルでも `quota`（裸）と `scripts.quota` は別の module object**です
+    （§5 の教訓の形 11つ目）。`monkeypatch` が `sys.modules` を終わりに戻します。
+    `pace` は**定数の返り**に差し替えます —— `_rolled()` を返り値の中で呼ぶと、
+    差し替えた `pace` を自分で呼び直して回ります。
+    """
+    import importlib
+
+    rolled = _rolled(tmp_path)
+    monkeypatch.setattr(quota, "pace", lambda *a, **k: rolled)
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    scripts_pkg = importlib.import_module("scripts")
+    monkeypatch.setitem(sys.modules, "scripts.quota", quota)
+    monkeypatch.setattr(scripts_pkg, "quota", quota, raising=False)
+    return rolled
+
+
+def test_floor_minutes_は借りた床を実測と名乗らない(tmp_path, monkeypatch):
+    """**この回に踏んだ当のもの** —— `births` 0 で 2つ の枝を素通りし、
+    親は `data/parent_wakes.jsonl` に裸の「quota.py の実測」を書いていた。"""
+    import importlib
+
+    rolled = _patched_quota(tmp_path, monkeypatch)
+    sys.path.insert(0, str(ROOT / "scripts"))
+    nr = importlib.import_module("next_round")
+
+    got, source = nr.floor_minutes()
+    assert got == pytest.approx(rolled["floor_min"], rel=1e-6), "床は戻っている（08:1x の直し）"
+    assert got < 90.0
+    assert source != "quota.py の実測", "借りた床を『実測』と名乗らないこと（この回の欠陥）"
+    assert "この枠で測った数ではありません" in source
+    assert source == quota.per_lap_words(rolled), "句は 1か所 から引くこと"
+
+
+def test_サブの本文の枠の段も借りた床だと言う(tmp_path, monkeypatch):
+    """**毎周 2体 が読むのはこちら**（`--pace` は撃った回しか読まない）。"""
+    import importlib
+
+    rolled = _patched_quota(tmp_path, monkeypatch)
+    sys.path.insert(0, str(ROOT / "scripts"))
+    sp = importlib.import_module("spawn_prompt")
+
+    block = sp._quota_block()
+    floor_line = [ln for ln in block.splitlines() if ln.strip().startswith("床")]
+    assert floor_line, "【枠】の段に床の行が出ていること"
+    assert "この枠で測った数ではありません" in floor_line[0]
+    assert quota.per_lap_words(rolled) in floor_line[0], "句は 1か所 から引くこと"

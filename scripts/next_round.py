@@ -1594,6 +1594,32 @@ def missing_roles(group: list[dict]) -> list[str]:
     return [r for r in ROLES if r not in have]
 
 
+def _per_lap_words(pc: dict) -> str:
+    """**借りた床の名乗りを `quota.per_lap_words()` から引く**（2026-09-12 09:3x・optimizer・Opus）。
+
+    **ここに文言を書かないこと** —— 同じ句を親の台帳（`data/parent_wakes.jsonl` の `source`）と
+    サブの本文（`spawn_prompt._quota_block()` の【枠】の段）が読むので、
+    2か所 に書くと片方だけ古くなります（`quota.per_lap_words` の覆る条件 (2)）。
+    読めない回は `""` ＝ 呼ぶ側の名乗りがそのまま出ます（**黙って嘘を言う側には倒さない**）。
+    """
+    try:
+        from scripts.quota import per_lap_words                # noqa: PLC0415
+    except Exception:                                          # noqa: BLE001
+        try:
+            import importlib.util                              # noqa: PLC0415
+            spec = importlib.util.spec_from_file_location(
+                "quota", ROOT / "scripts" / "quota.py")
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            per_lap_words = m.per_lap_words
+        except Exception:                                      # noqa: BLE001
+            return ""
+    try:
+        return per_lap_words(pc) or ""
+    except Exception:                                          # noqa: BLE001
+        return ""
+
+
 def floor_minutes() -> tuple[float, str]:
     """`(間隔, どこから来たか)`。取れなければ `FALLBACK_MIN`。"""
     try:
@@ -1653,12 +1679,15 @@ def floor_minutes() -> tuple[float, str]:
         #     リセットの瞬間は測れないので、`pace()` は窓の下限を採り、
         #     リセット前に測れていた数を床に当てています。**それは実測ですが、
         #     いまの枠で測った数ではありません。** 名乗りを分けること。
-        if pc.get("per_lap_floored") and pc.get("births"):
-            return float(got), (
-                f"**いまの枠で測った数ではありません** —— 枠が戻った直後で、"
-                f"いまの枠から出るのは 1周 {pc.get('per_lap_raw', 0):.3f}%（下限・"
-                f"周 {pc['births']}件）だけ。リセット前の実測 "
-                f"{pc.get('per_lap', 0):.3f}% を床にしています")
+        # **名乗りは `quota.per_lap_words()` 1か所**（2026-09-12 09:3x・optimizer・Opus）。
+        #     ここは長らく `per_lap_floored` **かつ** `births` で見ており、
+        #     **枠が本当に回った直後（`births` 0）は 2つ の枝を素通り**して
+        #     下の裸の「quota.py の実測」を返していました（実測 09/12 08:43〜09:05 の 3件）。
+        #     **値は正しく、名乗りだけが「いまの枠で測れた」と嘘を言う**側で、
+        #     §7 (e-1c) が次の回に見張らせている `per_lap_floored` を打ち消します。
+        borrowed = _per_lap_words(pc)
+        if borrowed:
+            return float(got), borrowed
         if pc.get("births"):
             return float(got), (f"quota.py の実測（1周 {pc.get('per_lap', 0):.3f}%"
                                 f"・**周 {pc['births']}件**"

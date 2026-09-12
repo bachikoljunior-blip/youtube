@@ -2880,6 +2880,52 @@ def effective_floor_minutes(base_min: float = GAUGE_FLOOR_BASE,
     return g[0] if g else None
 
 
+def per_lap_words(p: dict | None) -> str:
+    """**この床の「1周の重さ」が、いまの枠で測った数か、前の枠から借りた数かを言う 1行。**
+
+    返すのは**借りているときだけ**の短い句で、測れている回は `""`（＝ 呼ぶ側は素の名乗りのまま）。
+
+    **2026-09-12 09:3x JST（optimizer・Opus）に足した。この回に踏んだ形**:
+    08:1x の直しは `pace()` に `_per_lap_before()` を足して**値**を戻しましたが、
+    **名乗り**を送っていませんでした。`next_round.floor_minutes()` の枝は
+
+        if pc.get("per_lap_floored") and pc.get("births"):   # ← 借りた床だと言う枝
+        if pc.get("births"):                                 # ← 実測だと言う枝
+        return float(got), "quota.py の実測"                  # ← どちらも通らない回
+
+    で、**枠が本当に回った直後は `births` が 0** なので 2つ とも素通りし、
+    親は `data/parent_wakes.jsonl` に **「quota.py の実測」** と書いていました
+    （実測 09/12 08:43〜09:05 の 3件）。**値は 54.3分 で正しく、名乗りだけが嘘**です
+    —— しかもその名乗りは「いまの枠で測れた」と読める側で、
+    §7 (e-1c) が次の回に見張らせている `per_lap_floored` を**打ち消す向き**に出ます。
+    `spawn_prompt._quota_block()` の【枠】の段も同じで、「床 **54分**（周から周。1周 0.546%）」
+    としか出ず、毎周 2体 が読むのはそちらです。
+
+    ＝ METHOD §5 の**教訓の形 10つ目**（枠を送る直しをしたら、その枠を分母に使っている行を
+    全部 数えること）と**7つ目**（覆る条件を註に書いたら、それを読む印字も一緒に作ること）が、
+    同じ 1つ の直しの上で重なった形です。**`--pace` だけは 08:1x に正しく直っていました**
+    ＝ 3つ の口のうち 1つ だけ送られていた。
+
+    **覆る条件**:
+     (1) この句が出たまま新しい目盛りが 2点 入る回が来たら、借りているのは床ではなく
+         **窓の側** ＝ `pace()` の覆る条件 (2)（`_per_lap_before` の窓を絞る）を引くこと
+         （§7 (e-1c) の (1) と同じ口）。
+     (2) 句の出どころを増やさないこと —— 名乗りは**この関数 1か所**です。
+         3つ目の口（親の印字・サブの本文・`--pace` 以外）が要ったら、そこもここから読むこと。
+    """
+    if not p or not p.get("per_lap_floored"):
+        return ""
+    pre = p.get("pre") or {}
+    at = pre.get("at")
+    when = f"{at.astimezone(JST):%m/%d %H:%M} JST" if at else "前の枠"
+    if not p.get("births"):
+        got = f"この枠の周 **0件**"
+    else:
+        got = (f"この枠から出るのは 1周 {p.get('per_lap_raw', 0):.3f}%"
+               f"（下限・周 {p['births']}件）だけ")
+    return (f"**この枠で測った数ではありません** —— {got} ＝ "
+            f"{when} までの実測を床にしています（`_per_lap_before`・§7 (e-1c)）")
+
 def pace_report(now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
     p = pace(now)

@@ -4296,3 +4296,25 @@
 {"day": "2026-09-09", "start": "2026-08-22", "studio": false, "views": 439, "marks": {"p10": 1.058, "p25": 0.655, "p50": 0.448, "p75": 0.218, "p95": 0.138}, "at": "2026-09-12T08:25:25+09:00", "id": "4C7_gciPt8c", "event": "analytics_curve"}
 {"day": "2026-09-09", "start": "2026-08-22", "studio": false, "views": 350, "marks": {"p10": 1.06, "p25": 0.657, "p50": 0.537, "p75": 0.328, "p95": 0.149}, "at": "2026-09-12T08:25:25+09:00", "id": "N75-k7r6pLw", "event": "analytics_curve"}
 {"day": "2026-09-09", "start": "2026-08-22", "studio": false, "views": 347, "marks": {"p10": 1.063, "p25": 0.524, "p50": 0.333, "p75": 0.191, "p95": 0.175}, "at": "2026-09-12T08:25:25+09:00", "id": "cQ-gLLQ8onQ", "event": "analytics_curve"}
+{"subs": 28, "views": 86490, "videos": 270, "at": "2026-09-12T09:08:16+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-12T09:08:17+09:00", "id": "4l3DDCLIRxg", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-12T09:08:17+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"views": 926, "likes": 1, "comments": 0, "age_h": 23.1, "title": "65歳から70歳まではたらくと年金が年10万円ふえる 在職定時改定 #Short", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "mja40GJ-GHU", "event": "measured"}
+{"views": 0, "likes": 0, "comments": 0, "age_h": 47.2, "title": "夫が亡くなると妻の年金はいくら減るか 遺族厚生年金は4分の3 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "2YZ_4FXC-XI", "event": "measured"}
+{"views": 963, "likes": 5, "comments": 0, "age_h": 71.1, "title": "配偶者が年下だと年金が年42万3700円ふえる 加給年金 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "gv1u7n_pCAQ", "event": "measured"}
+{"views": 714, "likes": 4, "comments": 4, "age_h": 95.2, "title": "年金を60歳からもらうと24%減る 80歳10か月より長生きなら損 #Short", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "lQHX9LJ80Sg", "event": "measured"}
+{"views": 66, "likes": 0, "comments": 0, "age_h": 119.2, "title": "年金を70歳まで遅らせると 得になるのは81歳11か月から #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "nQbVxuWpWw8", "event": "measured"}
+{"views": 74, "likes": 0, "comments": 0, "age_h": 120.1, "title": "【育休181日目】手取り比22.0614pt低下 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "PhQ2KvuQASQ", "event": "measured"}
+{"views": 350, "likes": 0, "comments": 0, "age_h": 139.2, "title": "自動車税13年超 1000cc以下は1.356倍 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "N75-k7r6pLw", "event": "measured"}
+{"views": 287, "likes": 1, "comments": 0, "age_h": 140.1, "title": "軽の重課 2015年3月までの車は何%上がる #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "CIPYV_r1Hdo", "event": "measured"}
+{"views": 17, "likes": 0, "comments": 0, "age_h": 141.2, "title": "生命保険料控除 最初の1円は12.00倍 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "o6P0ageZd9k", "event": "measured"}
+{"views": 437, "likes": 0, "comments": 0, "age_h": 142.1, "title": "生命保険料控除 6.67倍でも戻りは2.87倍 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "4C7_gciPt8c", "event": "measured"}
+{"views": 145, "likes": 0, "comments": 0, "age_h": 143.1, "title": "働きながら年金をもらう人へ 減る境目が62万円に【2026年4月から】 #Sho", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "EkNqtkK49Bw", "event": "measured"}
+{"views": 214, "likes": 0, "comments": 0, "age_h": 143.1, "title": "iDeCoの節税が一番減る年収は660万台 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "lywTMXD6WDM", "event": "measured"}
+{"views": 156, "likes": 0, "comments": 0, "age_h": 144.1, "title": "【小規模企業共済】240か月と241か月で税額はいくら違う？ #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "qyVdpAoT_40", "event": "measured"}
+{"views": 179, "likes": 0, "comments": 0, "age_h": 146.2, "title": "iDeCoの効きが落ちる年収は91点中11点 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "OwFjo4kLA9U", "event": "measured"}
+{"views": 347, "likes": 0, "comments": 0, "age_h": 158.1, "title": "育休1年 月給30万で差は734,508円 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "cQ-gLLQ8onQ", "event": "measured"}
+{"views": 232, "likes": 0, "comments": 0, "age_h": 159.1, "title": "小規模企業共済 同じ840万円で税額3.46倍 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "TfetZ_qhS-E", "event": "measured"}
+{"views": 0, "likes": 0, "comments": 1, "age_h": 160.2, "title": "【65歳の前に】年180万円の年金 開始年齢で247万6950円変わる 何歳で受", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "fMlY_uzHOMw", "event": "measured"}
+{"views": 191, "likes": 0, "comments": 1, "age_h": 167.2, "title": "小規模企業共済 840万円【税額が3.46倍】 #Shorts", "n_values": 1, "at": "2026-09-12T09:09:21+09:00", "id": "a23e696j0f8", "event": "measured"}
+{"publish_at": "2026-09-12T10:00:00+09:00", "title": "退職金の税金 30年はたらけば1500万円までゼロ 退職所得控除 #Shorts", "at": "2026-09-12T09:09:21+09:00", "id": "4l3DDCLIRxg", "event": "pending"}
