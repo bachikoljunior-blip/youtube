@@ -1776,9 +1776,13 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    （§5 教訓の形 13つ目）。**読むのは `--after '<手の刻>' --laps 1` の側**で、
                    **いま (i)**（手の後の周は門の下）＝ **(ii) は引きません**。derivation と次に見る 2周 は JOURNAL 09/13 04:3x。
                    数は `python scripts/method_growth.py --split` と `python scripts/output_growth.py`（写さない）
-    検査           **赤 0件**（`studio` を読む検査 **906件 緑**・32秒。この回に **2件 足した** ＝
-                   `tests/test_studio_ready_checked.py` の「印字は窓を言う」と、その陽性対照。
-                   **壊して確かめてあります**・JOURNAL 09/13 05:3x）。
+    検査           **赤 0件**（`studio` を読む検査 **906件 緑**・33秒 ＋ **親の手続きの検査 590件 緑**・22秒
+                   ＝ `pytest tests/test_quota*.py tests/test_next_round*.py tests/test_parent*.py
+                   tests/test_spawn*.py tests/test_fable*.py tests/test_model_by_role.py
+                   tests/test_role_model.py tests/test_pace*.py`。
+                   **`scripts/quota.py` を直した回は、この 2つ目の選び方で足ります** ——
+                   `studio` の側は 1件も読みません・2026-09-13 06:3x に測った）。
+                   この回に `tests/test_fable_rate.py` を **6件 → 9件**（陽性対照 2つ を撃って落とした・JOURNAL 06:3x）。
                    **撃ち方（02:5x に測った）**: `studio` を読む検査だけを選ぶと
                    **900件 33秒**（`pytest $(grep -rln 'from studio import\|studio\.' tests/*.py)`）。
                    **`tests/` を丸ごと撃つと、旧 `src/` の重い検査で 15分 経っても 12%** ——
@@ -1786,20 +1790,20 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    **`-x` は付けないこと**（赤 1件 で止まると残りが見えません）。
                    **旧 `src/` の赤 2件**（`test_ceiling_drift` / `test_form_record`）は
                    **2026-09-09 08:5x から前のまま**・§8 のとおり触っていません（**追わないこと**）
-    この回の赤     **0件**（`pytest -m live` 1,492件 緑 ＝ 上の「検査」）。
-                   **この回（optimizer 04:3x）の仕事は (a) measure → trend → `analytics`（20時間 の門が 04:25 に開いた）
-                   ＋ (b) 1件 ＋ (c) 道具の欠陥 1件 ＋ (d)(e)**。
-                   **(b) 引かれたのは 収益の節の 覆る条件 (4)**（直近7日の平均が **3回 続けて**上がった）。
-                   **判定は `hourly` とオーナー** ＝ 数を並べただけ（JOURNAL 09/13 04:3x）。
-                   同じ引きで **「次に見る所」(o-2) が閉じ**（6本目 が Analytics に載った）・**(o-3) は 4本目**。
-                   **(c) 1件 —— `method_growth` の窓が、手を打った回の効きを答えられないまま
-                   「判定は 2窓目」と読まれていた**（6周窓は手の前の周を 5周 ぶん運ぶ ＝ §5 教訓の形 13つ目）。
-                   **手は印字の側**（`window_caveat` が窓の幅と `--after`／`--laps 1` を毎回 言う）。
-                   **(d) 17件・17/17・焼き直し待ち 0本。
-                   (e) 親の手続きの欠陥 0件**（周の記録 04:32 → 押し → サブ の順どおり・(d) の門も 0つ）。
+    この回の赤     **0件**（上の「検査」の 2つ ＝ 906件 ＋ 590件）。
+                   **この回（optimizer 06:3x）の仕事は (a) measure → trend ＋ (b) 0件 ＋ (e) 1件 ＋ (c)(d)**。
+                   **(b) この回に新しく引かれた覆る条件は 0件**（収益の (4) は 04:3x の引きのまま ＝ 3/3回・判定は `hourly` とオーナー）。
+                   **(e) 親の手続きの欠陥 1件 —— 「Fable のみ のいまの推定」の口が 2つ 在り、
+                   同じ【枠】の段が 0% と 14.0% を並べて印字していた**（`fable_estimate` は時間で運び、
+                   その速さを `fable_rate` が**前の枠の天井の 2点**（100 → 100）から「measured 0.00 %/時」と返していた）。
+                   **手は口を 1つ に寄せた側**（`fable_estimate` も `fable_ration` の体の数で運ぶ）＋
+                   `fable_rate` に門 2つ（別の枠の対・天井で貼りついた対は返さない）。
+                   **効きは崖の門**（`sub_model` の `est >= FABLE_CAP_PCT`）—— 凍っているあいだ、
+                   この枠では 1度も鳴りませんでした。derivation と覆る条件 3つ は JOURNAL 09/13 06:3x。
+                   **(c) 道具（`studio/`）の欠陥 0件。(d) 17件・17/17・焼き直し待ち 0本。**
                    **§16・§17・09/13 の台本・09/14 の台本の本文は 1文字も触っていません**（`hourly` の持ち場）。
-                   **`comments`・`reporting` は撃っていません**（新着 0件／見込みまで 18.5時間）。
-                   **Data API は `measure` のぶんだけ・Analytics は Data 0単位**
+                   **`comments`・`reporting`・`analytics` は撃っていません**（新着 0件／見込みまで 16.7時間／20時間 の門は 09/14 00:38 から）。
+                   **Data API は `measure` のぶんだけ**
     次に見る所      **この一覧の形（2026-09-11 04:4x・optimizer・Opus。**12:1x に当て直した** ——
                     04:4x の形は 2窓 で 7,204 → 14,213字 に戻り、`method_growth` の塊ごとの門が
                     **「次に見る所」を名指し**しました）: ここに置くのは
@@ -1902,10 +1906,13 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                         覆る条件 2つ は `pace()` の 12:2x の註・derivation は JOURNAL 12:2x
                     (e-2) **引かれました。ただし引いたのは門ではなく API の拒否です**（09/11 10:17）
                         ＝ **「Fable のみ」の推定は甘い側に外れます**。
-                        **次に見るのは、次の枠（リセット後）で 429 が出た刻の推定が何%か** ——
-                        2度目も手前で出るなら、`FABLE_CAP_PCT` を下げるのではなく
-                        **`fable_estimate` の速さの側**を見ること（`fable_rate` の註）。
-                        数と刻は `data/model_choice.jsonl`・derivation は JOURNAL 10:3x
+                        **その「速さの側」は 2026-09-13 06:3x に直しました** ——
+                        推定は時間ではなく**体の数**で運び（口は `fable_ration` の 1つ）、
+                        `fable_rate` は**別の枠の対**と**天井で貼りついた対**を返しません。
+                        **次に見るのは 2つ**: (1) 次の枠（リセット後）で 429 が出た刻の推定が何%か
+                        （2度目も手前で出るなら `FABLE_CAP_PCT` ではなく `per_sub` の側）。
+                        (2) **体の数え（`_subs_from_choices`）が次の目盛りから ±5 ポイント 以上 外れる回**。
+                        数と刻は `data/model_choice.jsonl`・derivation は JOURNAL 10:3x／**09/13 06:3x**
                     (e-3) **列の読み方**（決めだけ。数は `quota.margin_line()` が毎周 印字 —— **手で送らないこと**）:
                         **同じ周かどうかは、刻の近さでも役でも決まりません**（`rounds.jsonl` の周の刻へ寄せる）。
                         **列の末（その周が見た数）と、いま撃った数は別の問い**（親は周を記録する前に模型を選ぶ）。
