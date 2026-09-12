@@ -2232,6 +2232,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # §4 (0-c) の「外を1回 引く」の連（**本**で数える・`trend.outside_runs` の註
     #  ＝ 「N本 続いたら」と書いて N を数える口が無い族の 4つ目・`hourly` が §16 (8) で渡した）。
     out.append(outside_line())
+    # §7 末尾「1日1本」の覆る条件（500回 が 7本 続いたら 2本/日 を試す）の連
+    #  —— **同じ族の 5つ目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`）。
+    out.append(views_streak_line(rows))
     out.append(analytics_line(rows, now=now))
     # 一括レポート（3つ目の枠・**Data API 0単位**）を、台帳の包絡と並べる
     # （§7 (o-4)(3)・`trend.report_vs_ledger` の註 ＝ **複製から返らない唯一の口**）。
@@ -2916,6 +2919,113 @@ def views_absent_line(rows: list[dict]) -> str:
               "（`yt.views_of` の覆る条件 (1)）。"
               "**`first_view`・`hold`・§7 (c) は、この本の 0 を数から外すこと。**")
 
+
+#: §7 末尾「1日1本」の覆る条件の門（2026-09-12 21:0x・optimizer・Opus が数える口を足した）。
+#: 「**新しい作りで 7本 続けて 500回 を越えたら**、2本/日 を 3日 試して 1本あたりが落ちないか見る」。
+DAILY_VIEWS_GATE = 500
+DAILY_RUN_NEED = 7
+
+
+def views_streak(rows: list[dict]) -> dict:
+    """**新しいほうから、いまの再生が 500回 を越えている本が何本 続いているか**（包絡・API 0単位）。
+
+    **なぜ（2026-09-12 21:0x JST・optimizer・Opus）**: §7 末尾の「1日1本」は 09/05 から
+    「**新しい作りで 7本 続けて 500回 を越えたら** 2本/日 を 3日 試す」と書いていますが、
+    **その連を数える物が 1つも在りませんでした** —— `late_run`・`blind_run`・
+    `reporting_empty_run`・`outside_runs` と**同じ族の 5例目**（「N本 続いたら」と
+    覆る条件に書いて、N を数える口が無い）。しかも この条件が引かれたら動くのは
+    **1日の本数そのもの**（§5 の回り方・親の周・枠の配り が全部 掛かる側）です。
+
+    **越えた側は言い切れます・越えていない側は言い切れません。** 並びは包絡（`envelope`）なので
+    再生は**下からしか動きません** ＝ 1度 500回 を越えた本は越えたまま。逆に いま 500回 以下の本は、
+    **まだ伸びていれば**あとで越え得ます ＝ そこで連を「切れた」と読むと、連は**永久に短く出ます**。
+    だから 2つ 返します:
+
+    * ``run``          —— いま 越えている本だけの連（**引く側が読む数**）
+    * ``run_if_growing`` —— 越えていない本でも **`growing` なら続きうる**として数えた連
+      （＝ **いま在る本だけで門に届く目**があるか。`growing` の規則は `hold` と同じ
+      ＝ 齢 48h 未満 か、最後の伸びから `flats` の境目より短い）
+
+    **`run_if_growing` が門に届かないなら、この周に門が引かれる目は在りません** ——
+    足りないぶんは**新しい本でしか埋まりません**（``short`` ＝ 門 − `run_if_growing`）。
+
+    **0回 の本も 1本 として数えます**（`hold` は分母が作れず落としますが、ここは
+    「500回 を越えたか」しか訊かないので落とす理由が在りません ＝ §7「形」の 決め (5) と同じ側）。
+
+    **覆る条件**: (1) `run` が門に届いたら、**2本/日 を試すかの判定は `hourly` とオーナー**
+    （§5 ＝ 1日の本数は台本と枠の両方に掛かる）。optimizer はこの数を並べるまで。
+    (2) **「500回」の刻が決まっていません** —— この口は**いまの再生**で読みます
+    （`hold` の分母と同じ ＝ 伸び中の本では下端）。「48h の点で」に変えるなら、
+    `hold` の 覆る条件 (2)（48h を越えて確定した本が 5本 そろったら分母を移す）と
+    **同じ回に一緒に**変えること（**分母を 2か所 に置かないこと**）。
+    (3) 1日1本 をやめた回（2本/日 を試した 3日 など）は、**「続けて」の単位が日ではなく本**の
+    ままでよいか、ここで決め直すこと —— 同じ日の 2本 は配りを分け合うので、
+    連の 1本 として数えると門が甘くなります。
+    """
+    mine = ours(rows)
+    thresh = float(flats(rows)["thresh_h"])
+    books: list[dict] = []
+    for vid, pts in sorted(series(rows).items(), key=lambda kv: published_at(kv[1])):
+        if vid not in mine or not pts:
+            continue
+        env = envelope(pts)
+        last_age = float(pts[-1]["age_h"])
+        views = env[-1] or 0
+        gap = last_rise_gap_h(pts, env)
+        books.append({
+            "id": vid,
+            "day": published_at(pts).strftime("%m/%d"),
+            "age_h": last_age,
+            "views": views,
+            "over": views > DAILY_VIEWS_GATE,
+            # **`hold` と同じ規則**（分母を 2か所 に置かないため）。
+            "growing": last_age < 48.0 or gap < thresh,
+        })
+
+    def count(allow_growing: bool) -> int:
+        n = 0
+        for b in reversed(books):
+            if b["over"] or (allow_growing and b["growing"]):
+                n += 1
+                continue
+            break
+        return n
+
+    run = count(False)
+    maybe = count(True)
+    broke = books[-(run + 1)] if len(books) > run else None
+    return {"books": books, "n": len(books), "run": run, "run_if_growing": maybe,
+            "gate": DAILY_VIEWS_GATE, "need": DAILY_RUN_NEED,
+            "drawn": run >= DAILY_RUN_NEED,
+            "short": max(0, DAILY_RUN_NEED - maybe),
+            "broke": broke}
+
+
+def views_streak_line(rows: list[dict]) -> str:
+    """`views_streak` を1行にする（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
+    s = views_streak(rows)
+    if not s["n"]:
+        return (f"**{DAILY_VIEWS_GATE}回 の連: 本 0本**（`trend.views_streak`）—— "
+                "§7 末尾「1日1本」の覆る条件を数える口。")
+    body = (f"**{s['gate']}回 を越えた連（新しいほうから）: {s['run']}本**"
+            f"（門 **{s['need']}本** ＝ §7 末尾「1日1本」の覆る条件・`trend.views_streak`・"
+            f"台帳だけ・API 0単位）—— こちらの本 {s['n']}本 中。")
+    if s["broke"]:
+        b = s["broke"]
+        body += (f"  連を切っているのは {b['id']}（{b['day']}・齢 {b['age_h']:.1f}h・{b['views']}回"
+                 + ("・**まだ伸びている ＝ あとで越え得る**" if b["growing"] else "・確定")
+                 + "）。")
+    body += (f"  **伸びている本が全部 越えたとしても {s['run_if_growing']}本**"
+             f"（門まで あと **{s['short']}本** ＝ "
+             + ("**この周に門が引かれる目は在りません。足りないぶんは新しい本でしか埋まりません**"
+                if s["short"] else "**いま在る本だけで届き得ます**")
+             + "）。")
+    if s["drawn"]:
+        body += ("  !! **門に届きました** ＝ **2本/日 を 3日 試すかの判定は `hourly` とオーナー**"
+                 "（§5・1日の本数は台本と枠の両方に掛かる）。")
+    body += ("  **越えた側は言い切れ、越えていない側は言い切れません**"
+             "（包絡 ＝ 伸び中の本の再生は下端・`views_streak` の註）。")
+    return body
 
 #: §4 (0-c) の「その本の 1行」の形（2026-09-12 19:4x・hourly・Opus が決めた）。
 #: 例: **`(0-c) 公表ページ: 0 ・改正: 0`**  ——値は「0」か「出た」。
