@@ -4577,3 +4577,5 @@
 {"reports": 31, "rows": 0, "last_day": "20260909", "lag_h": 50.5, "made_h": 25.8, "at": "2026-09-12T18:29:20+09:00", "id": "channel_basic_a3", "event": "reported"}
 {"reports": 65, "rows": 0, "last_day": "20260909", "lag_h": 50.5, "made_h": 22.5, "at": "2026-09-12T18:29:20+09:00", "id": "channel_reach_basic_a1", "event": "reported"}
 {"subs": 28, "views": 87438, "videos": 271, "at": "2026-09-12T18:27:58+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"subs": 28, "views": 87438, "videos": 271, "at": "2026-09-12T19:22:04+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"views_live": 780, "views_ledger": 484, "over": 296, "age_h": 9.4, "src": "status", "at": "2026-09-12T19:22:04+09:00", "id": "4l3DDCLIRxg", "event": "views_over"}
