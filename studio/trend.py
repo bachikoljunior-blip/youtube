@@ -19,8 +19,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 import statistics
 import json
+from pathlib import Path
 
 from .common import JST, ROOT, ledger_rows, now_jst
 
@@ -2227,6 +2229,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # 上がった本の 題・説明欄をあとから直した回（§4 の出口を抜けた欠陥の数・`trend.meta_fixes` の註
     #  ＝ 台帳に在るのに 1行も読まれていなかった族の 6つ目）。
     out.append(meta_fix_line(rows))
+    # §4 (0-c) の「外を1回 引く」の連（**本**で数える・`trend.outside_runs` の註
+    #  ＝ 「N本 続いたら」と書いて N を数える口が無い族の 4つ目・`hourly` が §16 (8) で渡した）。
+    out.append(outside_line())
     out.append(analytics_line(rows, now=now))
     # 一括レポート（3つ目の枠・**Data API 0単位**）を、台帳の包絡と並べる
     # （§7 (o-4)(3)・`trend.report_vs_ledger` の註 ＝ **複製から返らない唯一の口**）。
@@ -2910,6 +2915,103 @@ def views_absent_line(rows: list[dict]) -> str:
             + " ＝ **その本の台帳の 0回 を「配りが来ていない」と読まないこと**"
               "（`yt.views_of` の覆る条件 (1)）。"
               "**`first_view`・`hold`・§7 (c) は、この本の 0 を数から外すこと。**")
+
+
+#: §4 (0-c) の「その本の 1行」の形（2026-09-12 19:4x・hourly・Opus が決めた）。
+#: 例: **`(0-c) 公表ページ: 0 ・改正: 0`**  ——値は「0」か「出た」。
+_OUTSIDE_RE = re.compile(r"\(0-c\)\s*公表ページ\s*[:：]\s*(0|出た)\s*[・,]\s*改正\s*[:：]\s*(0|出た)")
+#: §9 以降が本の節（§0〜§8 は手順）。
+_BOOK_SEC_RE = re.compile(r"^## (\d+)\.\s*(.*)$")
+#: §4 (0-c) の覆る条件 (1) の門（**本**で数える。引きの回数ではない）。
+OUTSIDE_RUN_GATE = 3
+
+
+def outside_checks(method: "Path | None" = None) -> list[dict]:
+    """**§4 (0-c) の「外を1回 引く」の結果を、本ごとに 1行 で拾う**（`docs/METHOD.md` を読むだけ・API 0単位）。
+
+    **なぜ（2026-09-12 20:0x JST・optimizer・Opus。`hourly` が §16 の申し送り (8) で渡した口）**:
+    §4 (0-c) の覆る条件 (1) は「**3本 続けて**外で何も出なければ、公表ページ1つの照合に縮める」ですが、
+    **その 3本 を数える物が在りませんでした** —— `blind_run`・`reporting_empty_run`・`late_run` と同じ族
+    （「N本 続いたら」と書いて N を数える口が無い）の **4例目**。
+    それまで数えられていたのは**引きの回数**で、09/09 の本の 3回 が「2本 ＋ 1本目の 0」と書かれています
+    （**全部 同じ 1本**）＝ **単位が違うので、連が復元できません。**
+
+    **材料は本の節の 1行**（`(0-c) 公表ページ: 0 ・改正: 0`）。**行の無い本は数えません**
+    —— §14・§15 には行が 1つも無く、**そこは復元せずに §16 から数え始めます**（§4 19:4x の決め）。
+
+    **前半（公表ページ）と後半（改正）は別に数えます**（同 決め）——
+    09/13 の本は公表ページを 4回 引きながら、改正の側は 1度も引かれていませんでした
+    ＝ **前半が済むと後半も済んだことになる**のが、この抜けの口です。
+
+    返すのは節の番号の順（＝ 本の順）の並び: ``{"sec", "title", "page", "reform"}``
+    （`page` / `reform` は ``"0"``（出なかった）か ``"出た"``）。
+    """
+    path = Path(method) if method is not None else ROOT / "docs" / "METHOD.md"
+    if not path.is_file():
+        return []
+    sec = None
+    title = ""
+    out: list[dict] = []
+    seen: set[int] = set()
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        m = _BOOK_SEC_RE.match(line)
+        if m:
+            sec, title = int(m.group(1)), m.group(2)
+            continue
+        if sec is None or sec < 9 or sec in seen:
+            continue
+        g = _OUTSIDE_RE.search(line)
+        if g:
+            seen.add(sec)
+            out.append({"sec": sec, "title": title[:40],
+                        "page": g.group(1), "reform": g.group(2)})
+    return sorted(out, key=lambda r: r["sec"])
+
+
+def outside_runs(method: "Path | None" = None) -> dict:
+    """`outside_checks` から、**新しいほうから「0」が続いている本の数**を側ごとに数える。
+
+    **`page` / `reform` は別の連です**（§4 19:4x）。門は `OUTSIDE_RUN_GATE`（**3本**）。
+
+    **覆る条件**: (1) 連が門に届いたのに縮めた側で誤りが出たら、単位は本ではなく
+    **制度の種類**（その本が触れた制度の数）＝ そのときは 1本 1行 では足りません。
+    (2) 本の節に 1行 を書かない回が **2本** 続いたら、置き場が悪い ＝
+    台帳（`cli` の `outside_checked`）へ移すこと（**材料を 2か所 に置かないこと**）。
+    (3) `hourly` がこの口を使わずに手で連を数えた回が出たら、印字が読まれていない ＝
+    §4 の行から、この関数名で指し直すこと。
+    """
+    rows = outside_checks(method)
+    def run(key: str) -> int:
+        n = 0
+        for r in reversed(rows):
+            if r[key] != "0":
+                break
+            n += 1
+        return n
+    return {"rows": rows, "books": len(rows),
+            "page_run": run("page"), "reform_run": run("reform"),
+            "gate": OUTSIDE_RUN_GATE}
+
+
+def outside_line(method: "Path | None" = None) -> str:
+    """`outside_runs` を1行にする（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
+    o = outside_runs(method)
+    if not o["books"]:
+        return ("**(0-c) の外の引き: 本の節に 1行 を持つ本 0本**（`trend.outside_checks`）—— "
+                "**この 0 は「引いていない」ではなく「記録の形が無い」**です"
+                "（形は §4 (0-c) 19:4x ＝ `(0-c) 公表ページ: 0 ・改正: 0`）。")
+    last = o["rows"][-1]
+    body = (f"**(0-c) の外の引き: 記録の在る本 {o['books']}本**（`trend.outside_runs`・"
+            f"`docs/METHOD.md` を読むだけ・API 0単位）—— "
+            f"**公表ページ 0 が {o['page_run']}本 続き**・**改正 0 が {o['reform_run']}本**"
+            f"（門 {o['gate']}本 ＝ §4 (0-c) の覆る条件 (1)。**側は別に数えます**）。")
+    if o["page_run"] >= o["gate"] or o["reform_run"] >= o["gate"]:
+        side = "公表ページ" if o["page_run"] >= o["gate"] else "改正"
+        body += (f"  !! **{side} の側は門に届きました** ＝ "
+                 "**縮めてよいかの判定は `hourly`**（§5・台本を持つ側）。")
+    body += (f"  直近は §{last['sec']}（公表ページ {last['page']}・改正 {last['reform']}）。"
+             "**行の無い本は数えません**（連は復元しない ＝ §4 19:4x の決め）。")
+    return body
 
 
 def image_orders(rows: list[dict], orders: "Path | None" = None,
