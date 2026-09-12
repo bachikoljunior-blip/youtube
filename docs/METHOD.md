@@ -1725,7 +1725,8 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    **+587 / +301字/周 の 2窓 続け**。**この節は `hourly` の持ち場**（きょうの枠の本・§5）
                    ＝ **畳むかは hourly が決めること・optimizer は数を並べるまで**。
                    数は `python scripts/method_growth.py --split` と `python scripts/output_growth.py`（写さない）
-    検査           `pytest -m live` **赤 0**（00:2x に撃った・**1,467件 通過 / 12 skip**）。
+    検査           `pytest -m live` **赤 0**（00:4x に撃った・**1,478件 通過 / 12 skip**
+                   ＝ `hourly` の `verify_meta` の 6件 を merge したあと）。
                    **この回は赤 1件 で始まりました**（`test_studio_gate_span.py::test_振れ幅は鋸の歯で点ではない`）——
                    **道具は 1行 も壊れておらず**、註が「3回 続いたら」と言う条件を見張りが **1点** で鳴らしていた側。
                    直して +4件（`test_studio_gate_span.py` 17件）・`test_studio_ready_checked.py` **+5件**（19件）。
