@@ -50,13 +50,15 @@ def test_line_says_the_rate_is_not_a_rate() -> None:
 
 
 def test_smooth_window_is_not_called_one_step() -> None:
-    """**陰性対照**: 毎周 動く窓では `one_step` は立たない（刻みではなく伸び）。"""
+    """**陰性対照**: 毎周 動く窓では刻みらしさが立たない（刻みではなく伸び）。"""
     rows = [_row(f"2026-09-10T{h:02d}:00:00+09:00", 84781 + 40 * i)
             for i, h in enumerate(range(10, 20))]
     st = trend.channel_steps(rows)
     assert st["n_values"] == 10
     assert st["one_step"] is False
     assert len(st["steps"]) == 9
+    assert st["move_rate"] == 1.0                      # 9区間 のうち 9区間 で動いた
+    assert st["stepwise"] is False
     assert "率ではなく" not in trend.channel_line(rows)
 
 
@@ -90,12 +92,67 @@ def test_positive_control_collapsing_the_step_is_caught() -> None:
     assert "総再生は刻みで動きます" not in trend.channel_line(broken)
 
 
-def test_positive_control_two_steps_clear_one_step() -> None:
-    """**陽性対照**: 刻みが 2つ 在る窓で `one_step` が立つなら、門が壊れている。"""
+def test_two_steps_still_say_the_rate_is_not_a_rate() -> None:
+    """**2026-09-12 23:2x に向きを直した**（optimizer・Opus）。
+
+    もとは「刻みが 2つ 在る窓で `one_step` が立つなら門が壊れている ＝ 3値 は
+    **率として読み始めてよい側**」と書いてあり、**その字が欠陥そのもの**だった ——
+    `n_values` は台帳が伸びれば積もるだけなので、**2本目 の刻みが載った刻から
+    印字が消え、次の回は裸の「回/時」を読む**ことになっていた（`channel_steps` の覆る条件 (3)）。
+    **12区間 のうち動いたのは 2区間 ＝ 刻みは 1つ のときより濃くなっている。**
+    """
     rows = _flat_then_jump()
     rows.append(_row("2026-09-11T03:12:43+09:00", 88000))
     st = trend.channel_steps(rows)
     assert len(st["steps"]) == 2
     assert st["n_values"] == 3
-    assert st["one_step"] is False                     # 3値 ＝ 率として読み始めてよい側
-    assert "率ではなく" not in trend.channel_line(rows)
+    assert st["one_step"] is False                     # 残してあるだけ（写し）
+    assert st["moved"] == 2 and st["gaps"] == 12
+    assert st["move_rate"] < trend.CHANNEL_SMOOTH_RATE
+    assert st["stepwise"] is True
+    assert "率ではなく" in trend.channel_line(rows)
+
+
+def test_move_rate_does_not_move_with_the_window() -> None:
+    """**この回の欠陥の当のもの**: 刻みらしさは**窓の長さでは動かない**こと。
+
+    同じ形（12時間 ごとに 1度 動く）を **2倍 の長さ**で並べても、`move_rate` は同じ帯に
+    留まる。`n_values`（＝ 刻み ＋1）は **倍に増える** —— そちらで門を引いていたのが欠陥。
+    """
+    def _at(h: int) -> str:
+        return f"2026-09-{10 + h // 24:02d}T{h % 24:02d}:30:00+09:00"
+
+    def _steppy(n_blocks: int) -> list[dict]:
+        """12周 同じ読み → +1,000 を `n_blocks` 回 くり返す（1時間 に 1周）。"""
+        return [_row(_at(i), 84781 + 1000 * (i // 12))
+                for i in range(12 * n_blocks)]
+
+    short = trend.channel_steps(_steppy(2))
+    long = trend.channel_steps(_steppy(4))
+    assert long["n_values"] > short["n_values"]         # 窓で動く数
+    assert short["stepwise"] is True and long["stepwise"] is True
+    assert abs(long["move_rate"] - short["move_rate"]) < 0.05   # 窓では動かない
+
+
+def test_positive_control_gate_on_n_values_is_caught() -> None:
+    """**陽性対照**: 門を `n_values` の側（もとの形）へ戻すと、上の 2件 が落ちる。
+
+    もとの形 ＝ `one_step`（`n_values <= 2`）。刻みが 2本 以上 の窓では **必ず偽**なので、
+    印字が消える ＝ `test_two_steps_still_say_the_rate_is_not_a_rate` が落ちる。
+    """
+    rows = _flat_then_jump()
+    rows.append(_row("2026-09-11T03:12:43+09:00", 88000))
+    st = trend.channel_steps(rows)
+    assert st["stepwise"] != st["one_step"]            # 2つ の門は、この窓で答えが違う
+
+
+def test_positive_control_smooth_gate_is_not_always_true() -> None:
+    """**陽性対照**: `stepwise` を「刻みが 1本 でも在れば真」にすると落ちる形。
+
+    毎周 動く窓（伸び）では **偽**でなければならない —— 真になるなら、
+    `views_per_h` を率として読める窓が二度と来ない（覆る条件 (3-a) が永久に引けない）。
+    """
+    rows = [_row(f"2026-09-10T{h:02d}:00:00+09:00", 84781 + 40 * i)
+            for i, h in enumerate(range(10, 20))]
+    st = trend.channel_steps(rows)
+    assert st["steps"] != [] and st["stepwise"] is False
