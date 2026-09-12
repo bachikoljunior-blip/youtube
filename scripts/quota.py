@@ -1075,11 +1075,22 @@ def fable_rate(now: datetime | None = None,
         pts.append((at, float(row["fable_percent"]), float(row.get("used_percent") or 0.0),
                     _parse_iso(row.get("resets_at_iso"))))
     pts.sort(key=lambda x: x[0])
+    last_reset = pts[-1][3] if pts else None
     for (t0, f0, u0, r0), (t1, f1, u1, r1) in zip(reversed(pts[:-1]), reversed(pts[1:])):
         hours = (t1 - t0).total_seconds() / 3600
         if hours <= 0 or f1 < f0:
             continue                          # 同時刻／戻された ＝ 使った量ではない
         if r0 and r1 and not _same_window(r0, r1):
+            continue
+        # **いまの枠の外で測った速さを、いまの目盛りに当てないこと**
+        # （2026-09-13 06:3x・optimizer・Opus。§5 教訓の形 10つ目 ＝ 枠を送る直しを
+        #  したら、その枠を分母に使っている行を全部 数えること。`pace()` は 09/12 08:2x に
+        #  `_per_lap_before` で枠を送ったが、**この口は送られていなかった**）。
+        if r1 and last_reset and not _same_window(r1, last_reset):
+            continue
+        # **天井で貼りついた 2点 は速さではありません**（打ち切り）——
+        # 100% → 100% の Δ0 を「0.00 %/時」と読むと、**推定は目盛りのまま凍ります**。
+        if f0 >= FABLE_CAP_PCT:
             continue
         return {"rate": (f1 - f0) / hours, "source": "measured",
                 "from_at": t0, "to_at": t1, "from_pct": f0, "to_pct": f1, "hours": hours,
@@ -1129,6 +1140,17 @@ def fable_estimate(now: datetime | None = None,
     `gauge` は `fable_gauge()` の返り（呼ぶ側が差し替えられるように引数で受ける）。
     返り: `{"gauge", "rate", "rate_source", "est", "exhaust_at", "stale_hours"}`。
     目盛りが無ければ None。枠が戻っていれば `est` は目盛りの値のまま・`exhaust_at` は None。
+
+    **`est` の口は `fable_ration()` の 1つ だけです**（2026-09-13 06:3x・optimizer・Opus）——
+    「Fable のみ のいまの推定」を 2か所 で別々に作らないこと（`fable_rolled` の 覆る条件 (2)
+    と同じ向き）。`rate_source` は `"subs"` になり、`rate` は `exhaust_at` を出すためだけの
+    従属した数です（**門が読むのは `est`**）。
+
+    **覆る条件**: (1) `fable_ration()` を捨てる回が来たら（その 覆る条件 (1) ＝ オーナーが
+    「使い切れ」と言い直した回）、ここも一緒に `fable_rate()` の時間運びへ戻すこと。
+    (2) 体の数え（`_subs_from_choices`）が目盛りから ±5 ポイント 以上 外れる枠が出たら、
+    疑うのは運び方ではなく `per_sub`（`fable_ration` の 覆る条件 (3) と同じ分）。
+    derivation は JOURNAL 2026-09-13 06:3x。
     """
     now = now or datetime.now(timezone.utc)
     g = fable_gauge() if gauge is None else gauge
@@ -1137,22 +1159,42 @@ def fable_estimate(now: datetime | None = None,
     if g.get("resets") and g["resets"] <= now:
         return {"gauge": g, "rate": 0.0, "rate_source": "reset", "est": g["pct"],
                 "exhaust_at": None, "stale_hours": 0.0}
-    fr = fable_rate(now)
-    rate = float((fr or {}).get("rate") or 0.0)
     hours = max(0.0, (now - g["at"]).total_seconds() / 3600)
-    est = min(100.0, g["pct"] + hours * rate)
+    # **推定は時間ではなく「立てた fable のサブの数」で運びます**
+    # （2026-09-13 06:3x・optimizer・Opus。口は `fable_ration()` の 1か所）。
+    # `pace()` が 2026-09-06 に「すべて」へ当てた決めと同じ形 —— **枠を食うのは周であって
+    # 時間ではない**。時間で運ぶ側は、opus で立てた周も進む側へ外れ（`fable_ration` の註）、
+    # **速さが取れない回は逆に凍ります** —— 2026-09-13 06:2x の実測: `fable_rate` が
+    # 前の枠の天井の 2点（100 → 100）から「measured 0.00 %/時」を返し、
+    # 同じ【枠】の段が「Fable のみ いま推定 **0%**」と「いま推定 **14.0%**」を並べて印字していた。
+    # `fable_ration` が答えられない回（目盛りに `resets` が無い）だけ、前の形へ落ちる。
+    r = fable_ration(now, gauge=g)
+    if r is not None:
+        est = float(r["est"])
+        # 速さ（%/時）は、**その推定を作った体の数**から引く（`exhaust_at` 用）。
+        span_h = r["elapsed_h"] if r.get("rolled") else hours
+        rate = (float(r["per_sub"]) * r["subs_since"] / span_h) if span_h > 0 else 0.0
+        src = "subs"
+    else:
+        fr = fable_rate(now)
+        rate = float((fr or {}).get("rate") or 0.0)
+        est = min(100.0, g["pct"] + hours * rate)
+        src = (fr or {}).get("source", "none")
     if est >= FABLE_CAP_PCT:
         exhaust = g["at"] + timedelta(hours=(FABLE_CAP_PCT - g["pct"]) / rate) if rate > 0 else now
     elif rate > 0:
         exhaust = now + timedelta(hours=(FABLE_CAP_PCT - est) / rate)
     else:
         exhaust = None
-    return {"gauge": g, "rate": rate, "rate_source": (fr or {}).get("source", "none"),
+    return {"gauge": g, "rate": rate, "rate_source": src,
             "est": est, "exhaust_at": exhaust, "stale_hours": hours}
 
 
 def _fable_rate_words(fe: dict) -> str:
     src = fe.get("rate_source")
+    if src == "subs":
+        return (f"立てた fable のサブの数で運んだ ＝ {fe['rate']:.2f} %/時"
+                "（口は `quota.fable_ration`・**時間では運びません**）")
     if src == "measured":
         return f"目盛り自身の速さ {fe['rate']:.2f} %/時（同じ枠の2点で測った）"
     if src == "official":

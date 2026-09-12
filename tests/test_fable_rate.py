@@ -29,10 +29,18 @@ def _rows(with_second: bool = True) -> list[dict]:
     return rows
 
 
+#: この検査の中だけの作り: **1時間に fable のサブ 4体**が立つ（`data/model_choice.jsonl` の代わり）。
+#: 2026-09-13 06:3x から `fable_estimate` は**体の数**で運ぶので、体が立たない盤では
+#: 目盛りは 1%も 進みません（＝ 時間で運んでいた頃の数はここでは出ません）。
+def _subs(since, until, model=None):
+    return int(max(0.0, (until - since).total_seconds() / 3600) * 4)
+
+
 @pytest.fixture
 def two_points(monkeypatch):
     monkeypatch.setattr(quota, "_anchors", lambda: _rows(True))
     monkeypatch.setattr(quota, "pace", lambda now=None: {"carry_rate": 1.69})
+    monkeypatch.setattr(quota, "_subs_from_choices", _subs)
 
 
 @pytest.fixture
@@ -63,15 +71,51 @@ def test_single_point_falls_back_to_official_ratio(one_point):
 
 def test_exhaust_time_uses_fable_own_rate(two_points):
     fe = quota.fable_estimate(datetime(2026, 9, 3, 3, 40, tzinfo=JST))
-    # 21% @ 22:01 + 79% ÷ 3.80 %/時 ＝ 20.8時間 → 09/03 18:4x JST（全モデルの速さなら 09/04）
+    # 21% @ 22:01 ＋ 22体 × 1.0%/体 ＝ 43%。残り 57% ÷ 3.89 %/時 ＝ 14.6時間
+    # → 09/03 18:1x JST（**全モデルの速さで運べば 09/04** ＝ この検査が守っている側）
+    assert fe["rate_source"] == "subs"
     assert fe["exhaust_at"].astimezone(JST).strftime("%m/%d %H") == "09/03 18"
     assert 40 <= fe["est"] <= 46
+
+
+def test_estimate_is_carried_by_subs_not_by_hours(two_points, monkeypatch):
+    """**体が 1つも立たない区間では、目盛りは進みません**（`pace()` の 2026-09-06 の決め）。
+
+    2026-09-13 06:2x の実物: `fable_rate` が**前の枠の天井の 2点**（100 → 100）から
+    「measured 0.00 %/時」を返し、**推定が目盛りのまま凍って** 親の【枠】の段が
+    「Fable のみ いま推定 **0%**」と「いま推定 **14.0%**」を同じ段に並べていた
+    （＝ 同じ数の口が 2つ）。**時間で運ぶ形に戻すと、この検査は落ちます。**
+    """
+    monkeypatch.setattr(quota, "_subs_from_choices", lambda *a, **k: 0)
+    fe = quota.fable_estimate(datetime(2026, 9, 3, 3, 40, tzinfo=JST))
+    assert fe["est"] == pytest.approx(21.0)      # 5.6時間 経っても 目盛りのまま
+    assert quota.fable_ration(datetime(2026, 9, 3, 3, 40, tzinfo=JST))["est"] == fe["est"]
+
+
+def test_saturated_pair_in_a_past_window_is_not_a_speed(monkeypatch):
+    """**天井で貼りついた 2点**（100 → 100）と、**別の枠の 2点**は、速さではありません。
+
+    2026-09-13 06:2x の `data/usage.jsonl` の形（前の枠の 09/11 12:38 と 19:23 が
+    どちらも 100%・いまの目盛りは 09/12 07:20 の 0%）。
+    """
+    rows = [
+        {"fetched_at": "2026-09-11T12:38:00+09:00", "window_id": "seven_day",
+         "used_percent": 83, "resets_at_iso": "2026-09-11T22:00:00Z", "fable_percent": 100},
+        {"fetched_at": "2026-09-11T19:23:00+09:00", "window_id": "seven_day",
+         "used_percent": 88, "resets_at_iso": "2026-09-11T22:00:00Z", "fable_percent": 100},
+        {"fetched_at": "2026-09-12T07:20:00+09:00", "window_id": "seven_day",
+         "used_percent": 0, "resets_at_iso": "2026-09-18T22:00:00Z", "fable_percent": 0},
+    ]
+    monkeypatch.setattr(quota, "_anchors", lambda: rows)
+    monkeypatch.setattr(quota, "pace", lambda now=None: {"carry_rate": 0.0})
+    fr = quota.fable_rate(datetime(2026, 9, 13, 6, 30, tzinfo=JST))
+    assert fr["source"] == "official"           # measured 0.00 %/時 と言わない
 
 
 def test_sub_model_switches_to_opus_once_fable_gauge_is_estimated_full(two_points):
     m_before, why_before = quota.sub_model(datetime(2026, 9, 3, 3, 40, tzinfo=JST))
     m_after, why_after = quota.sub_model(datetime(2026, 9, 3, 19, 30, tzinfo=JST))
-    assert m_before == "fable" and "100% は 09/03 18:" in why_before
+    assert m_before == "fable" and "100% は 09/03 18:" in why_before, why_before
     assert m_after == "opus" and "新しい画面が来るまで Opus" in why_after
 
 

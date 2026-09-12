@@ -80,7 +80,7 @@ def corrected_sub_model(now: datetime | None = None,
     est_pct = float(est.get("est", pct))
     exhaust = est.get("exhaust_at")
     tail = ""
-    if est.get("rate_source") in ("measured", "official"):
+    if est.get("rate_source") in ("subs", "measured", "official"):
         tail = (f"。いま推定 {est_pct:.0f}%（{quota._fable_rate_words(est)}"
                 + (f"・100% は {exhaust.astimezone(quota.JST):%m/%d %H:%M} JST" if exhaust else "")
                 + "）")
