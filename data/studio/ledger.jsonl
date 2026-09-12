@@ -4633,3 +4633,5 @@
 {"views": 179, "likes": 0, "comments": 0, "age_h": 158.3, "title": "iDeCoの効きが落ちる年収は91点中11点 #Shorts", "n_values": 1, "at": "2026-09-12T21:16:20+09:00", "id": "OwFjo4kLA9U", "event": "measured"}
 {"reports": 31, "rows": 0, "last_day": "20260909", "lag_h": 53.5, "made_h": 25.8, "at": "2026-09-12T21:30:11+09:00", "id": "channel_basic_a3", "event": "reported"}
 {"reports": 65, "rows": 0, "last_day": "20260909", "lag_h": 53.5, "made_h": 22.5, "at": "2026-09-12T21:30:11+09:00", "id": "channel_reach_basic_a1", "event": "reported"}
+{"subs": 28, "views": 87438, "videos": 271, "at": "2026-09-12T22:08:21+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-12T22:08:21+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
