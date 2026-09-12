@@ -4530,11 +4530,109 @@ def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> di
     return {"holes": holes, "last_day": last_day, "books": books, "channel": ch}
 
 
+#: **報告が置かれるまでの時間**（期間の終わりから）。実測は 22.5〜25.8時間（`reported` の `made_h`）。
+#: 台帳に `made_h` が在る回はそちらを使い、この数は**1度も撃っていない枠の既定**です。
+REPORT_MADE_H = 26.0
+
+#: **見込みを過ぎているのに報告がまだ置かれていない回**、次に撃ち直すまでの時間。
+#: 毎周 撃つと Reporting API を無駄に叩き、撃たないと 1日 落ちるので、そのあいだ。
+REPORT_RETRY_H = 3.0
+
+
+def reporting_due(rows: list[dict], last_day: str | None,
+                  now: dt.datetime | None = None) -> dict:
+    """**`python -m studio.cli reporting` を、この回に撃つ番か**（台帳の `reported` の行から・API 0単位）。
+
+    **なぜ要るか**（2026-09-12 17:5x・optimizer・Opus）: `report_vs_ledger_line` は
+    「次の報告の日」と「置かれる見込みの刻」を毎周 印字していましたが、
+    **その刻を過ぎたかも、最後に撃ったのがいつかも言っていませんでした** ＝
+    §7 (o-4)(4)（**(m) を外から当てられる最初の重なり**）は、
+    **読む側が自分で時計を見て、自分で思い出す**しかなかった。
+    実測: 最後に撃ったのは 09/11 18:46 で、この回（09/12 17:5x）まで **23.1時間**
+    —— そのあいだに 9周 が回り、**どの周も撃つ番だと言われていません**。
+    §5 の「教訓の形 7つ目」（覆る条件を註に書いたら、その条件を読む**印字**も一緒に作ること）の族で、
+    ここは覆る条件ではなく**次の手**の側でした。
+
+    **これは `freshness` と別の問いです** —— `freshness` は「**置かれている報告**が
+    どこまでの数か」を Reporting API に訊きます（＝ 撃たないと分からない）。
+    こちらは「**撃つ番か**」を台帳と時計だけで言います（API 0単位）。
+
+    返り: `{"last_at", "age_h", "made_h", "next_day", "eta", "due", "why"}`。
+
+    **決め**: 撃つのは (i) 次の報告の日の見込みを過ぎていて、(ii) その見込みより後に
+    まだ撃っていない（か、撃ってから `REPORT_RETRY_H` 過ぎた）回だけ。
+    **「1日1回でよい」（§7 (o-4)）を刻で言い直したもの**で、門を増やしてはいません。
+
+    **覆る条件**: (1) 見込みを過ぎて撃ったのに空だった回が **3回** 続いたら、
+        遅れているのは報告ではなく `made_h` の見積り ＝ `REPORT_MADE_H` ではなく
+        **台帳の `made_h` の最大**を使うこと（いまは最後の行の値）。
+    (2) `REPORT_RETRY_H` の中に周が 1つも入らない枠が出たら（親の床が 3時間 を越えたら）、
+        この数は床の側から引くこと（`quota` の床）。
+    (3) 報告の日が **2日 以上** 飛んだ回が出たら、`next_day` は「最後の日 +1」では足りない
+        ＝ `reporting.missing_days` の側から取ること。
+    """
+    from . import reporting
+
+    now = now or dt.datetime.now(dt.timezone.utc)
+    fired = [r for r in rows if r.get("event") == "reported"
+             and r.get("id") == reporting.REPORT_TYPE]
+    last_at = _at(fired[-1]) if fired else None
+    made = next((r.get("made_h") for r in reversed(fired) if r.get("made_h")), None)
+    made_h = float(made) if made else REPORT_MADE_H
+    out: dict = {"last_at": last_at, "made_h": made_h,
+                 "age_h": (None if last_at is None
+                           else round((now - last_at).total_seconds() / 3600, 1))}
+    if not last_day:
+        out.update({"next_day": None, "eta": None, "due": True, "why": "never"})
+        return out
+    nxt = (dt.datetime.strptime(last_day, "%Y%m%d").date() + dt.timedelta(days=1))
+    key = nxt.strftime("%Y%m%d")
+    eta = reporting.day_end_jst(key) + dt.timedelta(hours=made_h)
+    out.update({"next_day": key, "eta": eta})
+    if now < eta:
+        out.update({"due": False, "why": "early"})
+    elif last_at is not None and last_at >= eta and \
+            (now - last_at).total_seconds() / 3600 < REPORT_RETRY_H:
+        out.update({"due": False, "why": "waited"})
+    else:
+        out.update({"due": True, "why": "due"})
+    return out
+
+
+def reporting_due_words(rows: list[dict], last_day: str | None,
+                        now: dt.datetime | None = None) -> str:
+    """`reporting_due` の 1行（**句の出どころは 1か所** ＝ ここ）。"""
+    d = reporting_due(rows, last_day, now=now)
+    now = now or dt.datetime.now(dt.timezone.utc)
+    last = ("**1度も撃っていません**" if d["last_at"] is None else
+            f"最後に撃ったのは **{d['last_at'].astimezone(JST):%m/%d %H:%M}**"
+            f"（{d['age_h']:.1f}時間 前）")
+    if d["why"] == "never":
+        return ("  **`reporting` は 1度も積んでいません** —— "
+                "`python -m studio.cli reporting` を撃つこと（**Data API 0単位**・3つ目の枠）")
+    eta = d["eta"].astimezone(JST)
+    gap = (eta - now).total_seconds() / 3600
+    if d["why"] == "early":
+        return (f"  **`reporting` は撃たなくてよい回です** —— {last}・次の報告の日 "
+                f"**{d['next_day']}** の見込みは {eta:%m/%d %H:%M} JST ＝ **あと {gap:.1f}時間**"
+                f"（`trend.reporting_due`・置かれるまで {d['made_h']:.1f}時間）")
+    if d["why"] == "waited":
+        return (f"  **`reporting` は見込みの後に撃って、まだ空でした** —— {last}・"
+                f"報告の日 **{d['next_day']}** は遅れている側 ＝ "
+                f"**撃ち直すのは {d['last_at'].astimezone(JST) + dt.timedelta(hours=REPORT_RETRY_H):%m/%d %H:%M} JST から**"
+                f"（`trend.reporting_due` の覆る条件 (1)）")
+    return (f"  **この回に `python -m studio.cli reporting` を撃つこと** —— {last}・"
+            f"報告の日 **{d['next_day']}** の見込み {eta:%m/%d %H:%M} JST を "
+            f"**{-gap:.1f}時間 過ぎています**（**Data API 0単位**・3つ目の枠・`trend.reporting_due`）")
+
+
 def report_vs_ledger_line(rows: list[dict], rep_rows: list[dict] | None = None) -> str:
     """`report_vs_ledger` を1行にする（`trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
     from . import reporting
 
     g = report_vs_ledger(rows, rep_rows)
+    due = reporting_due(rows, g["last_day"])
+    dueline = reporting_due_words(rows, g["last_day"])
     if not g["books"]:
         return ("**一括レポート 対 台帳: 行がありません**（`python -m studio.cli reporting` を"
                 "撃つこと・**Data API 0単位**・3つ目の枠）")
@@ -4581,8 +4679,8 @@ def report_vs_ledger_line(rows: list[dict], rep_rows: list[dict] | None = None) 
                f"（{reporting.day_end_jst(ch['next_day']) - dt.timedelta(days=1):%m/%d %H:%M}"
                f"〜{reporting.day_end_jst(ch['next_day']):%m/%d %H:%M} JST）で、"
                f"**台帳の側は いま {ch['predict']}回**。**その報告が置かれる見込みは"
-               f" {reporting.day_end_jst(ch['next_day']) + dt.timedelta(hours=26):%m/%d %H時}ごろ**"
-               "（`freshness` の `made_h` ＝ 25.8時間）")
+               f" {reporting.day_end_jst(ch['next_day']) + dt.timedelta(hours=due['made_h']):%m/%d %H:%M}**"
+               f"（置かれるまで {due['made_h']:.1f}時間 ＝ 台帳の `reported` の `made_h`）")
     else:
         chl = "  **(m) を外から当てる重なりが在りません**（`report_vs_ledger` の `channel`）"
-    return "\n".join(x for x in (head, body, sixline, chl) if x)
+    return "\n".join(x for x in (head, body, sixline, chl, dueline) if x)
