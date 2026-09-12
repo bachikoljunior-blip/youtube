@@ -3363,6 +3363,141 @@ def flat_video_gain(rows: list[dict]) -> dict:
             "proves_alive": alive}
 
 
+#: **`blind` の連なりの門**（`channel_video_delta` の覆る条件 (4)・`flat_video_gain` の
+#: `blind` の側の覆る条件 —— どちらも「N周 続いたら」と書きながら、**数える口が無い**まま
+#: 2026-09-12 16:0x まで残っていました）。
+BLIND_EQ_RUN_NEED = 3
+BLIND_FALSE_RUN_NEED = 3
+#: `channel_video_delta` の覆る条件 (5)（`blind == 0` が 7周 続いたら欄ごと外してよい）。
+BLIND_ZERO_RUN_NEED = 7
+
+
+def blind_run(rows: list[dict], limit: int = 40) -> dict:
+    """**`blind` の連なりを数える口**（2026-09-12 16:0x・optimizer・Opus。**API 0単位**）。
+
+    `channel_video_delta` と `flat_video_gain` は `blind` の側に **3つ の覆る条件**を書いています
+    —— どれも「**〜の回が N周 続いたら**」という形なのに、**その連なりを数える口が
+    どこにも在りませんでした**（`grep blind studio/ scripts/` ＝ 印字はその周の 1点 だけ・
+    §7 の「いまの数」も 1点 だけを写していた）。**次の回が手で数えるしかない条件**は、
+    この repo でいちばん多い壊れ方です（`channel_video_delta` の註 16:4x・`trend.meta_fixes` 15:1x と同じ族）。
+
+    **数え方**: 台帳の `channel` の周（`_channel_laps`）ごとに、**その周までの行だけ**に切って
+    `flat_video_gain` を引き直します（`quota.margin_series` の「その周が見た数」と同じ形）。
+    **平らの窓はその周の読みで決まる**ので、いまの窓を過去へ延ばして数えてはいけません。
+
+    返す 3つ の連なり（どれも**新しい周から**数える）:
+
+    * `run` —— **`grew > 0` かつ `blind == grew`**（＝ 伸びた本が 1本 も確かめられなかった周）。
+      門は `BLIND_EQ_RUN_NEED`（3）＝ `channel_video_delta` の覆る条件 (4)
+      「減らないまま `blind == grew` の回が 3周 続いたら、抑えの取り方（`REPLICA_LAG_H`）の側を疑う」。
+    * `false_run` —— **`proves_alive is False`**（＝ 測れて、伸びた本が 0本 だった周）。
+      門は `BLIND_FALSE_RUN_NEED`（3）＝ `flat_video_gain` の `blind` の側の覆る条件
+      「そのとき初めて §7 (m) の『平らの中の伸びが 0』を数に使ってよい」。
+    * `zero_run` —— **`blind == 0`**（`confirmed is None` の周は**外して**数える ＝ 訊けていない周。
+      `channel_video_delta` の覆る条件 (5) が名指しで外している側）。門は `BLIND_ZERO_RUN_NEED`（7）。
+
+    **飛ばす周と、切る周を分けてあります**（ここが読み違えやすい所）:
+    **何も言えない周は飛ばし**（`confirmed is None` ＝ 平らが遅れより短い／`grew == 0`／
+    `proves_alive is None`）、**逆を言った周で切ります**（`blind < grew`・`proves_alive is True`・
+    `blind > 0`）。＝ 連なりは「**その向きの証拠が続いた周の数**」で、**時間の長さではありません**。
+    飛ばした周が挟まると刻は離れるので、`span_h`（いちばん古い周からいまの周までの時間）も返します
+    —— **門は周で引き、読むときは `span_h` を見ること。**
+
+    **覆る条件**: (1) `run` が門に届いた回は、**先に `measure` の回数**を見ること ——
+    `blind` は「確かめられる部分（平ら − 遅れ）に `measure` が 1回 しか入っていない」ときに立つので、
+    1周 2回 撃つようになれば自然に落ちます（`channel_video_delta` の覆る条件 (4) の本文）。
+    それでも落ちないときに初めて `REPLICA_LAG_H` を疑うこと。
+    (2) 飛ばした周が連なりの周の数を**越えた**ら、周で数える形が効いていない ＝
+    そのときは `span_h`（時間）の側で門を引き直すこと（数は `skipped` の欄）。
+    (3) 平らの窓の取り方（`_flat_window`）を変えた回は、**過去の周の値ごと変わります** ——
+    その回はこの連なりを 0 から数え直すこと（古い `run` を持ち越さない）。
+    """
+    cs = _channel_rows(rows)
+    laps = _channel_laps(cs)
+    empty = {"laps": 0, "run": 0, "need": BLIND_EQ_RUN_NEED, "drawn": False,
+             "false_run": 0, "false_need": BLIND_FALSE_RUN_NEED, "false_drawn": False,
+             "zero_run": 0, "zero_need": BLIND_ZERO_RUN_NEED, "zero_drawn": False,
+             "span_h": None, "skipped": 0, "marks": []}
+    if not laps:
+        return empty
+
+    def _when(row: dict) -> dt.datetime | None:
+        try:
+            return _at(row)
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    marks: list[dict] = []
+    for lap in laps[-limit:]:
+        end = _at(lap[-1])
+        upto = [r for r in rows if (_when(r) or end) <= end]
+        fv = flat_video_gain(upto)
+        marks.append({"at": end, "h": fv["h"], "grew": fv["grew"], "blind": fv["blind"],
+                      "confirmed": fv["confirmed"], "proves_alive": fv["proves_alive"]})
+
+    def _count(kind: str) -> tuple[int, float | None, int]:
+        n, oldest, skipped = 0, None, 0
+        for m in reversed(marks):
+            if kind == "eq":
+                if m["confirmed"] is None or not m["grew"]:
+                    skipped += 1                 # 何も言えない周は飛ばす
+                    continue
+                hit = m["blind"] == m["grew"]
+            elif kind == "false":
+                if m["proves_alive"] is None:
+                    skipped += 1
+                    continue
+                hit = m["proves_alive"] is False
+            else:
+                if m["confirmed"] is None:
+                    skipped += 1
+                    continue
+                hit = not m["blind"]
+            if not hit:
+                break                            # 逆を言った周で切る
+            n += 1
+            oldest = m["at"]
+        span = (None if oldest is None
+                else (marks[-1]["at"] - oldest).total_seconds() / 3600.0)
+        return n, span, skipped
+
+    run, span, skipped = _count("eq")
+    false_run, _, _ = _count("false")
+    zero_run, _, _ = _count("zero")
+    return {"laps": len(marks), "run": run, "need": BLIND_EQ_RUN_NEED,
+            "drawn": run >= BLIND_EQ_RUN_NEED,
+            "false_run": false_run, "false_need": BLIND_FALSE_RUN_NEED,
+            "false_drawn": false_run >= BLIND_FALSE_RUN_NEED,
+            "zero_run": zero_run, "zero_need": BLIND_ZERO_RUN_NEED,
+            "zero_drawn": zero_run >= BLIND_ZERO_RUN_NEED,
+            "span_h": span, "skipped": skipped, "marks": marks}
+
+
+def blind_run_words(rows: list[dict], limit: int = 40, short: bool = False) -> str:
+    """`blind_run` を 1文にする（**句の出どころは 1か所** ——`channel_line` と
+    `channel_line_short` は、どちらもこの文を使うこと。§5 の教訓の形 7つ目
+    「覆る条件を註に書いたら、その条件を読む印字も一緒に作ること」）。
+
+    `short=True` は短い行むけの短い形で、**数は同じ口から出ます**（文だけが短い）。"""
+    b = blind_run(rows, limit)
+    if not b["laps"]:
+        return ""
+    if short:
+        return (f"（**`blind == grew` は {b['run']}/{b['need']}周**"
+                + ("・**引かれました**" if b["drawn"] else "")
+                + "・`trend.blind_run`）")
+    out = (f" **`blind == grew`（伸びた本が 1本 も確かめられない周）は これで **{b['run']}周** 続いています**"
+           f"（門 {b['need']}周・`trend.blind_run`）")
+    if b["span_h"] is not None and b["run"]:
+        out += f"・その連なりは **{b['span_h']:.1f}時間**"
+    if b["drawn"]:
+        out += ("。**引かれました ＝ まず `measure` の回数を見ること**"
+                "（1周 2回 撃てば `blind` は自然に落ちる・`blind_run` の覆る条件 (1)）——"
+                "**それでも落ちないときに初めて `REPLICA_LAG_H` を疑うこと**")
+    out += "。"
+    return out
+
+
 def _flat_laps(ps: list[dict]) -> int:
     """**総再生が動かないまま、いま何周 続いているか**（いちばん新しい周を 1 と数える）。
 
@@ -3947,7 +4082,9 @@ def channel_line(rows: list[dict]) -> str:
                      f"（窓の確かめられる部分 ＝ 平ら {g['flat_h']:.1f}時間 − 遅れ "
                      f"{REPLICA_LAG_H:.1f}時間 に、`measure` が 1回 しか入っていない・"
                      "`trend.flat_video_gain`）＝ **「伸びが 0 だった」ではなく「測れなかった」** ——"
-                     "**§7 (m) の『平らの中の伸びが 0 の回』に、この回を数えないこと。**")
+                     "**§7 (m) の『平らの中の伸びが 0 の回』に、この回を数えないこと。**"
+                     # **連なりは、その周の 1点 では読めません**（`blind_run` の註・2026-09-12 16:0x）
+                     + blind_run_words(rows))
         elif g["flat_vid_confirmed"] == 0:
             flat += ("**この平らの中で確かめられた本の伸びは 0回 です**（`trend.flat_video_gain`）——"
                      "**「だから止まった」とは読めません**（`measure` が触るのは 19本 だけ・向きは片側）。")
@@ -4131,7 +4268,9 @@ def channel_line_short(rows: list[dict]) -> str:
         if g["flat_vid_confirmed"] == 0 and g["flat_blind"]:
             verdict += (f"（**平らの中で伸びた {g['flat_grew']}本 のうち {g['flat_blind']}本 は"
                         "この窓では確かめられません** ＝ 「伸びが 0」ではなく「測れなかった」・"
-                        "`trend.flat_video_gain`）")
+                        "`trend.flat_video_gain`）"
+                        # **短い行も同じ口から言うこと**（`channel_line_short` の覆る条件 (2)）
+                        + blind_run_words(rows, short=True))
         elif g["flat_vid_confirmed"] == 0:
             verdict += ("（**平らの中の本の伸びは 0回** ＝ 向きは片側 —— "
                         "「だから止まった」ではない・`trend.flat_video_gain`）")
