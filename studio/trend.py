@@ -2224,6 +2224,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # 画像の注文の届き具合と、**届いた絵が いちばん新しい build に載っているか**
     # （`trend.image_orders` の註 ＝ 印字だけにしない族の 5つ目）。
     out.append(image_line(rows))
+    # 上がった本の 題・説明欄をあとから直した回（§4 の出口を抜けた欠陥の数・`trend.meta_fixes` の註
+    #  ＝ 台帳に在るのに 1行も読まれていなかった族の 6つ目）。
+    out.append(meta_fix_line(rows))
     out.append(analytics_line(rows, now=now))
     # 一括レポート（3つ目の枠・**Data API 0単位**）を、台帳の包絡と並べる
     # （§7 (o-4)(3)・`trend.report_vs_ledger` の註 ＝ **複製から返らない唯一の口**）。
@@ -2924,6 +2927,127 @@ def image_line(rows: list[dict]) -> str:
         body += "  **焼き直し待ちの本 0本**（届いた絵は、いちばん新しい build に載っています）。"
     return body
 
+
+
+#: **公開ページの 題・説明欄をあとから直した回の event 名**（2026-09-12 15:0x・optimizer・Opus）。
+#: **2つ在るのは道具ではなく手書きだから**です —— この行を書く `cli` の口がどこにも無く、
+#: 4件 とも回ごとに形を決めて書かれています（`meta_updated` 3件 ＝ `id` が台本 id・
+#: `meta_update` 1件 ＝ `id` が video id・欄の名前も `what` / `field` / `why` / `reason` と別々）。
+#: **片方だけを数えると 1件 落ちます。** 名を 1つ に寄せないのは、過去の行を書き換えないため
+#: （`docs/JOURNAL.md` の「追記だけ」と同じ向き）—— **読む側が 2つ とも拾うこと。**
+META_FIX_EVENTS = ("meta_updated", "meta_update")
+
+
+def meta_fixes(rows: list[dict]) -> dict:
+    """**上がった本の 題・説明欄を、あとから直した回**を数える（**API 0単位**・台帳を見るだけ）。
+
+    2026-09-12 15:0x・optimizer・Opus。**§4 の出口 (0)〜(3) を抜けた欠陥の数**です。
+
+    **踏んだ形**: 台帳に `meta_updated` 3件・`meta_update` 1件 が在り、
+    **どれも 1行も読まれていません**（`grep meta_update studio/ scripts/ tests/` が 0件）。
+    4件目 を書いた回は本文に「**4件目**」と手で数えて書いており ＝
+    **数えている人は居るのに、数える口が無い**（`trend.flats` の「その 3本 を数える所が、
+    どこにもなかった」・`cli.record_over` と同じ族の 6つ目）。
+
+    **分けるのは齢ではなく、予約の刻**（`cmd_schedule` が置く `scheduled` の行）:
+    予約の**前**の直しは §4 の出口の中で捕まった側（(0)〜(3) が効いた）で、
+    予約の**後**は**出口を抜けた欠陥**です（`cli.meta_drift` の註 ＝ 予約の後に説明欄だけを
+    直すと `yt.update_meta` を撃たない限り古いまま 10:00 に出る）。
+    さらに公開の**後**は、**視聴者が誤りを読んだあと**の直し ＝ いちばん高く付く側。
+
+    返り: `{"n", "books", "scheduled_books", "before", "after_sched", "after_pub",
+             "unresolved", "names", "rows"}`。`rows` の 1件 は
+    `{"at", "vid", "when"（"before"/"after_sched"/"after_pub"）, "event"}`。
+
+    **`books` の分母は「予約ずみの本」**（`scheduled` が video_id を持つ本）から、
+    **`replaced` で置き換えられた側を引いた数**です（`schedule --replace` は同じ枠に別の
+    video_id を上げ、前の本は private へ戻る ＝ **上がった本としては 1本**）。
+    **`trend.ours()` は引いていません**（あちらは「こちらの作りの id か」を訊く口で、
+    分母を作る口ではない）—— **同じ台帳から 2つの数が出るので、混ぜないこと。**
+    旧作りの本は §8 のとおり数えません。
+
+    **判定は `hourly`**（§5 ＝ 出口の形を変えるかは台本を持つ側）—— ここは数を並べるまで。
+
+    **覆る条件**: (1) `after_pub` が **2件目**を数えたら、直すのは §4 の出口ではなく
+        **公開の前に説明欄を読み直す所**（(0-b) は声と説明欄の食い違いしか見ない）。
+    (2) `after_sched` が **3本 続けて 0件**なら、この口は印字だけにしてよい（門にしない）。
+    (3) `unresolved` が 1件 でも立ったら、直すのは数え方ではなく**書き方**です ——
+        そのとき初めて `cli` に口を足し、`video_id` を必ず持たせること
+        （**いま足さないのは、4件 とも `id` から引けているから** ＝ 口を足す値打ちが
+        「名を揃える」だけになる）。
+    """
+    sched: dict[str, dict] = {}
+    by_sid: dict[str, str] = {}
+    replaced: set[str] = set()
+    for r in rows:
+        if r.get("event") != "scheduled" or not r.get("video_id"):
+            continue
+        vid = r["video_id"]
+        sched.setdefault(vid, r)
+        if r.get("replaced"):
+            replaced.add(str(r["replaced"]))
+        # **台本 id → video_id は「いちばん新しい予約」**（`--replace` で 1つの台本が
+        # 2つの video_id を持つ ＝ `setdefault` だと置き換えられた側に当たります）。
+        if r.get("id"):
+            by_sid[str(r["id"])] = vid
+
+    pub: dict[str, dt.datetime] = {}
+    for vid, pts in series(rows).items():
+        if pts:
+            pub[vid] = published_at(pts)
+
+    out: dict = {"n": 0, "books": 0,
+                 "scheduled_books": len([v for v in sched if v not in replaced]),
+                 "before": 0, "after_sched": 0, "after_pub": 0,
+                 "unresolved": 0, "names": {}, "rows": []}
+    seen: set[str] = set()
+    for r in rows:
+        ev = r.get("event")
+        if ev not in META_FIX_EVENTS:
+            continue
+        out["n"] += 1
+        out["names"][ev] = out["names"].get(ev, 0) + 1
+        # **`id` は回によって台本 id にも video id にもなります**（上の註）——
+        # `video_id` → `id`（台本 id の写し）→ `id` そのもの、の順で引く。
+        vid = r.get("video_id") or by_sid.get(str(r.get("id"))) or str(r.get("id") or "")
+        if vid not in sched:
+            out["unresolved"] += 1
+            continue
+        seen.add(vid)
+        at = _at(r)
+        s_at = _at(sched[vid])
+        p_at = pub.get(vid)
+        if at < s_at:
+            when = "before"
+        elif p_at is not None and at >= p_at:
+            when = "after_pub"
+        else:
+            when = "after_sched"
+        out[when] += 1
+        out["rows"].append({"at": at, "vid": vid, "when": when, "event": ev})
+    out["books"] = len(seen)
+    return out
+
+
+def meta_fix_line(rows: list[dict]) -> str:
+    """`meta_fixes` を1行にする（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
+    q = meta_fixes(rows)
+    if q["n"] == 0:
+        return ("**上がった本の 題・説明欄をあとから直した回: 0件**"
+                "（台帳 `meta_updated`／`meta_update`・`trend.meta_fixes`・追加 0単位）。")
+    body = (f"**題・説明欄をあとから直した回: {q['n']}件・{q['books']}本**"
+            f"（予約ずみ {q['scheduled_books']}本・`trend.meta_fixes`・追加 0単位）—— "
+            f"**予約の前 {q['before']}件 ／ 予約の後・公開の前 {q['after_sched']}件 ／ "
+            f"公開の後 {q['after_pub']}件**。**後ろの 2つ が §4 の出口 (0)〜(3) を抜けた数**です"
+            "（`meta_fixes` の註・**判定は `hourly`**・§5）。")
+    late = [r for r in q["rows"] if r["when"] == "after_pub"]
+    if late:
+        body += ("  公開の後: " + "・".join(f"{r['vid']} {r['at']:%m/%d %H:%M}" for r in late[:3])
+                 + "（**視聴者が誤りを読んだあと**の直し）。")
+    if q["unresolved"]:
+        body += (f"  !! **本を引けなかった行 {q['unresolved']}件** ＝ 数え方ではなく書き方の側"
+                 "（`meta_fixes` の覆る条件 (3)）。")
+    return body
 
 CHANNEL_MIN_SPAN_H = 0.5   # これより短い窓では、チャンネルの数の更新の刻みが見えるだけ
 # **同じ周に 2体（`hourly` と `optimizer`）が `status` を撃つので、`channel` の行は周の 2倍 入ります。**
