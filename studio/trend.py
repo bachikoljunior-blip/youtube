@@ -2236,6 +2236,10 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  —— **同じ族の 5つ目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`）。
     out.append(views_streak_line(rows))
     out.append(analytics_line(rows, now=now))
+    # §7 の収益の節の 覆る条件 (4)（直近7日の平均が続けて上がったら、分子はチャンネルの回復の側）の連
+    #  —— **同じ族の 6例目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・
+    #  `views_streak`）。**単位は「引き」＝ 周ではありません**（`trend.rev7_run` の註）。
+    out.append(rev7_line(rows))
     # 一括レポート（3つ目の枠・**Data API 0単位**）を、台帳の包絡と並べる
     # （§7 (o-4)(3)・`trend.report_vs_ledger` の註 ＝ **複製から返らない唯一の口**）。
     out.append(report_vs_ledger_line(rows))
@@ -2373,6 +2377,133 @@ def analytics_line(rows: list[dict], now: dt.datetime | None = None) -> str:
             f"——**%と秒で向きが逆になります**（判定は `hourly`・§5）。"
             f"窓の中の**登録の増え 合計 {a['subs']}**{sp}")
 
+
+#: §7 の収益の節の 覆る条件 (4) の門。**単位は「引き」で、周ではありません**（`rev7_run` の註）。
+REV7_RUN_GATE = 3
+#: 直近7日（収益の節の分子）と、その横に並べる 12日。
+REV7_DAYS = 7
+REV7_LONG_DAYS = 12
+#: 基準2（ショート 直近90日 1,000万回）。**公表ページの写し**（§7 の収益の節・覆る条件 (10)）。
+REV_GOAL_VIEWS = 10_000_000
+REV_GOAL_DAYS = 90
+
+
+def rev7_draws(rows: list[dict]) -> list[dict]:
+    """**引きごとに、そのとき読めた「直近7日の平均」**を並べる（台帳の `analytics_day` だけ・API 0単位）。
+
+    **1引き ＝ `analytics_day` の同じ `at` の塊**。`cli analytics` は**動いた日だけ**を台帳へ足す
+    （`cli.analytics_days_to_log`）ので、塊の大きさは 1〜12行 と揃いません —— **行の数では分けないこと。**
+
+    **同じ日までを引き直した回は落とします**（`last_day` が進まなかった引き ＝ 実測 09/10 の 3回）。
+    平均は**そのとき台帳に在った値**で組み直します（古い日は後から書き直されるので、
+    いまの値で過去の点を作ると、**そのとき読めなかった数**が並びます）。
+
+    返り: 引きごとに `{"at", "last_day", "n", "avg", "n_long", "avg_long"}`。
+    """
+    day_rows = sorted((r for r in rows if r.get("event") == "analytics_day" and r.get("id")),
+                      key=lambda r: (r["at"], r["id"]))
+    known: dict[str, int] = {}
+    out: list[dict] = []
+    last_seen: str | None = None
+    for at in dict.fromkeys(r["at"] for r in day_rows):
+        for r in day_rows:
+            if r["at"] == at:
+                known[r["id"]] = int(r.get("views") or 0)
+        days = sorted(known)
+        if days[-1] == last_seen:
+            continue
+        last_seen = days[-1]
+        win, lon = days[-REV7_DAYS:], days[-REV7_LONG_DAYS:]
+        out.append({"at": dt.datetime.fromisoformat(at).astimezone(JST),
+                    "last_day": days[-1],
+                    "n": len(win), "avg": sum(known[d] for d in win) / len(win),
+                    "n_long": len(lon),
+                    "avg_long": sum(known[d] for d in lon) / len(lon)})
+    return out
+
+
+def rev7_run(rows: list[dict]) -> dict:
+    """**直近7日の平均が、いま何回 続けて上がっているか**（`rev7_draws` の並び・API 0単位）。
+
+    **なぜ要るか**（2026-09-12 21:2x・optimizer・Opus）: §7 の収益の節の 覆る条件 (4) は
+    「直近7日の平均が **3周 続けて上がったら**、分子は『新しい本』ではなくチャンネル全体の回復の側
+    ＝ そのとき §1 の『量は毒』を数字で開け直すこと」と書いてありますが、
+    **その回数を数える口が在りませんでした**（`late_run`・`blind_run`・`reporting_empty_run`・
+    `outside_runs`・`views_streak` と同じ族の 6例目）。
+
+    **同じ回に、単位のほうが外れていることも分かりました。**
+    この平均が動くのは `cli analytics` を撃った回だけで、その口は **20時間 の門**（`cli.ANALYTICS_MIN_H`）
+    ＝ **1日1回**です。周は 1時間 弱 なので、**周で数えると引いた次の周に必ず「上がらなかった」が入り、
+    連は永久に 1 で切れます** —— つまり (4) は、書かれたままの単位では**引けない条件**でした
+    （2026-09-12 20:3x の「時刻 10:00」＝ 自分では引けない条件 の 2例目。**あちらは分母が割れない側**、
+    **こちらは分母が速すぎる側**）。**数える単位は「引き」**（＝ 新しい日が入った回）。
+
+    返り: `{"run", "gate", "drawn", "since", "draws", "split"}`。
+    `split` は **7日 が上がって 12日 が下がった**引き（窓から落ちた日のほうで上がった疑い）。
+
+    **覆る条件**: (1) `split` が立った引きで連が門に届いたら、**上がりは「回復」ではなく
+        窓が落とした日の側**かもしれない ＝ その回は 12日 の並びも一緒に置くこと
+        （**判定は `hourly` とオーナー**・§5）。
+    (2) `cli analytics` の門（20時間）が外れて 1周に 1回 引けるようになったら、単位は「引き」のまま
+        でよい（引き ＝ 周 になるだけ）。**周へ戻さないこと。**
+    (3) Analytics の遅れ（いま 2〜3日）が変わって、同じ引きで日が 2日 以上 進む回が出たら、
+        1引き ＝ 1日 ではなくなります ＝ そのときは日で数え直すこと。
+    """
+    draws = rev7_draws(rows)
+    run: int = 0
+    since: dt.datetime | None = None
+    split = False
+    for prev, cur in zip(draws, draws[1:]):
+        if cur["avg"] > prev["avg"]:
+            run += 1
+            since = since or cur["at"]
+            split = cur["avg_long"] < prev["avg_long"]
+        else:
+            run, since, split = 0, None, False
+    return {"run": run, "gate": REV7_RUN_GATE, "drawn": run >= REV7_RUN_GATE,
+            "since": since, "draws": draws, "split": split}
+
+
+def rev7_line(rows: list[dict]) -> str:
+    """`rev7_run` を1行にする（`trend` が毎周 印字する ＝ **§7 へ写さないこと**）。
+
+    **距離も一緒に出します** —— §7 の収益の節の「距離 101〜205倍」は**写した数**で、
+    書いた刻（2026-09-10）から動きます（写すと二重に古くなる ＝ §7「次に見る所」の形）。
+    """
+    r = rev7_run(rows)
+    draws = r["draws"]
+    if not draws:
+        return ("**収益の門までの距離（(4) の分子）: まだ 1度も引いていません** —— "
+                "`python -m studio.cli analytics`（**Data API 0単位**）")
+    d = draws[-1]
+
+    def _far(avg: float) -> str:
+        got = avg * REV_GOAL_DAYS
+        return f"{got:,.0f}回 ＝ {got / REV_GOAL_VIEWS * 100:.2f}%（**{REV_GOAL_VIEWS / got:.0f}倍**）"
+
+    head = (f"**収益の門までの距離**（基準2 ＝ ショート 直近90日 {REV_GOAL_VIEWS:,}回・"
+            f"台帳の `analytics_day` だけ・**Data API 0単位**・`trend.rev7_run`）: "
+            f"最後の引き **{d['at']:%m/%d %H:%M}**（日は {d['last_day']} まで）の"
+            f"**直近{d['n']}日 平均 {d['avg']:.1f}回/日** → 90日 {_far(d['avg'])}／"
+            f"**{d['n_long']}日 平均 {d['avg_long']:.1f}回/日** → 90日 {_far(d['avg_long'])}。")
+    if len(draws) < 2:
+        return head + "**上がり下がりは、引きが 2回 そろってから**（`rev7_run` の註）"
+    series = " → ".join(f"{x['avg']:.1f}" for x in draws[-4:])
+    tail = (f"**直近7日の平均の並び（引きごと・新しい 4つ まで）: {series}** ＝ "
+            f"**上がりが {r['run']}/{r['gate']}回 続いています**"
+            "（**単位は「引き」＝ 周ではありません** —— `analytics` は 20時間 の門で 1日1回 しか動かず、"
+            "周で数えると連は永久に 1 で切れます・`rev7_run` の註）。")
+    if r["split"]:
+        tail += (f"**ただし この引きは {REV7_DAYS}日 が上がって {REV7_LONG_DAYS}日 が下がっています** ＝ "
+                 "上がりは**窓から落ちた日**の側かもしれません（`rev7_run` の覆る条件 (1)）。")
+    if r["drawn"]:
+        tail += ("**＝ 引かれました。§7 の収益の節の 覆る条件 (4) の刻です** —— "
+                 "分子は「新しい本」ではなく**チャンネル全体の回復**の側 ＝ "
+                 "**§1 の「量は毒」を数字で開け直すこと**（**判定は `hourly` とオーナー**・§5。"
+                 "同じ回に (5)（長尺を開け直す理由）も読むこと）。")
+    else:
+        tail += "**判定は `hourly` とオーナー**（§5 ＝ optimizer は数を並べるまで）。"
+    return head + tail
 
 
 def curve_state(rows: list[dict]) -> dict:
