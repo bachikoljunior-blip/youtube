@@ -5196,6 +5196,12 @@ def pair_gap_line(rows: list[dict], at: dt.datetime | None = None) -> str:
             f"あと {MIN_PAIR_MIN - g['gap_min']:.1f}分 待って撃ち直すこと・いまは{where}")
 
 
+#: **重なりの窓の端が、刻み 1つ ぶん ずれうる幅**（時間）。`channel_steps` の `periods` の上端が
+#: 読めるあいだはそちらを使い、この数は**刻みが 1つも載っていない枠の代理**です
+#: （実測の周期 12.73／11.16時間・`channel_steps` の覆る条件 (1)）。
+CHANNEL_OVERLAP_EDGE_H = 13.0
+
+
 def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> dict:
     """**一括レポート（a3）の日ごとの再生を、台帳（`videos.list` の包絡）と並べる。API 0単位。**
 
@@ -5231,12 +5237,34 @@ def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> di
             "channel": {...}}`。`books` の 1点は
     `{"date", "end", "age_h", "cum", "led", "diff", "ratio"}`。
 
+    **チャンネルの側の 1日 は、そのままでは読めません**（2026-09-13 01:0x・optimizer・Opus。
+    **最初の重なりが立った回に足した**）: 総再生は**刻みで動く**ので、1日 の窓の差は
+    「その窓に何回 配られたか」で決まります。**とくに最初の刻みは `censored`**
+    （左端が台帳の先頭 ＝ 見始めた刻より前がどれだけ平らだったかは台帳に無い）で、
+    その +1,625 は長い窓の平均で **33〜40時間ぶん**でした（`channel_steps` の覆る条件 (1)・02:3x）
+    ＝ **その刻みを含む窓は、24時間 ぶんより多く抱えます。**
+    実測 20260910（09/10 16:00〜09/11 16:00 JST）: **報告 797 対 台帳 1,665（+109%）** ——
+    この 2.09倍 は「チャンネルが報告と別の物を数えている」ではなく、**窓が最初の刻みを含んだ**側です。
+    → `overlap[i]["censored"]` を立て、**読むのは `read`（`censored` でない日）の累計だけ**。
+    **許容は `periods` の上端 ÷ 日数**（端の誤りは刻み 1つ ぶんまでで、日を重ねると薄まる）。
+
+    `channel` は `{"overlap": [{"date","rep","led","censored"}], "read": [...],
+    "rep_sum", "led_sum", "ratio", "tol", "edge_h", "drawn", "first_step",
+    "next_day", "predict", "first_t", "last_t"}`。
+
     **覆る条件**: (1) 若い境目の差が **3本 続けて ±5% の中**に入ったら、複製の遅れは
         この帯では消えている ＝ `envelope` の手当てで足りる（この段を書き直すこと）。
     (2) **報告の側が台帳より低い**点が、数え直し（`recounts()` が挙げる本）**以外**で出たら、
         報告は「その日までの全部」ではない ＝ 次元の足し方（`views_by_day`）を先に疑うこと。
     (3) 穴が在る回は `cum` が低く出ます（`reporting.missing_days`）——
         穴が 1日 でも在る回は、差を「複製の遅れ」と読まないこと。
+    (4) **`read` の累計が許容（`tol`）を越えたら**（`drawn`）、チャンネルの `viewCount` は
+        報告と同じ物を数えていません ＝ §7 (m) の当て所ごと作り直すこと。
+        **越えるまでは、1日 の比で (m) を動かさないこと**（上の 20260910 がその 1例目）。
+    (5) 報告に出ない本（消した本・非公開に戻した本）の再生が総再生に残るなら、
+        差は**片側だけ**（台帳 ＞ 報告）に出ます ＝ `ratio` が**正の側だけ**で門を越え続けたら、
+        疑うのは刻みではなく**報告の側の本の数**（`reporting` の `latest_rows` の本数と
+        `yt` の本数を並べること）。
     """
     from . import reporting
 
@@ -5279,8 +5307,14 @@ def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> di
     # チャンネルの側（(m) を外から当てる口）——**重なる報告の日が要ります。**
     cs = _channel_rows(rows)
     env = _channel_env_points(cs)
-    ch: dict = {"overlap": [], "first_t": (env[0]["t0"] if env else None),
-                "last_t": (env[-1]["t1"] if env else None), "next_day": None, "predict": None}
+    st = channel_steps(rows)
+    # **左端が台帳の先頭の平らに掛かる窓は、読めません**（`channel_steps` の `censored` と同じ理由）
+    # —— その刻みは「見始めた刻より前のぶん」を抱えており、どの窓にも割り当てられません。
+    first_step = st["steps"][0]["t1"] if st["steps"] else None
+    ch: dict = {"overlap": [], "read": [], "first_t": (env[0]["t0"] if env else None),
+                "last_t": (env[-1]["t1"] if env else None), "next_day": None, "predict": None,
+                "first_step": first_step, "rep_sum": None, "led_sum": None,
+                "ratio": None, "tol": None, "edge_h": None, "drawn": False}
     if env:
         tot: dict[str, int] = {}
         for r in reporting.latest_rows(rep_rows):
@@ -5294,15 +5328,30 @@ def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> di
             b = max((p["env"] for p in env if p["t1"] <= end), default=None)
             if a is None or b is None:
                 continue
-            ch["overlap"].append({"date": d, "rep": tot.get(d, 0), "led": b - a})
-        # **まだ重ならないとき**: 台帳が丸ごと覆っている、いちばん早い報告の日と、その予測。
-        if not ch["overlap"] and last_day:
+            ch["overlap"].append({"date": d, "rep": tot.get(d, 0), "led": b - a,
+                                  "censored": first_step is None or start < first_step})
+        ch["read"] = [o for o in ch["overlap"] if not o["censored"]]
+        if ch["read"]:
+            rep_sum = sum(o["rep"] for o in ch["read"])
+            led_sum = sum(o["led"] for o in ch["read"])
+            # **許容は日数で縮みます** —— 窓の端の誤りは「刻み 1つ ぶん」までで、
+            # 日を重ねるとその 1つ が分母に薄まります（`periods` が空のあいだは代理）。
+            edge = st["periods"]["max"] or CHANNEL_OVERLAP_EDGE_H
+            tol = edge / (24.0 * len(ch["read"]))
+            ratio = (led_sum / rep_sum - 1.0) if rep_sum else None
+            ch.update({"rep_sum": rep_sum, "led_sum": led_sum, "ratio": ratio,
+                       "tol": tol, "edge_h": edge,
+                       "drawn": bool(ratio is not None and abs(ratio) > tol)})
+        # **次に読める日**（重なりが 1日も無い回と、重なりが全部 `censored` の回の両方で要ります）。
+        if last_day:
             nxt = (dt.datetime.strptime(last_day, "%Y%m%d").date() + dt.timedelta(days=1))
             while True:
                 k = nxt.strftime("%Y%m%d")
                 end = reporting.day_end_jst(k)
                 start = end - dt.timedelta(days=1)
-                if start >= env[0]["t0"] and end <= env[-1]["t1"]:
+                # **`censored` の窓は「次に読める日」に数えません**（上と同じ門）。
+                if (start >= env[0]["t0"] and end <= env[-1]["t1"]
+                        and (first_step is None or start >= first_step)):
                     a = max((p["env"] for p in env if p["t1"] <= start), default=None)
                     b = max((p["env"] for p in env if p["t1"] <= end), default=None)
                     if a is not None and b is not None:
@@ -5521,8 +5570,38 @@ def report_vs_ledger_line(rows: list[dict], rep_rows: list[dict] | None = None) 
                    "（**分母はいまの台帳なので、まだ伸びる本では上限**）。**判定は `hourly`**（§5）")
     ch = g["channel"]
     if ch["overlap"]:
-        chl = ("  **(m) を外から当てた**: " + "・".join(
-            f"{o['date'][4:]} 報告 {o['rep']}回 対 台帳 {o['led']}回" for o in ch["overlap"]))
+        seen = "・".join(
+            f"{o['date'][4:]} 報告 {o['rep']}回 対 台帳 {o['led']}回"
+            + ("（**読めない日**）" if o["censored"] else "")
+            for o in ch["overlap"])
+        nxt = ""
+        if ch["next_day"] is not None:
+            nxt = (f"**次に読めるのは報告の日 {ch['next_day']}**"
+                   f"（{reporting.day_end_jst(ch['next_day']) - dt.timedelta(days=1):%m/%d %H:%M}"
+                   f"〜{reporting.day_end_jst(ch['next_day']):%m/%d %H:%M} JST）で、"
+                   f"**台帳の側は いま {ch['predict']}回**。**その報告が置かれる見込みは"
+                   f" {reporting.day_end_jst(ch['next_day']) + dt.timedelta(hours=due['made_h']):%m/%d %H:%M}**")
+        if ch["read"]:
+            r = ch["ratio"]
+            chl = (f"  **(m) を外から当てた**: {seen} ＝ **読める日 {len(ch['read'])}日**・"
+                   f"累計 報告 **{ch['rep_sum']}回** 対 台帳 **{ch['led_sum']}回**"
+                   + (f"（**{r * 100:+.1f}%**・許容 **±{ch['tol'] * 100:.0f}%** ＝ "
+                      f"刻みの周期 {ch['edge_h']:.1f}時間 ÷ {len(ch['read'])}日）"
+                      if r is not None else "")
+                   + (" ＝ **引かれました。チャンネルの `viewCount` は、報告と同じ物を数えていません** ——"
+                      "§7 (m) の当て所ごと作り直すこと（`report_vs_ledger` の覆る条件 (4)）"
+                      if ch["drawn"] else
+                      " ＝ **同じ物を数えています**（許容の中 ＝ §7 (m) の読み方はこのまま）"))
+        else:
+            step = (f"{ch['first_step'].astimezone(JST):%m/%d %H:%M} JST"
+                    if ch["first_step"] else "（刻みがまだ 1つも載っていません）")
+            chl = ("  **(m) の重なりは立ちましたが、この日は読めません**: " + seen
+                   + f" —— 窓が**最初の刻み**（{step}・`censored`）を含みます ＝ "
+                     "台帳の側は**窓より前のぶん**を抱えており、"
+                     "**見始めた刻より前がどれだけ平らだったかは台帳に在りません**"
+                     "（`channel_steps` の覆る条件 (1)・02:3x の検算）。"
+                     "**この比を (m) の読み方を変える根拠に使わないこと。**"
+                   + ("  " + nxt if nxt else ""))
     elif ch["next_day"] is not None:
         chl = (f"  **(m) はまだ外から当てられません** —— 台帳の `channel` の行は"
                f" {ch['first_t']:%m/%d %H:%M} からで、報告の日は {g['last_day']} まで ＝ **重なりません**。"
