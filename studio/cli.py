@@ -245,8 +245,11 @@ def record_over(vid: str, live: int, over: int, age_h: float,
            over=over, age_h=round(age_h, 1), src=src)
 
 
-ZERO_PROBE_MIN_H = 3.0    # 台帳の中で「0回 のまま」を越えた本が 1本 も無い齢（§7「1回目が付いた齢」）
-ZERO_PROBE_MAX_H = 48.0   # ここを越えたら「配りが来ていない」ほうの話 ＝ 処理は関係ない
+# **門は `trend` に 1つ だけ置いてあります**（2026-09-12 19:3x に移した ——
+# `trend.zero_probe_line` が「門を越えたので印はもう増えません」と言う側にも同じ数が要り、
+# 2か所に置くと §5 教訓の形 7つ目（註と印字が食い違えば読まれるのは印字）を踏むため）。
+ZERO_PROBE_MIN_H = trend.ZERO_PROBE_MIN_H
+ZERO_PROBE_MAX_H = trend.ZERO_PROBE_MAX_H
 
 
 def zero_probe_target(pubs: list[dict], studio_ids: set[str], now: dt.datetime) -> str | None:
@@ -271,7 +274,8 @@ def zero_probe_target(pubs: list[dict], studio_ids: set[str], now: dt.datetime) 
     **門**（1周 1単位 を越えないための形）:
       * studio の本だけ（旧作りの 0回 は診る先が無い ＝ §8）
       * `views == 0` かつ `views_absent` でない（欄が無い側は `yt.views_of` の口）
-      * 齢 `ZERO_PROBE_MIN_H` 〜 `ZERO_PROBE_MAX_H`（台帳の 4本 は 齢 5.0h までに 1回目が付いた・§7）
+      * 齢 `ZERO_PROBE_MIN_H` 〜 `ZERO_PROBE_MAX_H`（**門は `trend` に 1つ**・下は §7「1回目が付いた齢」・
+        上は `zero_start` の下敷きの上端。**2026-09-12 19:3x に 48h → 78h**・下の覆る条件 (4)）
       * **いちばん若い 1本 だけ**（0回 の本が 2本 並んでも 1単位 のまま）
 
     **同じ周に `hourly` が別の側から同じ問いを撃っています**（14:3x・§14）——
@@ -282,6 +286,22 @@ def zero_probe_target(pubs: list[dict], studio_ids: set[str], now: dt.datetime) 
     processingStatus / rejectionReason**（拒否の理由・処理が途中か）。
     重なるのは「再生できない」形だけで、**「処理が途中」「拒否の理由の名前」は公開ページに出ません。**
     **ただし 0単位 の側のほうが安いので、下の (2) で 2つが 7本 一度も食い違わなければ、外すのはこちら側です。**
+
+    **覆る条件 (4)（2026-09-12 19:3x・optimizer・Opus。門を 48h → 78h に広げた）**:
+    48h の側の註は「ここを越えたら**配りが来ていない**ほうの話 ＝ 処理は関係ない」でしたが、
+    **それは、この口が確かめるはずの事そのもの**でした。実測（この回・台帳だけ・API 0単位）:
+    5本目 `2YZ_4FXC-XI` は **09/12 10:00 JST（齢 48.0h）に門を出て**、最後の印は **齢 47.1h**。
+    ところが §7 (c) が判定の刻に置いたのは **09/13 16:00（齢 77.6h）**で、
+    §7「形」決め (5) の覆る条件 (5-1)（`zero_probe` が `ok` 以外を返したら中央値から外してよい）は、
+    **その刻には 10時間 以上 前から黙っている口**に掛かっていました
+    ＝ **どこも数えていない覆る条件**（`channel_video_delta` 09/10 16:4x と同じ族）。
+    上を `zero_start` の下敷きの上端（**77.6h** ＝ B の初点の最も遅い1本）に合わせ、
+    **78.0h** に広げます（`views_absent` と同じで、丸めは下敷きの側から引いた数）。
+    **値段は変わりません**（1周 1単位・いちばん若い 1本 だけ）。
+    **覆る条件**: (4-a) 齢 78h を越えた 0回 の本で「配りの側ではない」印が出たら、
+    上は下敷きではなく**齢では切れない** ＝ そのときは「0回 のあいだ毎周」へ移すこと。
+    (4-b) `zero_start` の下敷きが引き直されて上端が動いたら、この数もそこから引き直すこと
+    （**下敷きが正本** —— ここで手で決めないこと）。derivation は JOURNAL 09/12 19:3x。
 
     **覆る条件**: (1) この門が立った本の `readiness` が **`ok` でなかった回が 1度でも出たら**、
     それは「0回」を読む前に必ず見る数 ＝ `trend` の側（`first_view`・`hold`）にも印を回すこと。

@@ -2766,6 +2766,30 @@ def over_lag_line(rows: list[dict]) -> str:
     return body
 
 
+#: **`cli.zero_probe_target` の齢の門は、ここに 1つ だけ置く**（`cli` が読む）。
+#: 下: 台帳の中で「0回 のまま」を越えた本が 1本 も無い齢（§7「1回目が付いた齢」）。
+#: 上: `scripts/zero_start.py` の下敷きの上端（B の初点の最も遅い1本 **77.6h**）を丸めた数。
+#: **2026-09-12 19:3x に 48.0 → 78.0**（derivation と覆る条件は `cli.zero_probe_target` の (4)）。
+ZERO_PROBE_MIN_H = 3.0
+ZERO_PROBE_MAX_H = 78.0
+
+
+def zero_books_now(rows: list[dict]) -> dict[str, float]:
+    """**いま 0回 のままの、こちらの本**（id → いまの齢）。台帳だけ・API 0単位。
+
+    `first_view` の `zero` と同じ本を返しますが、**`flats` を通しません**
+    （この行は「門が開いているか」しか要らないので、境目の計算を持ち込まない）。
+    """
+    mine = ours(rows)
+    out: dict[str, float] = {}
+    for vid, pts in series(rows).items():
+        if vid not in mine or not pts:
+            continue
+        if max(int(p["views"]) for p in pts) == 0:
+            out[vid] = float(pts[-1]["age_h"])
+    return out
+
+
 def zero_probes(rows: list[dict]) -> dict:
     """**公開ずみで 0回 の本の処理の状態**（台帳 `zero_probe`）を数える。API 0単位。
 
@@ -2776,15 +2800,32 @@ def zero_probes(rows: list[dict]) -> dict:
     **`ok` は「0回 が本物」の意味**（処理は通っている ＝ 出ていない側ではない）。
     **`ok` でない行は、その本の 0回 を「配りが来ていない」と読んではいけない**という印です。
 
+    **`closed` は「門（齢 `ZERO_PROBE_MAX_H`）を越えた 0回 の本」**
+    （2026-09-12 19:3x・optimizer・Opus。**この口は齢で黙ります** ——
+    黙ったことを言わないと、`ok` の件数が**いまの齢の話**として読まれます。
+    実測: 5本目 `2YZ_4FXC-XI` の最後の印は 齢 47.1h で、そのあと 10時間 1件も増えていないのに、
+    §7「いまの数」は毎周 この件数を「0回 は本物」の根拠として写していました）。
+
     **覆る条件**: (1) `bad` が 1件でも出たら `cli.zero_probe_target` の (1) ＝
     `first_view`・`hold` の側にも印を回すこと（0回 を読む前に必ず見る数になる）。
     (2) `books`（撃った本の数）が 7本 を越えて `bad` が 0 なら、この口は外してよい ——
     残るのは `hourly` が撃っている公開ページの側（**API 0単位**・§14 14:3x）。
+    (3) `closed` に本が入ったまま、その本を §7 の判定（「形」の 決め (5)）に使う回が来たら、
+    **その本について引けるのは「門を出るまでに `ok` だけだった」まで**で、
+    覆る条件 (5-1) はもう引けません。**門を出た後の齢で `ok` 以外が要るなら、
+    `ZERO_PROBE_MAX_H` を上げるのではなく「0回 のあいだ毎周」へ移すこと**
+    （`cli.zero_probe_target` の (4-a)）。
     """
-    ps = [r for r in rows if r.get("event") == "zero_probe"]
+    ps = sorted([r for r in rows if r.get("event") == "zero_probe"], key=_at)
     bad = [r for r in ps if not r.get("ok")]
+    zero_now = zero_books_now(rows)
+    # **門を越えた 0回 の本**（＝ この本の印はもう増えない）。**齢は台帳の最後の点**。
+    closed = [{"id": vid, "age_h": age} for vid, age in sorted(zero_now.items())
+              if age > ZERO_PROBE_MAX_H]
+    last = ps[-1] if ps else None
     return {"n": len(ps), "books": len({r.get("id") for r in ps}),
-            "ok": len(ps) - len(bad), "bad": bad}
+            "ok": len(ps) - len(bad), "bad": bad,
+            "last": last, "closed": closed}
 
 
 def zero_probe_line(rows: list[dict]) -> str:
@@ -2805,6 +2846,14 @@ def zero_probe_line(rows: list[dict]) -> str:
     else:
         body += ("  **`ok` だけ ＝ 0回 は本物**（出ていない側ではない）。"
                  f"**7本 過ぎて 1度も `ok` 以外が出なければ、この口は外してよい**（いま {z['books']}本）。")
+    if z["closed"]:
+        body += ("  !! **門（齢 " + f"{ZERO_PROBE_MAX_H:.0f}h）を越えた 0回 の本 {len(z['closed'])}本**: "
+                 + "・".join(f"{c['id']} 齢 {c['age_h']:.1f}h" for c in z["closed"])
+                 + " ＝ **この本の印はもう増えません**")
+        if z["last"]:
+            body += f"（最後の印は {_at(z['last']).strftime('%m/%d %H:%M')}）"
+        body += ("。**上の件数を「いまの齢でも `ok`」と読まないこと**"
+                 "（`zero_probes` の覆る条件 (3)）。")
     return body
 
 
