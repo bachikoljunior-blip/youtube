@@ -4599,6 +4599,72 @@ def reporting_due(rows: list[dict], last_day: str | None,
     return out
 
 
+#: **見込みを過ぎて撃ったのに報告の日が進まなかった回**が、この数だけ続いたら
+#: 疑うのは報告ではなく `made_h` の見積り（`reporting_due` の覆る条件 (1)）。
+REPORT_EMPTY_RUN_GATE = 3
+
+
+def reporting_empty_run(rows: list[dict]) -> dict:
+    """**見込みを過ぎて撃ったのに空だった回が、いま何回 続いているか**（台帳の `reported` だけ・API 0単位）。
+
+    **なぜ要るか**（2026-09-12 18:4x・optimizer・Opus）: `reporting_due` の覆る条件 (1) は
+    「見込みを過ぎて撃ったのに空だった回が **3回** 続いたら、遅れているのは報告ではなく
+    `made_h` の見積り」と書いてありますが、**その回数を数える口が在りませんでした** ＝
+    §7 (m) の `blind_run`（2026-09-12 16:0x）と**同じ族**で、
+    「N回 続いたら」と書きながら、N を数える物が無い側です。
+
+    **述語は 1つ**（§7 (m) 14:1x「`blind == 0` の意味は 3つ」の教訓）:
+    **前の行の報告の日から引いた見込みを過ぎて撃ち、それでも報告の日が進まなかった回**。
+    `rows == 0`（積んだ行が 0）では**数えません** —— 同じ日の報告を撃ち直した回も 0行 になり、
+    「報告が置かれていない」と見分けが付きません。
+
+    返り: `{"run", "gate", "drawn", "since", "day"}`。`since` は いまの連なりの 1回目の刻。
+
+    **覆る条件**: (1) 連なりが門に届いたのに `made_h` を最大へ移しても当たらなかったら、
+        遅れているのは見積りではなく **報告そのもの**（Reporting API の側）＝
+        `reporting.freshness` を撃って、置かれている報告の日を直に見ること。
+    (2) 報告の日が 2日 以上 飛ぶ枠が出たら、ここも `reporting.missing_days` の側から
+        次の日を取ること（`reporting_due` の覆る条件 (3) と同じ穴）。
+    """
+    from . import reporting
+
+    fired = [r for r in rows if r.get("event") == "reported"
+             and r.get("id") == reporting.REPORT_TYPE]
+    run, since, day = 0, None, None
+    for prev, cur in zip(fired, fired[1:]):
+        base = prev.get("last_day")
+        at = _at(cur)
+        if not base or at is None:
+            run, since, day = 0, None, None
+            continue
+        nxt = (dt.datetime.strptime(base, "%Y%m%d").date() + dt.timedelta(days=1))
+        key = nxt.strftime("%Y%m%d")
+        made = cur.get("made_h") or prev.get("made_h") or REPORT_MADE_H
+        eta = reporting.day_end_jst(key) + dt.timedelta(hours=float(made))
+        if at >= eta and cur.get("last_day") == base:
+            run += 1
+            since = since or at
+            day = key
+        else:
+            run, since, day = 0, None, None
+    return {"run": run, "gate": REPORT_EMPTY_RUN_GATE,
+            "drawn": run >= REPORT_EMPTY_RUN_GATE, "since": since, "day": day}
+
+
+def reporting_empty_words(rows: list[dict]) -> str:
+    """`reporting_empty_run` の句（**`reporting_due_words` の中だけで使う** ＝ 出どころは 1か所）。"""
+    e = reporting_empty_run(rows)
+    if not e["run"]:
+        return ""
+    head = (f"・**空振り {e['run']}/{e['gate']}回**"
+            f"（{e['since'].astimezone(JST):%m/%d %H:%M} から・`trend.reporting_empty_run`）")
+    if not e["drawn"]:
+        return head
+    return (head + f" ＝ **引かれました。報告の日 {e['day']} の遅れは `made_h` の見積りの側です** ——"
+            "`REPORT_MADE_H`（最後の行の値）ではなく**台帳の `made_h` の最大**へ移すこと"
+            "（`reporting_due` の覆る条件 (1)）")
+
+
 def reporting_due_words(rows: list[dict], last_day: str | None,
                         now: dt.datetime | None = None) -> str:
     """`reporting_due` の 1行（**句の出どころは 1か所** ＝ ここ）。"""
@@ -4620,10 +4686,11 @@ def reporting_due_words(rows: list[dict], last_day: str | None,
         return (f"  **`reporting` は見込みの後に撃って、まだ空でした** —— {last}・"
                 f"報告の日 **{d['next_day']}** は遅れている側 ＝ "
                 f"**撃ち直すのは {d['last_at'].astimezone(JST) + dt.timedelta(hours=REPORT_RETRY_H):%m/%d %H:%M} JST から**"
-                f"（`trend.reporting_due` の覆る条件 (1)）")
+                f"{reporting_empty_words(rows)}")
     return (f"  **この回に `python -m studio.cli reporting` を撃つこと** —— {last}・"
             f"報告の日 **{d['next_day']}** の見込み {eta:%m/%d %H:%M} JST を "
-            f"**{-gap:.1f}時間 過ぎています**（**Data API 0単位**・3つ目の枠・`trend.reporting_due`）")
+            f"**{-gap:.1f}時間 過ぎています**（**Data API 0単位**・3つ目の枠・`trend.reporting_due`）"
+            f"{reporting_empty_words(rows)}")
 
 
 def report_vs_ledger_line(rows: list[dict], rep_rows: list[dict] | None = None) -> str:
