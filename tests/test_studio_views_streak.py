@@ -1,7 +1,7 @@
 """`trend.views_streak` / `views_streak_line`
 —— **§7 末尾「1日1本」の覆る条件（500回 が 7本 続いたら 2本/日 を試す）を、本で数える口**。
 
-2026-09-12 21:0x JST・optimizer・Opus。
+2026-09-12 20:3x JST・optimizer・Opus。
 
 **族の 5例目**（`late_run` 04:3x／`blind_run` 16:0x／`reporting_empty_run` 18:4x／
 `outside_runs` 20:0x）—— 「N本 続いたら」と覆る条件に書きながら、**N を数える物が無い**。
@@ -13,7 +13,7 @@
 `run_if_growing` が門に届かなければ、**その周に門が引かれる目は在りません**。
 
 **陽性対照つき**（§5 の教訓の形 3つ目 ＝ **落ちるまで撃つ**・`.pyc` を毎回 消してから・11つ目）。
-この回に動かして確かめた数は JOURNAL 21:0x。
+この回に動かして確かめた数は JOURNAL 20:3x。
 """
 import datetime as dt
 
@@ -52,7 +52,7 @@ def test_越えた本を新しいほうから数える():
     s = trend.views_streak(rows)
     # **新しいほうから** C・D・E の 3本。
     # **古いほうから数えると 1本**（A だけ）・**全部の「越えた本」を数えると 4本** ＝
-    # この 3 は、向きを間違えた側とも、連ではない側とも別の数です（陽性対照 JOURNAL 21:0x）。
+    # この 3 は、向きを間違えた側とも、連ではない側とも別の数です（陽性対照 JOURNAL 20:3x）。
     assert s["run"] == 3
     assert s["n"] == 5
     assert s["broke"]["id"] == "B"

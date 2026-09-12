@@ -2920,7 +2920,7 @@ def views_absent_line(rows: list[dict]) -> str:
               "**`first_view`・`hold`・§7 (c) は、この本の 0 を数から外すこと。**")
 
 
-#: §7 末尾「1日1本」の覆る条件の門（2026-09-12 21:0x・optimizer・Opus が数える口を足した）。
+#: §7 末尾「1日1本」の覆る条件の門（2026-09-12 20:3x・optimizer・Opus が数える口を足した）。
 #: 「**新しい作りで 7本 続けて 500回 を越えたら**、2本/日 を 3日 試して 1本あたりが落ちないか見る」。
 DAILY_VIEWS_GATE = 500
 DAILY_RUN_NEED = 7
@@ -2929,7 +2929,7 @@ DAILY_RUN_NEED = 7
 def views_streak(rows: list[dict]) -> dict:
     """**新しいほうから、いまの再生が 500回 を越えている本が何本 続いているか**（包絡・API 0単位）。
 
-    **なぜ（2026-09-12 21:0x JST・optimizer・Opus）**: §7 末尾の「1日1本」は 09/05 から
+    **なぜ（2026-09-12 20:3x JST・optimizer・Opus）**: §7 末尾の「1日1本」は 09/05 から
     「**新しい作りで 7本 続けて 500回 を越えたら** 2本/日 を 3日 試す」と書いていますが、
     **その連を数える物が 1つも在りませんでした** —— `late_run`・`blind_run`・
     `reporting_empty_run`・`outside_runs` と**同じ族の 5例目**（「N本 続いたら」と
