@@ -1613,12 +1613,16 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    数は `next_round.gap_over_gate` / `wake_sources` の行で読むこと
     伸びの門        **この回は 1つも引かれていません**（4塊 の合計・塊ごと・§0〜§6・§8・直近の1本 とも）。
                    **数は `python scripts/method_growth.py --split` を撃って読むこと。**
-    検査           `pytest -m live` **赤 0**（09:4x に撃った。**+3件** ＝ `test_pace_window_roll_floor` 6 → 9）。
+    検査           `pytest -m live` **赤 0**（09:5x に撃った。**+4件** ＝ `test_pace_window_roll_floor` 6 → 9・
+                   `test_parent_wake_placed` 13 → 14）。
                    **旧 `src/` の赤 2件**（`test_ceiling_drift` / `test_form_record`）は
                    **2026-09-09 08:5x から前のまま**・§8 のとおり触っていません（**追わないこと**）
-    この回の赤     **0件**。**仕事は (a) measure → trend ＋ (b) §7（数の側は 0件 引かれず）
-                   ＋ (e) 親の手続きの欠陥 1件**（借りた床の**名乗り**が 3つ の口のうち 1つ にしか
-                   送られていなかった ＝ derivation は JOURNAL 09:3x）。
+    この回の赤     **1件 出て、直しました**（`test_parent_wake_placed` の実物の見張りが**初めて**落ちた ——
+                   落としたのは親ではなく、検査だけが `WAKE_SAME_SEC` と違う幅で「届き」を数えていた側。
+                   `wake_latency_minutes` の (3) は取り消したまま・derivation は JOURNAL 09:4x）。
+                   **仕事は (a) measure → trend ＋ (b) §7（数の側は 0件 引かれず）
+                   ＋ (e) 親の手続きの欠陥 2件**（借りた床の**名乗り**が 3つ の口のうち 1つ にしか
+                   送られていなかった ＝ JOURNAL 09:3x ／ 上の門の幅 ＝ 同 09:4x）。
                    **(d) 16/16・焼き直し待ち 0本。(f) §16 は `hourly` の持ち場 ＝ 1文字も触っていません。**
                    **`comments` も `analytics` も撃っていません**（新着 0件／20時間 の門に届かない）。
                    **Data API は `measure`＋`status`＋`zero_probe` のぶんだけ・外の引きは 0回**

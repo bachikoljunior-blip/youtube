@@ -87,6 +87,44 @@ def test_台帳に_wake_placed_が残る(tmp_path, monkeypatch):
     assert row["wake_placed"] is False
 
 
+def _deliveries(ats: list[dt.datetime]) -> list[dt.datetime]:
+    """**「何回 届いたか」は、行の数ではなく `WAKE_SAME_SEC` で数える**
+    （2026-09-12 09:4x・optimizer・Opus。**この検査が初めて落ちた回に直した**）。
+
+    `WAKE_SAME_SEC`（120秒）は `next_round` 自身が置いている
+    **「同じ届きと見なす幅」**です。下の検査はそれを使わず**行をそのまま数えて**いたので、
+    **門が 2か所 に別々の幅で書かれて**いました（§5 ——「門は 1か所」）。
+
+    **実物**（この回に落ちた 1件・狙い先 2026-09-12 00:04Z）: 届いたとされた 2行 は
+    **00:05:46 の GO** と **その 25秒 後の 00:06:11 の WAIT**（`前の周の開始から 0分`）で、
+    **25秒 ＝ 同じ届きの幅の中**です。これは 04:5x の註が既に名指ししている
+    「**親は起こしと心拍の両方で起きるので、間隔が明けていない回は必ず 2度 起きる**」
+    ＝ **起こされすぎ**の側で、**置きすぎ**（(3) が見ようとしている物）ではありません。
+    ＝ **このままでは、覆る条件 (3) は「心拍が在ること」で引かれます。**
+
+    **覆る条件**: 幅の外（120秒 より離れた）2回目の届きが出たら、この畳みでも落ちます
+    ＝ **そのときが本当に (3) を書き直す回**（陽性対照は下の検査）。
+    `WAKE_SAME_SEC` を動かす回は、こちらも一緒に動きます（同じ定数を読む）。
+    """
+    out: list[dt.datetime] = []
+    for a in sorted(ats):
+        if out and (a - out[-1]).total_seconds() <= next_round.WAKE_SAME_SEC:
+            continue
+        out.append(a)
+    return out
+
+
+def test_届きは行ではなく_WAKE_SAME_SEC_で数える_陽性対照つき():
+    """**畳みが効くことと、幅の外なら落ちることの両方**を見る（§5 教訓の形 3つ目）。"""
+    base = dt.datetime(2026, 9, 12, 0, 5, tzinfo=dt.timezone.utc)
+    近い = [base, base + dt.timedelta(seconds=25)]
+    assert len(_deliveries(近い)) == 1, "同じ届きの幅の中は 1回"
+    遠い = [base, base + dt.timedelta(seconds=next_round.WAKE_SAME_SEC + 1)]
+    assert len(_deliveries(遠い)) == 2, (
+        "**陽性対照** —— 幅の外の 2回目は落ちないこと（落ちたら上の検査は何も見張らない）")
+    assert _deliveries([]) == []
+
+
 def test_本物の台帳では_重なりが二重の届きになっていない_これが前提の当のもの():
     """**04:0x の覆る条件 (3) の前提**（親が 2本 置いた）**が外れていること**を、実物で見る。
 
@@ -115,7 +153,7 @@ def test_本物の台帳では_重なりが二重の届きになっていない_
         # 狙い先の ±3分 に**届いた**行（置いた行そのものは数えない）
         landed = [a for a in ats
                   if abs((a - key).total_seconds()) <= 180 and a not in srcs]
-        if len(landed) >= 2:
+        if len(_deliveries(landed)) >= 2:
             twice += 1
     assert twice == 0, (
         f"同じ狙い先へ 2回 届いた回が {twice} 件 出ました ＝ 親が本当に起こしを"
