@@ -29,7 +29,10 @@ from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
 IMAGES = ROOT / "assets" / "images"
 ORDERS = ROOT / "data" / "image_orders"
-MAX_SECONDS = 95.0   # Shorts は 3分 まで。分かる説明に要る長さを優先し、実測で締める（docs/METHOD.md）
+# Shorts は 3分 まで。分かる説明に要る長さを優先し、実測で締める（docs/METHOD.md）。
+# **正本は `script.MAX_SECONDS` の1か所**（2026-09-12 13:4x・hourly・Opus が移した ——
+# 字数の門（`script.chars_gate`）がこの秒数から引くようになり、写しを持つと 2か所 がずれます。§5 の教訓 7つ目）。
+MAX_SECONDS = script.MAX_SECONDS
 
 
 def image_for(vid: str) -> Path | None:
