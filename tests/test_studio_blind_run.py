@@ -156,3 +156,73 @@ def test_伸びた本が0本の周は_連なりに数えない() -> None:
     assert b["marks"][-1]["grew"] == 0
     assert b["marks"][-1]["confirmed"] == 0            # 訊けてはいる（`None` ではない）
     assert b["run"] == 3, b["run"]                     # その周は飛ばし、手前の 3周 だけ
+
+
+# ---------------------------------------------------------------------------
+# **2026-09-12 17:3x・optimizer・Opus** —— 16:0x が 3つ の連なりを**数え**ながら、
+# 印字したのは `run`（eq）だけで、しかも **`blind` が立っている枝**にしか置いていなかった。
+# **§7 (m) が名指ししている連なりは `false_run`**（`proves_alive is False` ＝
+# 「平らの中の伸びが 0 の回」）で、その枝は 1字も言っていませんでした。
+# 実物: 16:37 の周で `proves_alive` が**初めて `False`** になり（1/3周）、
+# **その最初の1周を、印字は誰にも見せませんでした**（教訓の形 7つ目の 3例目）。
+#
+# **陽性対照**（壊したら落ちるまで撃つ・教訓の形 3つ目。`.pyc` を消してから撃った）:
+# `channel_line` の `blind == 0` の枝から `blind_run_words` を外すと **1件**／
+# 短い行から外すと **1件**／`kind` を無視して いつも eq を言う形にすると **2件**／
+# `false_span_h` を返さない形にすると **1件**。
+# ---------------------------------------------------------------------------
+
+
+def _false_laps() -> list[dict]:
+    """**測れて、伸びた本が 0本 だった周**（`proves_alive is False`）を、いちばん新しい周に置く。
+
+    平らの頭は 13:00・遅れ 2.8時間 の後に読みが **2点**（16:00・16:5x）在るので
+    抑え `min(late)` は下の点 ＝ **訊けてはいる**。それでいて本は窓の中で 1回も伸びない
+    ＝ `grew` 0・`blind` 0・`confirmed` 0 ＝ `proves_alive is False`。
+    """
+    rows = [_ch(h, 84781) for h in (10.0, 11.0, 12.0)]
+    rows.append(_ch(13.0, 86406))                      # 刻み ＝ 平らの頭
+    rows += [_ch(h, 86406) for h in (14.0, 15.0, 16.0, 16.9)]
+    for h in (12.5, 14.0, 16.0, 16.9):
+        rows.append(_vid(h, "newone", 176))            # 窓の中で 1回も伸びない
+    return rows
+
+
+def test_false_run_は_proves_alive_が_False_の周を数える() -> None:
+    b = trend.blind_run(_false_laps())
+    assert b["marks"][-1]["proves_alive"] is False
+    assert b["false_run"] >= 1 and b["false_need"] == 3
+    assert b["false_drawn"] is False
+    assert "false_span_h" in b                          # 連なりの時間も返すこと
+
+
+def test_blind_の枝と_false_の枝は_別の連なりを言う() -> None:
+    """**`kind` を無視して いつも eq を言う形**にすると、この検査が落ちます（実測 3件 のうちの1つ）。"""
+    eq = trend.blind_run_words(_blind_laps(), kind="eq")
+    fa = trend.blind_run_words(_false_laps(), kind="false")
+    assert "blind == grew" in eq and "proves_alive" not in eq
+    assert "proves_alive is False" in fa and "blind == grew" not in fa
+
+
+def test_伸び0の枝の印字が連なりを言う() -> None:
+    """**覆る条件を註に書いたら、その条件を読む印字も一緒に作ること**（§5 教訓の形 7つ目）。
+
+    §7 (m) の「平らの中の伸びが 0 の回」は **この枝**で立ちます —— full も短い行も、
+    **同じ口から**連なりを言うこと（`channel_line_short` の覆る条件 (2)）。
+    """
+    rows = _false_laps()
+    line = trend.channel_line(rows)
+    assert "確かめられた本の伸びは 0回" in line
+    assert "proves_alive is False" in line and "blind_run" in line
+    short = trend.channel_line_short(rows)
+    assert "proves_alive is False" in short and "blind_run" in short
+
+
+def test_1周の連なりに_0時間_と言わないこと() -> None:
+    """span は いちばん古い周から いまの周まで ＝ **1周 なら必ず 0**。時間は 2周 から。"""
+    b = trend.blind_run(_false_laps())
+    words = trend.blind_run_words(_false_laps(), kind="false")
+    if b["false_run"] == 1:
+        assert "その連なりは" not in words
+    else:
+        assert "その連なりは" in words

@@ -3416,7 +3416,9 @@ def blind_run(rows: list[dict], limit: int = 40) -> dict:
     laps = _channel_laps(cs)
     empty = {"laps": 0, "run": 0, "need": BLIND_EQ_RUN_NEED, "drawn": False,
              "false_run": 0, "false_need": BLIND_FALSE_RUN_NEED, "false_drawn": False,
+             "false_span_h": None, "false_skipped": 0,
              "zero_run": 0, "zero_need": BLIND_ZERO_RUN_NEED, "zero_drawn": False,
+             "zero_span_h": None, "zero_skipped": 0,
              "span_h": None, "skipped": 0, "marks": []}
     if not laps:
         return empty
@@ -3462,35 +3464,72 @@ def blind_run(rows: list[dict], limit: int = 40) -> dict:
         return n, span, skipped
 
     run, span, skipped = _count("eq")
-    false_run, _, _ = _count("false")
-    zero_run, _, _ = _count("zero")
+    false_run, false_span, false_skipped = _count("false")
+    zero_run, zero_span, zero_skipped = _count("zero")
     return {"laps": len(marks), "run": run, "need": BLIND_EQ_RUN_NEED,
             "drawn": run >= BLIND_EQ_RUN_NEED,
             "false_run": false_run, "false_need": BLIND_FALSE_RUN_NEED,
             "false_drawn": false_run >= BLIND_FALSE_RUN_NEED,
+            "false_span_h": false_span, "false_skipped": false_skipped,
             "zero_run": zero_run, "zero_need": BLIND_ZERO_RUN_NEED,
             "zero_drawn": zero_run >= BLIND_ZERO_RUN_NEED,
+            "zero_span_h": zero_span, "zero_skipped": zero_skipped,
             "span_h": span, "skipped": skipped, "marks": marks}
 
 
-def blind_run_words(rows: list[dict], limit: int = 40, short: bool = False) -> str:
+def blind_run_words(rows: list[dict], limit: int = 40, short: bool = False,
+                    kind: str = "eq") -> str:
     """`blind_run` を 1文にする（**句の出どころは 1か所** ——`channel_line` と
     `channel_line_short` は、どちらもこの文を使うこと。§5 の教訓の形 7つ目
     「覆る条件を註に書いたら、その条件を読む印字も一緒に作ること」）。
 
-    `short=True` は短い行むけの短い形で、**数は同じ口から出ます**（文だけが短い）。"""
+    `short=True` は短い行むけの短い形で、**数は同じ口から出ます**（文だけが短い）。
+
+    **`kind` は、どの連なりを言うかです**（2026-09-12 17:3x・optimizer・Opus に足した）:
+
+    * `"eq"`  —— `blind == grew`（伸びた本が 1本 も確かめられない周）。**`blind` の在る枝**が言う。
+    * `"false"` —— `proves_alive is False`（**測れて、伸びた本が 0本 だった周**）。
+      **`blind == 0` の枝**が言う ＝ §7 (m) の「平らの中の伸びが 0 の回」そのもの。
+
+    **なぜ `kind` が要ったか**（**この回に実物で踏んだ**）: 16:0x は 3つ の連なりを**数え**ながら、
+    印字したのは `run`（eq）だけで、しかも `channel_line` の **`blind` が立っている枝**にしか
+    置いていませんでした。**§7 (m) が名指ししている連なりは `false_run` のほう**で、
+    その枝（`flat_vid_confirmed == 0` かつ `blind == 0`）は**1字も言っていません**。
+    16:37 の周で `proves_alive` が **初めて `False`** になり（`false_run` 1/3）、
+    **その最初の1周を、印字は誰にも見せませんでした** ——
+    ＝ **教訓の形 7つ目の 3例目**（`ceiling_rate` 11:2x・`fable_rolled` 20:5x と同じ形で、
+    **今度は「数える口を足した回そのもの」が作った**）。
+
+    **覆る条件**: (1) `zero_run` を読む枝が要る回が来たら、`kind="zero"` を足すこと
+    （いまは門 7周 で、当てる枝が無い ＝ 足すと言わない行が増えるだけ）。
+    (2) 枝と `kind` の対応が 2度 ずれたら、`kind` を呼ぶ側で選ぶのをやめ、
+    `blind_run_words` が `flat_video_gain` を自分で引いて枝ごと決めること。"""
     b = blind_run(rows, limit)
     if not b["laps"]:
         return ""
+    if kind == "false":
+        n, need, drawn = b["false_run"], b["false_need"], b["false_drawn"]
+        span, label = b["false_span_h"], "`proves_alive is False`"
+        long_label = "`proves_alive is False`（測れて、伸びた本が 0本 だった周）"
+    else:
+        n, need, drawn = b["run"], b["need"], b["drawn"]
+        span, label = b["span_h"], "`blind == grew`"
+        long_label = "`blind == grew`（伸びた本が 1本 も確かめられない周）"
     if short:
-        return (f"（**`blind == grew` は {b['run']}/{b['need']}周**"
-                + ("・**引かれました**" if b["drawn"] else "")
+        return (f"（**{label} は {n}/{need}周**"
+                + ("・**引かれました**" if drawn else "")
                 + "・`trend.blind_run`）")
-    out = (f" **`blind == grew`（伸びた本が 1本 も確かめられない周）は これで **{b['run']}周** 続いています**"
-           f"（門 {b['need']}周・`trend.blind_run`）")
-    if b["span_h"] is not None and b["run"]:
-        out += f"・その連なりは **{b['span_h']:.1f}時間**"
-    if b["drawn"]:
+    out = (f" **{long_label}は これで **{n}周** 続いています**"
+           f"（門 {need}周・`trend.blind_run`）")
+    # **1周 の連なりに「0.0時間」と言わないこと**（span は いちばん古い周から いまの周まで ＝
+    # 1周 なら必ず 0。**時間で読むのは 2周 以上 から**・2026-09-12 17:3x）
+    if span is not None and n >= 2:
+        out += f"・その連なりは **{span:.1f}時間**"
+    if drawn and kind == "false":
+        out += ("。**引かれました ＝ そのとき初めて §7 (m) の「平らの中の伸びが 0」を"
+                "数に使ってよい**（`flat_video_gain` の `blind` の側の覆る条件）——"
+                "**それでも手本の挟み（時間の門）は別に見ること**")
+    elif drawn:
         out += ("。**引かれました ＝ まず `measure` の回数を見ること**"
                 "（1周 2回 撃てば `blind` は自然に落ちる・`blind_run` の覆る条件 (1)）——"
                 "**それでも落ちないときに初めて `REPLICA_LAG_H` を疑うこと**")
@@ -4086,8 +4125,12 @@ def channel_line(rows: list[dict]) -> str:
                      # **連なりは、その周の 1点 では読めません**（`blind_run` の註・2026-09-12 16:0x）
                      + blind_run_words(rows))
         elif g["flat_vid_confirmed"] == 0:
+            # **ここが §7 (m) の「平らの中の伸びが 0 の回」そのもの**（`proves_alive is False`）＝
+            # **連なりを言うのはこの枝**（2026-09-12 17:3x に足した ——16:0x は `blind` の枝にしか
+            # 置いておらず、`false_run` が 1 になった最初の周を 1字も言わなかった・`blind_run_words` の註）
             flat += ("**この平らの中で確かめられた本の伸びは 0回 です**（`trend.flat_video_gain`）——"
-                     "**「だから止まった」とは読めません**（`measure` が触るのは 19本 だけ・向きは片側）。")
+                     "**「だから止まった」とは読めません**（`measure` が触るのは 19本 だけ・向きは片側）。"
+                     + blind_run_words(rows, kind="false"))
         elif g["flat_vid_confirmed"] is None:
             # **3つ目の意味 ＝ そもそも訊けていない**（2026-09-12 14:1x・optimizer・Opus。**実物で踏んだ**）。
             # 平らが `REPLICA_LAG_H` より短い窓では `channel_video_delta` が
@@ -4273,7 +4316,9 @@ def channel_line_short(rows: list[dict]) -> str:
                         + blind_run_words(rows, short=True))
         elif g["flat_vid_confirmed"] == 0:
             verdict += ("（**平らの中の本の伸びは 0回** ＝ 向きは片側 —— "
-                        "「だから止まった」ではない・`trend.flat_video_gain`）")
+                        "「だから止まった」ではない・`trend.flat_video_gain`）"
+                        # **短い行も同じ口から言うこと**（`channel_line_short` の覆る条件 (2)）
+                        + blind_run_words(rows, short=True, kind="false"))
     elif g["flat_laps"] >= CHANNEL_FLAT_LAPS:
         # **門は周で引けても、読みは引けません**（`_flat_span_h` の註・full と同じ口）
         # **門は挟みの上端**（2026-09-11 11:3x・`channel_growth` の決め）
