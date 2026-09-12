@@ -4688,3 +4688,14 @@
 {"views": 214, "likes": 0, "comments": 0, "age_h": 158.0, "title": "iDeCoの節税が一番減る年収は660万台 #Shorts", "n_values": 1, "at": "2026-09-13T00:01:00+09:00", "id": "lywTMXD6WDM", "event": "measured"}
 {"views": 156, "likes": 0, "comments": 0, "age_h": 159.0, "title": "【小規模企業共済】240か月と241か月で税額はいくら違う？ #Shorts", "n_values": 1, "at": "2026-09-13T00:01:00+09:00", "id": "qyVdpAoT_40", "event": "measured"}
 {"views": 179, "likes": 0, "comments": 0, "age_h": 161.0, "title": "iDeCoの効きが落ちる年収は91点中11点 #Shorts", "n_values": 1, "at": "2026-09-13T00:01:00+09:00", "id": "OwFjo4kLA9U", "event": "measured"}
+{"subs": 28, "views": 87438, "videos": 271, "at": "2026-09-12T23:58:07+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-12T23:58:08+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"seconds": 90.9, "image": true, "chars": 500, "scenes": [10.2, 6.6, 6.9, 4.4, 8.7, 6.7, 6.5, 6.7, 5.0, 7.9, 6.0, 6.9, 8.3], "sig": "1:efaff5bb5285", "at": "2026-09-13T00:00:36+09:00", "id": "2026-09-13-fuka-nenkin-400en", "event": "built"}
+{"video_id": "Edmce94ZVKs", "publish_at": "2026-09-13T10:00+09:00", "replaced": null, "title": "付加年金 月400円たすと1か月ごとに毎年200円ふえる 2年ではらった金額とおなじ #Shorts", "at": "2026-09-13T00:01:19+09:00", "id": "2026-09-13-fuka-nenkin-400en", "event": "scheduled"}
+{"subs": 28, "views": 87438, "videos": 271, "at": "2026-09-13T00:01:32+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": false, "upload": "uploaded", "processing": "processing", "failure": null, "meta_drift": ["tags"], "at": "2026-09-13T00:01:32+09:00", "id": "Edmce94ZVKs", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-13T00:01:32+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"video_id": "Edmce94ZVKs", "what": "tags", "reason": "上げた直後の readiness が tags を 1つも返さなかった（題・説明欄は一致・meta_drift [\"tags\"]）。直前の 2本（mja40GJ-GHU 09/11 00:26・4l3DDCLIRxg 09/12 00:15）は上げた 1分後の ready_checked が meta_drift [] ＝ この型は 3本目で初めて出た。処理は processed/succeeded になっても戻らず、yt.update_meta（50単位・ID も予約もそのまま）で 8語 とも入った", "units": 50, "at": "2026-09-13T00:03:57+09:00", "id": "2026-09-13-fuka-nenkin-400en", "event": "meta_updated"}
+{"subs": 28, "views": 87438, "videos": 271, "at": "2026-09-13T00:04:07+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-13T00:04:07+09:00", "id": "Edmce94ZVKs", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-13T00:04:07+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
