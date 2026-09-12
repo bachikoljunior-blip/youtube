@@ -4933,3 +4933,6 @@
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-13T07:19:36+09:00", "id": "Edmce94ZVKs", "event": "ready_checked"}
 {"views_live": 955, "views_ledger": 945, "over": 10, "age_h": 45.3, "src": "status", "at": "2026-09-13T07:19:36+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-13T07:19:36+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"subs": 28, "views": 87458, "videos": 271, "at": "2026-09-13T08:16:39+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-13T08:16:39+09:00", "id": "Edmce94ZVKs", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-13T08:16:39+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
