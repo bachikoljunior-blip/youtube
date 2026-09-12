@@ -5241,8 +5241,11 @@ def ready_line(rows: list[dict], now: dt.datetime | None = None) -> str:
         return (f"**公開前の本の処理の印: 0件**（直近 {q['within_h']:.0f}時間・台帳 `ready_checked`）—— "
                 "**この 0 は「落ちた本が無い」ではなく「公開前の本がこの窓に無かった」**です"
                 "（`cmd_status` は 10:00 前の本を持つ周にしか撃ちません）。")
-    body = (f"**公開前の本の処理の印: {q['n']}件・{q['books']}本** —— "
-            f"**`ok` {q['ok']}件 / `ok` でない {len(q['bad'])}件**（台帳 `ready_checked`・追加 0単位）。")
+    body = (f"**公開前の本の処理の印: {q['n']}件・{q['books']}本**"
+            f"（**直近 {q['within_h']:.0f}時間**・台帳 `ready_checked`・追加 0単位）—— "
+            f"**`ok` {q['ok']}件 / `ok` でない {len(q['bad'])}件**。"
+            "**この件数は窓の中だけなので、周をまたいで減ります** ＝ "
+            "**減りを「台帳が行を落とした」と読まないこと**（`ready_checks` の `within_h`）。")
     if q["bad"]:
         body += ("  !! " + "・".join(f"{r.get('id')} {str(r.get('at'))[:16]} "
                                      f"upload {r.get('upload')}／processing {r.get('processing')}／"

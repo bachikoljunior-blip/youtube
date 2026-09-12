@@ -195,3 +195,27 @@ def test_陽性対照_いまもを窓の中の1行から読むと直った本が
     naive = [r for r in rows if r.get("meta_drift")]        # 壊した形
     assert len(naive) == 1 and q["drift_now"] == [], (
         "本ごとのいちばん新しい行で読めていない ＝ 直った本が「いまも」に残る")
+
+
+def test_line_says_its_window_so_a_drop_is_not_read_as_a_lost_row():
+    """**印字は窓を言うこと**（2026-09-13 05:3x・optimizer・Opus が踏んで足した）。
+
+    実物: §7「いまの数」が 04:3x に **印 62件**、05:2x に **印 61件** と写した。
+    台帳 `ready_checked` は追記しかされないので、**読む側には「行が消えた」に見えます**
+    —— 実際は `within_h`（48時間）の窓から古い行が落ちただけ。
+    0件 の側の文だけが「直近 48時間」と言っており、**件数の在る側は言っていませんでした**。
+
+    **陽性対照つき**（窓を言わない印字なら落ちる）。
+    """
+    rows = [_row("2026-09-10T09:00:00+09:00"), _row("2026-09-10T10:00:00+09:00")]
+    line = trend.ready_line(rows, now=NOW)
+    assert "直近 48時間" in line
+    assert "減ります" in line
+
+
+def test_positive_control_window_is_the_reason_the_count_drops():
+    """**陽性対照**: 同じ台帳でも、時計が進むと件数は減る（窓 ＝ 減る理由）。"""
+    rows = [_row("2026-09-10T09:00:00+09:00"), _row("2026-09-10T10:00:00+09:00")]
+    later = NOW + dt.timedelta(hours=47.5)
+    assert trend.ready_checks(rows, now=NOW)["n"] == 2
+    assert trend.ready_checks(rows, now=later)["n"] < 2
