@@ -5125,8 +5125,24 @@ def ready_checks(rows: list[dict], within_h: float = 48.0,
             rs.append(r)
     bad = [r for r in rs if not r.get("ok")]
     drift = [r for r in rs if r.get("meta_drift")]
+    # **「1度でも」と「いまも」は別の問い**（2026-09-13 00:3x・optimizer・Opus が踏んで足した）。
+    # 上の `bad` / `drift` は**窓の中に 1度でも在ったか**で、これは意図どおりです
+    # （落ちていた周が在ったことは、あとで `ok` になっても消えない）。
+    # **ただし印字は「いま」を言っていました** —— `drift` の文は
+    # 「`yt.update_meta` を撃たない限り古いまま出ます」＝ **現在形**で、
+    # 直したあとも 48時間 鳴り続け、次の回に**もう1度 `update_meta` を撃たせます**（API を使う側）。
+    # 実物: `Edmce94ZVKs` 00:01:32 `meta_drift:["tags"]` → 00:04:07 `meta_drift:[]`（`hourly` が直した）。
+    # ＝ **本ごとのいちばん新しい行**を別に返し、印字はそちらで現在形を言う（§5 教訓の形 7つ目）。
+    latest: dict = {}
+    for r in rs:
+        vid = r.get("id")
+        if vid not in latest or str(r.get("at")) > str(latest[vid].get("at")):
+            latest[vid] = r
+    bad_now = [r for r in latest.values() if not r.get("ok")]
+    drift_now = [r for r in latest.values() if r.get("meta_drift")]
     return {"n": len(rs), "books": len({r.get("id") for r in rs}),
             "ok": len(rs) - len(bad), "bad": bad, "drift": drift,
+            "latest": latest, "bad_now": bad_now, "drift_now": drift_now,
             "within_h": within_h}
 
 
@@ -5146,10 +5162,23 @@ def ready_line(rows: list[dict], now: dt.datetime | None = None) -> str:
                                      f"upload {r.get('upload')}／processing {r.get('processing')}／"
                                      f"失敗 {r.get('failure')}" for r in q["bad"][:3])
                  + " ＝ **公開の刻を疑う前に、この行を先に見ること**（`cli.record_ready` の覆る条件 (1)）。")
+        # **「1度でも」と「いまも」を分けて言うこと**（`ready_checks` の 00:3x の註）
+        body += (" **いちばん新しい印では `ok` でない本 "
+                 f"{len(q['bad_now'])}本**"
+                 + ("（＝ **いまは直っています**。上の名指しは「落ちていた周が在った」ことの記録）。"
+                    if not q["bad_now"] else
+                    f"（{'・'.join(str(r.get('id')) for r in q['bad_now'][:3])} ＝ **いまも落ちています**）。"))
     if q["drift"]:
-        body += (f"  !! **台本と食い違ったまま印が付いた回 {len(q['drift'])}件**"
-                 f"（{'・'.join(sorted({x for r in q['drift'] for x in (r.get('meta_drift') or [])}))}）"
-                 " ＝ `yt.update_meta` を撃たない限り古いまま出ます。")
+        body += (f"  !! **台本と食い違った印が付いた回 {len(q['drift'])}件**"
+                 f"（{'・'.join(sorted({x for r in q['drift'] for x in (r.get('meta_drift') or [])}))}）")
+        if q["drift_now"]:
+            body += (" ＝ **いまも食い違っています**（本 "
+                     + "・".join(str(r.get("id")) for r in q["drift_now"][:3])
+                     + "）—— `yt.update_meta` を撃たない限り古いまま出ます。")
+        else:
+            body += (" ＝ **いちばん新しい印では 0件 ＝ もう直っています**"
+                     "（`yt.update_meta` を撃たないこと。この数は「出口を抜けた回が在った」ことの記録で、"
+                     "直した回そのものは `trend.meta_fixes` が数えます）。")
     return body
 
 

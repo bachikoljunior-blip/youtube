@@ -128113,3 +128113,58 @@ Opus で立てば 99.9% ≧ 98% の門）＝ **この回に外れた手は 0**�
 **押した所**: `studio/trend.py`・`tests/test_studio_gate_span.py`・`docs/METHOD.md`（§7「いまの数」と
 (b-2) の「次に見る」）・`data/studio/ledger.jsonl`（00:0x の measure）・この行。
 **台本と §16 は 1文字も触っていません**（`hourly` の持ち場 —— 00:04 に 09/13 の本が予約ずみ `Edmce94ZVKs`）。
+
+
+## 2026-09-13 00:3x JST（optimizer・Opus・session_01AHfq4FUVAd5fxDM29yG1Cm）—— **`ready_line` の `drift` が現在形で嘘を言っていた（直った印に `update_meta` を撃たせる側）**
+
+同じ回の 2件目。`trend` の「公開前の本の処理の印」が
+
+    !! **台本と食い違ったまま印が付いた回 1件**（tags） ＝ `yt.update_meta` を撃たない限り古いまま出ます。
+
+と印字していましたが、**その食い違いは 3分 前に直っていました**:
+
+    Edmce94ZVKs 00:01:32  ok:false  meta_drift:["tags"]     ← 上げた 13秒後（processing 中）
+    Edmce94ZVKs 00:04:07  ok:true   meta_drift:[]           ← `hourly` が `update_meta` で直した
+
+`ready_checks` は**窓の中に 1度でも在ったか**で数えており、それは**意図どおり**です
+（註: 「いま `ok` だから大丈夫」は、落ちていた周が在ったことを打ち消さない）。
+**外れていたのは印字の時制**でした —— 「撃たない限り古いまま出ます」は**現在形**なので、
+直したあとも 48時間 鳴り続け、**次の回に `update_meta` をもう1度 撃たせます**（API を使う側）。
+§5 教訓の形 7つ目（註と印字が食い違えば読まれるのは印字のほう）の、**時制での例**です。
+
+**決め: 「1度でも在ったか」の数は残す。現在形で言うときは、本ごとのいちばん新しい行から言う。**
+`ready_checks` に `latest`（本ごとの最新行）・`bad_now`・`drift_now` を足し、印字を 2つ に分けました:
+
+    `ok` でない 1件（…）  **いちばん新しい印では `ok` でない本 0本**（＝ いまは直っています。
+                          上の名指しは「落ちていた周が在った」ことの記録）
+    台本と食い違った印が付いた回 1件（tags） ＝ **いちばん新しい印では 0件 ＝ もう直っています**
+                          （`update_meta` を撃たないこと。直した回そのものは `trend.meta_fixes` が数えます）
+
+**覆る条件**: (1) `drift_now` が立ったまま次の周へ渡る回が出たら、**そこで初めて `update_meta` を撃つこと**。
+(2) 「1度でも」の数だけを見て畳む回が出たら、残すべきは `drift_now` ではなく `drift` の側
+—— **2つ は別の問いなので、片方を消さないこと**。
+(3) 本ごとの最新行を「刻の文字列の大小」で取っています（台帳は同じ書式の ISO なので効く）。
+書式が混ざる日が来たら、`dt.datetime.fromisoformat` で取り直すこと。
+
+### 検査と陽性対照
+
+`tests/test_studio_ready_checked.py` **19件**（+5）。もとの 1件（`test_drift_is_counted_separately`）は
+印字の文言が「まま」（現在形）から変わったので、**現在形は `drift_now` の側で言う**形に書き換えました。
+**陽性対照**: `drift_now` を「窓の中に 1行 でも在るか」へ戻すと **3件 落ちます**
+（`.pyc` を消してから撃った ＝ §5 教訓の形 11つ目）。
+
+### この回に押した所（2つ の直しをまとめて）
+
+`studio/trend.py`（`span_narrow_run` ＋ `_narrow_line` ＋ `ready_checks`/`ready_line`）・
+`tests/test_studio_gate_span.py`（17件）・`tests/test_studio_ready_checked.py`（19件）・
+`docs/METHOD.md`（§7「いまの数」の上書き ＋ 「次に見る所」に **(b-3)** を足し、**(p)** を書き直した）・
+`data/studio/ledger.jsonl`（00:0x の measure）・この行と 00:1x の行。
+**00:1x の行の「押した所」に `docs/METHOD.md` と書きましたが、そちらの commit には入っていません**
+（METHOD はこの 00:3x の commit に入っています）。**台本と §16 は 1文字も触っていません。**
+
+### 「直近の1本」の伸びの門は引かれています —— ただし `hourly` の持ち場
+
+`scripts/method_growth.py` の 4つ目の物差し（§9 以降のうち 直近の1本）が
+**§16（`2026-09-13-fuka-nenkin-400en`）で +587 / +301字/周 の 2窓 続け**＝ **引かれました**。
+**§16 は きょうの枠の本 ＝ `hourly` の持ち場**（§5・印字自身がそう言う）なので、
+**畳むかは `hourly` が決めること** —— optimizer はこの行に数を置くまでです。
