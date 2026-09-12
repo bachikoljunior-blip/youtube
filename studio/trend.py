@@ -1168,6 +1168,24 @@ def first_view(rows: list[dict]) -> dict:
     **この行は「当たり外れ」を言いません**（判定は `hourly`・§5）。言うのは
     「1回目が付いた齢は、これまで何時間の側だったか」だけです。
 
+    **決め（2026-09-12 11:1x JST・optimizer・Opus）: 「0回 のまま門を越えた」に数えるのは、
+    いちばん深い齢が `FIRST_VIEW_EARLY_H` を越えた本だけ**（`through_gate`）。
+    **まだ門の手前の本は `zero_early` に置き、`zero` にも `zero_short` にも入れません。**
+    **踏んだ形**: 09/12 11:0x に `zero_short` が **2本**（`2YZ_4FXC-XI` 49.0h と
+    **その朝 10:00 に公開した `4l3DDCLIRxg` 1.0h**）と出ました。§7「形」の 決め (5-2) は
+    「**0回 の Shorts が 2本目 出たら** 配りの側へ移る」で、その分子は §7 (l-2) のとおり
+    **この `zero_short` の数**です ＝ **公開 1時間 の本が、形の判定を 1つ 引き倒す所**でした
+    （1回目が付いた 5本 は**どれも 齢 5.0h まで**・門は 6.0h ＝ 1.0h は「来なかった」ではない）。
+    **これは毎日 10:00〜16:00 JST に出ます**（きょうの本が門の手前に居るあいだ）。
+    **門は 1か所**（`FIRST_VIEW_EARLY_H` ＝ 入口の門と同じ数）。
+    **数は落としません** —— 門の手前の本も列に 1行 出し、印字が「まだ門の手前」と言います
+    （§5 教訓の形 7つ目: 註だけに書くと、読まれるのは印字のほう）。
+    **覆る条件**: (5) 門の手前で 0回 の本が、門を越える前に伸びた回が **3本** 続いたら、
+    門の手前の行そのものが要らない（印字から外す）。(6) 逆に、門の手前で 0回 だった本が
+    門を越えても 0回 のままだった回が **3本** 続いたら、門を待つ値打ちが無い ＝ 門を
+    `latest_first`（実測の上端・いま 5.0h）まで下げてよい。(7) `FIRST_VIEW_EARLY_H` を
+    動かす回は、`zero` の数がその回に変わるので、**§7「形」の (5-2) を一緒に読み直すこと**。
+
     **覆る条件**: (1) **`zero` の本（0回 のまま門を越えた本）が、そのあと伸びた回が
     1度でも出たら**、この行は「まだ来ていない」以上のことを言えない ＝ 印字だけ残して
     §7 の判定から外すこと。(2) 早い点を持つ本が **8本** を越えたら、挟みではなく
@@ -1203,6 +1221,9 @@ def first_view(rows: list[dict]) -> dict:
             "first_age_h": vals[0][0], "first_views": vals[0][1],
             "lo": lo, "hi": hi,
             "zero_through_h": max(zeros) if (zeros and hi is None) else None,
+            # **門を越えたか**（いちばん深い齢が門より深いか）——「0回 のまま門を越えた」と
+            # 「まだ門の手前」を分ける唯一の欄（2026-09-12 11:1x・下の註）。
+            "through_gate": vals[-1][0] > FIRST_VIEW_EARLY_H,
             "views": ceiling(good),
             "day": published_at(pts).strftime("%m/%d"),
             # 尺（**分からない本は None** ＝ 「短い」と決めつけない・`durations` の註）。
@@ -1211,9 +1232,13 @@ def first_view(rows: list[dict]) -> dict:
         })
     early.sort(key=lambda b: (b["day"], b["id"]))
     got = [b for b in early if b["hi"] is not None]
-    zero = [b for b in early if b["hi"] is None]
+    zero = [b for b in early if b["hi"] is None and b["through_gate"]]
+    early_zero = [b for b in early if b["hi"] is None and not b["through_gate"]]
     spans = [b["hi"] - b["lo"] for b in got if b["lo"] is not None]
     return {"books": early, "got": got, "zero": zero, "late": late,
+            # **まだ門の手前で 0回 の本**（きょう出た本がここに居ます）——
+            # **`zero` にも `zero_short` にも入れません**（下の註）。
+            "zero_early": early_zero,
             # **0回 の列は尺で割って返す**（混ぜたまま数えると「配りが止まった」に見える・`durations` の註）。
             "zero_short": [b for b in zero if b["long"] is False],
             "zero_long": [b for b in zero if b["long"] is True],
@@ -1246,7 +1271,11 @@ def first_view_lines(rows: list[dict]) -> list[str]:
            f'挟みで読む ＝ 測りは 42分 間隔・`trend.first_view` の註）:']
     for b in f["books"]:
         mark = "新" if b["new"] else "旧"
-        if b["hi"] is None:
+        if b["hi"] is None and not b["through_gate"]:
+            got = (f'**0回 のまま {b["zero_through_h"]:.1f}h**'
+                   f'（**まだ門の手前** ＝ 門 {f["gate_h"]:.0f}h。'
+                   f'**「配りが来なかった」に数えないこと**）{_dur_mark(b)}')
+        elif b["hi"] is None:
             got = f'**0回 のまま {b["zero_through_h"]:.1f}h**{_dur_mark(b)}'
         elif b["lo"] is None:
             got = (f'初点 {b["first_age_h"]:.1f}h で既に {b["first_views"]}回'
@@ -1264,8 +1293,18 @@ def first_view_lines(rows: list[dict]) -> list[str]:
     warn = ('**この列を尺を混ぜたまま数えないこと** —— 長尺の 0回 は §1 の「長尺は 1〜25回」で'
             '説明が付きます（`trend.durations` の註・`scripts/zero_start` が 09/11 08:0x に'
             '同じ混ざりを直した側）。') if f["zero_long"] else ""
+    early_note = ''
+    if f["zero_early"]:
+        upper = (f'1回目が付いた本は どれも 齢 {f["latest_first"]:.1f}h までに付いており'
+                 f'（門 {f["gate_h"]:.0f}h）、' if f["latest_first"] is not None else '')
+        early_note = (f'**まだ門の手前で 0回 の本 {len(f["zero_early"])}本**'
+                      f'（{"・".join(b["id"] for b in f["zero_early"])}）は、'
+                      f'**この数にも `zero_short` にも入れていません** —— {upper}'
+                      f'**門の手前の 0回 は「来なかった」ではありません**'
+                      f'（§7「形」の 決め (5-2) の分子はこの `zero_short` ＝ '
+                      f'`first_view` の註 2026-09-12 11:1x）。')
     out.append(
-        f'{tail}**0回 のまま門を越えたのは {len(f["zero"])}本**{split}。{warn}'
+        f'{tail}**0回 のまま門を越えたのは {len(f["zero"])}本**{split}。{early_note}{warn}'
         f'**この行は当たり外れを言いません** —— 判定は `hourly`（§5）。'
         f'n が小さいので**点で読まないこと**（覆る条件は `trend.first_view` の註）。'
         f'初点が {f["gate_h"]:.0f}h より遅い本 {f["late"]}本 は、この問いに答えられないので外してあります。')

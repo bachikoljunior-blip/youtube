@@ -69,9 +69,13 @@ def test_台帳の側が新しい口として勝つ():
 # --- (2) 本が尺を持つ・決めつけない ------------------------------------------
 
 def test_0回の本は尺で割られる(monkeypatch):
-    rows = [_m("short", 0.3, 0), _m("short", 3.9, 0),
-            _m("long", 0.4, 0), _m("long", 5.0, 0),
-            _m("nodur", 0.5, 0), _m("nodur", 4.0, 0)]
+    # **齢は門から引く**（§5 教訓の形 6つ目）—— 門の手前の本は `zero` に入りません
+    # （`first_view` の註 2026-09-12 11:1x）。ここで見たいのは尺の割りなので、
+    # 3本 とも門を越えさせる。
+    over = trend.FIRST_VIEW_EARLY_H + 1.0
+    rows = [_m("short", 0.3, 0), _m("short", over, 0),
+            _m("long", 0.4, 0), _m("long", over + 1.0, 0),
+            _m("nodur", 0.5, 0), _m("nodur", over, 0)]
     monkeypatch.setattr(trend, "durations",
                         lambda r, uploaded=None: {"short": (90.0, "台帳 built"),
                                                   "long": (1580.0, "uploaded.jsonl")})
@@ -91,8 +95,9 @@ def test_0回の本は尺で割られる(monkeypatch):
 # --- (3) 印字（陽性対照つき） -------------------------------------------------
 
 def test_印字が長尺を下敷きの外と名指しする(monkeypatch):
-    rows = [_m("short", 0.3, 0), _m("short", 3.9, 0),
-            _m("long", 0.4, 0), _m("long", 5.0, 0)]
+    over = trend.FIRST_VIEW_EARLY_H + 1.0
+    rows = [_m("short", 0.3, 0), _m("short", over, 0),
+            _m("long", 0.4, 0), _m("long", over + 1.0, 0)]
     monkeypatch.setattr(trend, "durations",
                         lambda r, uploaded=None: {"short": (90.0, "台帳 built"),
                                                   "long": (1580.0, "uploaded.jsonl")})

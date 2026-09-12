@@ -34,12 +34,36 @@ def test_初点が既に正なら下端は無い():
 
 
 def test_0のままなら上端が無く何時間まで0かを持つ():
-    rows = [_m("a", 0.3, 0), _m("a", 2.5, 0), _m("a", 3.9, 0)]
+    # **齢は門（`FIRST_VIEW_EARLY_H`）から引く** —— 定数を動かした回に、この検査が
+    # 「きょうの状態」を不変条件として持たないため（§5 教訓の形 6つ目）。
+    last = trend.FIRST_VIEW_EARLY_H + 1.0
+    rows = [_m("a", 0.3, 0), _m("a", 2.5, 0), _m("a", last, 0)]
     f = trend.first_view(rows)
     b = f["books"][0]
-    assert b["hi"] is None and b["zero_through_h"] == 3.9
+    assert b["hi"] is None and b["zero_through_h"] == last
     assert [x["id"] for x in f["zero"]] == ["a"]
+    assert f["zero_early"] == []
     assert f["latest_first"] is None
+
+
+def test_門の手前で0回の本はzeroにもzero_shortにも入らない(monkeypatch):
+    """**陽性対照**: `through_gate` の絞り（`zero` / `zero_early` の分け）を外すと、
+    `young` が `zero_short` に入って 2本 になり、この検査が落ちます
+    （2026-09-12 11:1x に撃って確かめた ＝ §7「形」の 決め (5-2) の分子）。
+    """
+    monkeypatch.setattr(trend, "durations",
+                        lambda r, uploaded=None: {"old": (90.0, "台帳 built"),
+                                                  "young": (90.0, "台帳 built")})
+    gate = trend.FIRST_VIEW_EARLY_H
+    rows = [_m("old", 1.0, 0), _m("old", gate + 43.0, 0),          # 門を越えて 0回
+            _m("young", 0.1, 0), _m("young", gate - 5.0, 0)]       # まだ門の手前
+    f = trend.first_view(rows)
+    assert [b["id"] for b in f["zero"]] == ["old"]
+    assert [b["id"] for b in f["zero_short"]] == ["old"]
+    assert [b["id"] for b in f["zero_early"]] == ["young"]
+    out = "\n".join(trend.first_view_lines(rows))
+    assert "**0回 のまま門を越えたのは 1本**" in out
+    assert "まだ門の手前" in out and "young" in out
 
 
 def test_privateへ戻した本は数えない():
