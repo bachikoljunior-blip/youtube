@@ -1436,11 +1436,60 @@ def fable_ration(now: datetime | None = None,
             "per_sub": per_sub, "subs_since": subs, "gauge": g}
 
 
-def fable_ration_words(r: dict | None) -> str:
-    """`fable_ration()` を1行にする（印字は 1か所・§5 教訓の形 7つ目）。"""
+def hourly_stood(now: datetime | None = None, within_min: float = 30.0) -> dict | None:
+    """**この周に実際に立った `hourly` の模型**（`data/model_choice.jsonl` の末尾から）。
+
+    2026-09-12 23:1x・hourly・Fable。**親は周を記録してからサブを立て、サブの本文（【枠】の段）は
+    その記録の あと に撃たれる**（`docs/trigger_parent.md` 第1節）ので、`fable_ration()` の
+    「fable N体」は**この周の 1体 を数えに含み**、境目の周では記録と逆の答えを印字します
+    （実測 23:01: 記録は「fable 10体 ＝ 9.3% ＝ 線の下 → Fable」で立て、本文は
+    「fable 11体 ＝ 10.2% ＝ 線の上 → この周は Opus」＝ **立ったのは Fable**）。
+    §7 (e-3) は「別の問い」と書いていますが、**印字の側は「この周は」と言い切っていました**
+    （§5 教訓の形 7つ目 ＝ 註と印字が食い違えば読まれるのは印字）。
+
+    `within_min` より古い行は「この周の記録」ではないので None（前の周の模型を運ばない）。
+    **覆る条件**: (1) 親が記録より先に立てる形へ戻ったら（`test_parent_record_before_spawn`）、
+    この口は要らない（`fable_ration_words` の `stood` を渡さない）。(2) 1周に `hourly` の行が
+    2行 積まれる形が出たら、末尾ではなく `round` で引くこと（`data/rounds.jsonl`）。
+    """
+    now = now or datetime.now(timezone.utc)
+    if not MODEL_CHOICE_FILE.exists():
+        return None
+    try:
+        lines = MODEL_CHOICE_FILE.read_text(encoding="utf-8").splitlines()
+    except Exception:                                          # noqa: BLE001
+        return None
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not str(row.get("work_kind", "")).startswith("hourly"):
+            continue
+        at = _parse_iso(row.get("at"))
+        if not at or (now - at).total_seconds() > within_min * 60:
+            return None
+        return {"model": row.get("model"), "at": at}
+    return None
+
+
+def fable_ration_words(r: dict | None, stood: dict | None = None) -> str:
+    """`fable_ration()` を1行にする（印字は 1か所・§5 教訓の形 7つ目）。
+
+    `stood`（`hourly_stood()` の返り）を渡すと、**決めた側ではなく印字の側**の字になる ——
+    「この周は」ではなく「次に立てる」と言い、**この周に実際に立った模型を並べる**
+    （決める側 `role_model()` は渡さない ＝ そこでは「この周は」が本当）。
+    """
     if not r:
         return ""
-    verdict = "**線の上 → この周は Opus**" if r["over"] else "線の下 → Fable"
+    if stood:
+        verdict = ("**線の上 → 次に立てる `hourly` は Opus**" if r["over"]
+                   else "線の下 → 次に立てる `hourly` は Fable")
+    else:
+        verdict = "**線の上 → この周は Opus**" if r["over"] else "線の下 → Fable"
     head = ("**枠は戻っています**（新しい枠の頭 0% から数え直し・画面を待たない）" if r.get("rolled")
             else f"目盛り {r['gauge']['pct']:.0f}%")
     return (f"配りの線 {r['line']:.1f}%（枠の {r['elapsed_h']:.0f}/{FABLE_WINDOW_HOURS:.0f}時間）"
@@ -1448,7 +1497,11 @@ def fable_ration_words(r: dict | None) -> str:
             f"（{head} ＋ fable {r['subs_since']}体 × {r['per_sub']:.2f}%）"
             f" ＝ {verdict}"
             f"（**Fable を枠の終わりまで持たせる** ＝ オーナー 09/11 19:4x・09/03 07:3x・"
-            f"`quota.fable_ration`）")
+            f"`quota.fable_ration`）"
+            + (f"。**この周に立った `hourly` は {stood['model']}**"
+               f"（記録 {stood['at'].astimezone(JST):%H:%M} JST・`data/model_choice.jsonl`。"
+               f"この行は周を記録した**あと**に撃たれ、その 1体 を数えに含む ＝ 境目の周では"
+               f"記録と答えが割れる・`quota.hourly_stood`）" if stood else ""))
 
 
 def role_model(model: str, why: str, est_pct: float | None, role: str | None,
