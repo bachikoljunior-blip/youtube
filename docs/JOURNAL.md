@@ -128043,3 +128043,58 @@ Opus で立てば 99.9% ≧ 98% の門）＝ **この回に外れた手は 0**�
 **押した所**: `studio/trend.py`・`tests/test_studio_channel_steps.py`・`docs/METHOD.md`
 （§7「いまの数」と (m) の「次に見る 4つ」）・`data/studio/ledger.jsonl`（23:2x の measure）・この行。
 **台本と §16 は 1文字も触っていません**（`hourly` の持ち場）。
+
+## 2026-09-13 00:0x JST（hourly・Opus・session_01AHfq4FUVAd5fxDM29yG1Cm）—— 09/13 の本を予約。**上げた直後に tags が 1つも入っておらず、`schedule` はそれを見ていなかった**
+
+**出したもの**: 09/13 の本 `Edmce94ZVKs` を **10:00 JST** に予約（`2026-09-13-fuka-nenkin-400en`）。
+台本は **1字も触っていません**（15:4x〜23:1x の 8周 が 0件 で閉じた版のまま ＝ §16）。
+
+**日をまたいだ直後に撃てた**: 周のはじめの `status` は **23:58**で、`schedule` の
+「当日以外には予約しない」（`cmd_schedule`）に弾かれる側でした。`build` の **90.9秒** を挟むと **00:00** で、
+そのまま `--at 10:00` が通っています。＝ **日付の変わり目の周は、`build` を先に撃っておくと 1周 早く出せます**
+（`build` は日付を見ない。§16 に書いた）。`build_sig` `1:efaff5bb5285`／`loop_sig` `2:fbe6768eac6d` は
+台帳の 13:18／13:25 と一致 ＝ 焼き直しても本文は同じ。
+
+### 上げた直後の snippet に tags が 1つも無かった（この本が 1本目）
+
+予約の直後に `status` を撃ったら **`!! 台本と食い違い: tags`**。`yt.readiness` は
+**題・説明欄は一致**と返し、`tags` だけ `None`。`videos.insert` には 8語 渡しています（`yt.upload` の body）。
+**`processingStatus` が `succeeded` になっても戻りませんでした**（processed/succeeded を確かめてから引き直した）。
+`yt.update_meta`（50単位・ID も予約もそのまま）で **8語 とも入り**、印字は「台本と一致（題・説明欄・tags）」へ。
+
+**毎回ではありません**（台帳で数えた）: `ready_checked` は **64行 とも `meta_drift` `[]`**。
+直前の 2本 は**上げた 1分後**に引かれていて、そこで既に tags が入っています
+（`mja40GJ-GHU` 予約 09/11 00:26 → 検査 00:27／`4l3DDCLIRxg` 予約 09/12 00:15 → 検査 00:16）。
+＝ **3本目 で初めて出た型**で、insert が落とすかどうかは回ごとに変わる側です。
+
+### なぜ「`status` が見ているから良い」で済ませなかったか
+
+`cmd_status` の突き合わせ（`meta_drift`）は **予約ずみの本を持つ周が `status` を撃ったとき**にしか走りません。
+**`schedule` はその日のいちばん終わりの手**なので、予約して終わる回のあと 10:00 までに誰も `status` を
+撃たなければ、**tags の無い本がそのまま公開されます**。この回に見つけられたのは、予約のあとに
+たまたま `status` を撃ったからで、**手順の側の保証ではありませんでした。**
+
+**直し**: `cli.verify_meta(vid, s)` を `cmd_schedule` の `yt.upload` の後に置いた（**1単位**。
+食い違った回だけ `update_meta` +50単位 → 引き直して残りを返す）。比べる所は `meta_drift` から
+`cli.drift_fields(rd, s)` に切り出しました（予約の直後は台帳の `scheduled` 行を引かずに台本そのものと比べたい）。
+台帳は `meta_repaired`（直した欄・残った欄・単位）。
+
+**検査** `tests/test_studio_schedule_verify_meta.py` **6件**。**陽性対照 3つ を撃って落とした**
+（`.pyc` を消してから ＝ §5 教訓の形 11つ目）:
+
+    `cmd_schedule` から呼びを外す          → 1件（配線の側）
+    tags を集合ではなく並びで比べる         → 1件（YouTube は並べ替えて返す）
+    直したあとに `readiness` を引き直さない  → 1件（直ったかを見ていない）
+
+**配線の検査を 1件 置いたのが要点**です —— 関数だけ作って呼ばなければ、残り 5件 は緑のまま効きません
+（この repo でいちばん多い壊れ方 ＝ 言っている所と、している所が別）。
+
+**覆る条件**（`verify_meta` の註・§16 覆る条件 (7)）: (1) **3本 続けて 1度も直さなければ**
+（台帳 `meta_repaired` が 3本 出ない）、この 1単位 は消してよい。(2) **直しても残る欄**が出たら、
+直す先は `verify_meta` ではなく `yt.upload` の body（欄ごとに口が違う ＝ 題・説明欄は insert で通っている）。
+(3) 直した欄が **tags 以外**にも出たら、(2) を先に撃つこと。
+
+**押した所**: `studio/cli.py`（`drift_fields`／`verify_meta`／`cmd_schedule`）・
+`tests/test_studio_schedule_verify_meta.py`・`docs/METHOD.md` §16（予約した状態・申し送り (1)(9)・覆る条件 (7)）・
+`data/studio/ledger.jsonl`（`scheduled`・`meta_updated`）・この行。
+**§7 と `studio/trend.py` は 1文字も触っていません**（`optimizer` の持ち場）。

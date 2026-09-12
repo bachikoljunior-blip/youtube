@@ -82,6 +82,16 @@ def meta_drift(video_id: str, rd: dict, rows: list[dict] | None = None) -> list[
         s = script.load(sid)
     except FileNotFoundError:
         return None
+    return drift_fields(rd, s)
+
+
+def drift_fields(rd: dict, s) -> list[str]:
+    """上がっている snippet（`yt.readiness` の返り）と、手もとの台本の食い違い（欄の名前）。
+
+    2026-09-13 00:1x（hourly・Opus）に `meta_drift` から切り出した ——
+    **予約の直後は、台帳の `scheduled` 行を引かずに台本そのものと比べたい**（`cmd_schedule` は `s` を持っている）。
+    比べ方は `meta_drift` の註のまま（tags は YouTube が並べ替えて返すので集合で・`upload` と同じ切り詰めを当てる）。
+    """
     out = []
     if rd.get("title") != s.title:
         out.append("題")
@@ -803,7 +813,54 @@ def cmd_schedule(a):
     # 公開の時刻は publish_at（"at" は「いつやったか」。unscheduled の was_at と同じ向き）
     ledger("scheduled", a.id, video_id=vid, publish_at=at.isoformat(timespec="minutes"), replaced=a.replace or None,
            title=s.title)
+    verify_meta(vid, s)
     return 0
+
+
+# 上げた直後に snippet を突き合わせる回数（`verify_meta`）。1回 直して、それでも残ったら印字して次の回へ渡す。
+META_REPAIR_TRIES = 1
+
+
+def verify_meta(vid: str, s) -> list[str]:
+    """**上げた snippet が、渡した台本どおりに載ったか**（2026-09-13 00:1x・hourly・Opus が足した。**1単位**）。
+
+    **実測でこれを足した**: 09/13 の本（`Edmce94ZVKs`・00:01 JST）は `videos.insert` に
+    tags 8語 を渡しているのに、上がった snippet は **tags が 1つも無い**状態で返ってきた
+    （題・説明欄は一致）。`processingStatus` が `succeeded` になっても戻らず、
+    `yt.update_meta`（50単位・ID も予約もそのまま）で 8語 とも入った。
+    **直前の 2本 は同じ 1分後の `ready_checked` が `meta_drift` `[]`**（`mja40GJ-GHU` 09/11 00:26・
+    `4l3DDCLIRxg` 09/12 00:15）＝ **毎回ではなく、上げるたびに起きうる側**。
+
+    **なぜ `status` 任せにしないか**: `cmd_status` の突き合わせは **予約ずみの本を持つ周が status を撃ったとき**
+    にしか走りません。予約して終わる回（＝ `schedule` は 1日1回の、いちばん終わりの手）のあと、
+    10:00 までに誰も status を撃たなければ、**tags の無い本がそのまま公開されます**。
+    上げた側が上げた場で見るのがいちばん安く（1単位）、直し方も分かっています。
+
+    返り: **直したあとに残っている**食い違いの欄（空なら一致）。
+    **覆る条件**: (1) この直しが **3本 続けて 1度も要らなければ**（`meta_repaired` の行が 3本 出ない）、
+    insert の側は落とさない ＝ この 1単位 は消してよい。
+    (2) 逆に **直しても残る**回が出たら、欄ごとに口が違う（題・説明欄は insert で通っている）ので、
+    `yt.upload` の body の側を疑うこと。(3) 直した欄が **tags 以外**にも出たら、(2) を先に撃つこと。
+    """
+    rd = yt.readiness(vid)
+    if rd.get("title") is None:
+        return []
+    drift = drift_fields(rd, s)
+    if not drift:
+        print("上がった snippet は台本どおり（題・説明欄・tags）")
+        return []
+    print(f"!! 上がった snippet が台本と食い違う: {'・'.join(drift)} → update_meta で入れ直す（50単位）")
+    fixed = list(drift)
+    for _ in range(META_REPAIR_TRIES):
+        yt.update_meta(vid, s.title, s.description, s.tags)
+        rd = yt.readiness(vid)
+        drift = drift_fields(rd, s) if rd.get("title") is not None else drift
+        if not drift:
+            break
+    ledger("meta_repaired", s.id, video_id=vid, fields="・".join(fixed),
+           left=drift or None, units=50 * META_REPAIR_TRIES + 1)
+    print("入れ直した（台本どおり）" if not drift else f"!! まだ食い違う: {'・'.join(drift)}（次の回が見ること）")
+    return drift
 
 
 # 台帳に載せる本の齢の上限（時間）。§1 は「48時間でほぼ止まる」だが、同じ日に出た本どうしを
