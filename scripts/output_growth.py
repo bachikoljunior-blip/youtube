@@ -258,14 +258,21 @@ def verdict(ps: list[dict]) -> list[str]:
     """門を引くのは道具。**次の回は覚えていなくてよい。**"""
     if not ps:
         return ["点が 1つも取れません（`data/rounds.jsonl` が窓ぶん無い ＝ まだ測れていない）"]
+    # **門の字は METHOD の側と同じ物を使います**（2026-09-13 07:2x・optimizer・Opus）——
+    # 「引かれません」と「まだ測れません」を分ける／続かなくても水準が門の上ならそう言う、の 2つ。
+    # 借りている数（CHAR_GATE）だけでなく、**読み違いの直しも借りること**（同じ穴を 2か所 に残さない）。
+    vals = [p["per_lap"] for p in ps]
     tail2 = ps[-2:]
     over2 = [p for p in tail2 if p["per_lap"] > CHAR_GATE]
-    if len(tail2) == 2 and len(over2) == 2:
+    if len(tail2) < 2:
+        return [f"字の門 1周 +{CHAR_GATE}字: " + mg.too_few_windows(len(tail2), vals)]
+    if len(over2) == 2:
         return [f"字の門 1周 +{CHAR_GATE}字: **引かれました** —— 直近 2窓 とも越えています"
                 f"（{tail2[0]['per_lap']:+.0f} / {tail2[1]['per_lap']:+.0f}）。"
                 "**`--lines` で吸った行を名指しし、印字から derivation を外すこと**"
                 "（決めと数は残す・覆る条件は 註 と JOURNAL へ）"]
-    return [f"字の門 1周 +{CHAR_GATE}字: 引かれません（直近 2窓 で越えたのは {len(over2)} つ ＝ 2つ 続いていない）"]
+    return [f"字の門 1周 +{CHAR_GATE}字: 引かれません"
+            f"（直近 2窓 で越えたのは {len(over2)} つ ＝ 2つ 続いていない）" + mg.level_caveat(vals)]
 
 
 def line_sizes(text: str, top: int = 8) -> list[tuple[int, str]]:

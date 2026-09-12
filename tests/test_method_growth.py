@@ -484,3 +484,60 @@ def test_positive_control_印字が消えたら本体の検査が落ちること
     monkeypatch.setattr(M, "window_caveat", lambda laps: "  （註を消した版）")
     out = M.report()
     assert "6周 幅" not in out and "--after" not in out
+
+
+# --- 「引かれません」と「まだ測れません」／門は水準を見ていない（2026-09-13 07:2x・optimizer・Opus） ---
+# この回に 2つ 踏んだ。04:3x の申し送りは「手の効きは `--after '<手の刻>' --laps 1` で読め」だが、
+# (1) `--laps 5 --points 2` は周が 5つ しか無いので窓を **1つ** しか作れず、それでも「引かれません」と言った。
+# (2) `--laps 1` の門は「2周 続けて」を要るので、**同じ水準でも 1周 凹めば鳴りません** ——
+#     実測 手の後の 5周 は +713 / -28 / +134 / +45 / +1,019字 ＝ 平均 +377字/周（門の上）なのに沈黙。
+
+def _vp(chars_per_lap, lines_per_lap=1.0):
+    return {"chars_per_lap": float(chars_per_lap), "lines_per_lap": lines_per_lap}
+
+
+def test_窓が_1つ_なら引かれませんではなくまだ測れませんと言うこと():
+    """**向きが悪い穴**: 窓が足りない回ほど静かなほうへ倒れる（手の直後がまさにそれ）。"""
+    line = M.verdict([_vp(900)])[1]
+    assert "まだ測れません" in line and "窓が 1つ" in line
+    assert "**「引かれません」ではありません**" in line
+    assert "+900字/周" in line          # いまの窓の数は落とさない
+
+
+def test_窓が_2つ_在れば今までどおり引かれませんと言うこと():
+    """**まだ測れません を配りすぎないこと**（2窓 在る回は今までの字のまま）。"""
+    line = M.verdict([_vp(400), _vp(10)])[1]
+    assert "引かれません" in line and "まだ測れません" not in line
+
+
+def test_続いていなくても並べた窓の平均が門の上ならそう言うこと():
+    """**門は「続いたか」を見ており、水準を見ていません**（実測の 5周 をそのまま置く）。"""
+    vals = [713, -28, 134, 45, 1019]
+    line = M.verdict([_vp(v) for v in vals])[1]
+    assert "引かれません" in line            # 門の答えは変えない
+    assert "平均は +377字/周" in line
+    assert "--laps" in line                  # 申し送りに幅を書けと言うこと
+
+
+def test_平均が門の下なら余計な行を足さないこと():
+    """**陽性対照の裏**: 静かな窓に註を配らないこと（配ると印が効かなくなる）。"""
+    line = M.verdict([_vp(100), _vp(100), _vp(100)])[1]
+    assert "平均" not in line
+
+
+def test_positive_control_平均の行を消すと実測の_5周_が黙ること(monkeypatch):
+    """**陽性対照**（§5 教訓の形 3つ目）: `level_caveat` を空へ差し替えると、上の 1つ目 が落ちる。"""
+    monkeypatch.setattr(M, "level_caveat", lambda vals: "")
+    line = M.verdict([_vp(v) for v in [713, -28, 134, 45, 1019]])[1]
+    assert "平均" not in line
+
+
+def test_4塊_と_塊ごと_と_本の節_も窓が_1つ_なら測れないと言うこと():
+    """**同じ穴が 4か所 に在った** —— 直したのは 1つ ではなく全部（`too_few_windows`）。"""
+    cut = _at("2026-09-13 02:42")
+    k = len([r for r in M.rounds() if r >= cut])
+    # **周は毎周 増えます** —— 幅を刻で固定すると、この検査はいつか窓が 2つ になって黙ります。
+    # 端が 2つ（＝ 窓 1つ）になる幅を、そのつど数から取ること。
+    out = M.report(laps=k - 1, n=2, after=cut)
+    assert out.count("まだ測れません") == 4      # 字の門・4塊・塊ごと・本の節
+    assert "引かれません（直近 2窓" not in out

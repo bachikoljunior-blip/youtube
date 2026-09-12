@@ -343,6 +343,60 @@ def points(laps: int = 6, n: int = 3, after: datetime | None = None) -> list[dic
     return out
 
 
+def too_few_windows(n: int, vals: list[float] | None = None, unit: str = "字/周") -> str:
+    """**窓が 2つ 無い回に「引かれません」と言わないこと**（2026-09-13 07:2x・optimizer・Opus）。
+
+    **この回に踏みました。** 04:3x の申し送りは「手の効きは `--after '<手の刻>' --laps 1` で読め」
+    と書いており、そのとおり `--after "2026-09-13 02:42" --laps 5 --points 2` を撃つと、
+    周が 5つ しか無いので窓は **1つ** しか作れません。そこで出た行は
+
+        字の門 1周 +300字: 引かれません（直近 2窓 で越えたのは 1 つ）
+
+    で、**「2窓 在って続かなかった」と読めます。** 実際は **まだ測れていない**（窓が 1つ）。
+    `trend` が「まだ測れていません」と「引かれません」を分けているのと同じ穴で、
+    ここは**分けていませんでした**。**向きが悪い**: 窓が足りない回ほど「引かれません」と言うので、
+    手の直後（周が積まっていない回）にだけ、静かなほうへ倒れます。
+
+    **覆る条件**: 窓の数を印字しても、次の回が「1つ」を見落として同じ読み違いをしたら、
+    数ではなく**撃ち方**（`--laps` を周の数で割った値に丸める）を道具の側で直すこと。
+    """
+    now = f"（いまの窓 {vals[-1]:+.0f}{unit}）" if vals else ""
+    return (f"**まだ測れません** —— 窓が {n}つ しか在りません（門は 2窓 要る）{now}。"
+            "**「引かれません」ではありません**（`--laps` を小さくするか、周が積まるのを待つこと）")
+
+
+def level_caveat(vals: list[float]) -> str:
+    """**門は「続いたか」を見ており、水準を見ていません**（2026-09-13 07:2x・optimizer・Opus）。
+
+    **窓の幅を変えると、同じ +300字 が別の厳しさになります。**
+    `--laps 6` は 6周 を均すので、水準が門の上なら隣り合う 2窓 はほぼ必ず越えます。
+    `--laps 1` は均さないので、**同じ水準でも 1周 凹めば門は鳴りません。**
+
+    **実測（この回・`--after "2026-09-13 02:42"`・4塊）**: 02:5x の手の後の 5周 は
+    **+713 / -28 / +134 / +45 / +1,019字** ＝ 並べた 5窓 の平均 **+377字/周（門の上）**。
+    それでも `--laps 1` の門は「引かれません」で、同じ台帳を `--laps 5` で読むと 1周 **+377字**。
+    ＝ **04:3x の申し送り（「`--laps 1` で 2周 続けて越えるか」）は、
+    門を引いた側（`--laps 6`）より構造として厳しく、水準が上でも鳴りません。**
+    そのまま次の回が読めば「02:5x の手が効いた」と結論します —— 水準は落ちていないのに。
+
+    ＝ 続いていなくても、**並べた窓の平均が門の上なら、そう言います**（門の答えは変えません）。
+
+    **覆る条件**: (1) この行が出たのに、そのあと 2窓 続けて越える回が 1度も来ないまま
+    水準が門の下へ落ちたら、この行は「凹み 1つ」を騒いでいただけ ＝ 畳んでよい。
+    (2) 逆に この行の次の回で門が本当に引かれたら、**申し送りには `--laps` を必ず書くこと**
+    —— 幅を書かない申し送りは、門を引いた物とは別の門を指しています（§5 教訓の形 13つ目の裏）。
+    """
+    if not vals:
+        return ""
+    mean = sum(vals) / len(vals)
+    if mean <= CHAR_GATE:
+        return ""
+    return (f"。**ただし並べた {len(vals)}窓 の平均は {mean:+.0f}字/周 で門の上です** ——"
+            "門が見ているのは「続いたか」で、**水準ではありません**。"
+            "**窓の幅を変えると同じ門が別の厳しさになります**（`--laps 1` は均さない）"
+            "＝ 申し送りには `--laps` を必ず書くこと（`level_caveat` の註）")
+
+
 def verdict(ps: list[dict]) -> list[str]:
     """門を引くのは道具。**次の回は覚えていなくてよい。**"""
     if not ps:
@@ -351,14 +405,18 @@ def verdict(ps: list[dict]) -> list[str]:
     over_line = [p for p in ps if p["lines_per_lap"] > LINE_GATE]
     out.append(f"行の門 1周 +{LINE_GATE}行: " + (
         f"**越えた窓 {len(over_line)}/{len(ps)}**" if over_line else f"引かれません（最大 {max(p['lines_per_lap'] for p in ps):+.1f}行/周）"))
+    vals = [p["chars_per_lap"] for p in ps]
     tail2 = ps[-2:]
     over2 = [p for p in tail2 if p["chars_per_lap"] > CHAR_GATE]
-    if len(tail2) == 2 and len(over2) == 2:
+    if len(tail2) < 2:
+        out.append(f"字の門 1周 +{CHAR_GATE}字: " + too_few_windows(len(tail2), vals))
+    elif len(over2) == 2:
         out.append(f"字の門 1周 +{CHAR_GATE}字: **引かれました** —— 直近 2窓 とも越えています"
                    f"（{tail2[0]['chars_per_lap']:+.0f} / {tail2[1]['chars_per_lap']:+.0f}）。"
                    "**吸った節を名指しして、§5／§6 の形（決めは本文・derivation は外）を当てること**")
     else:
-        out.append(f"字の門 1周 +{CHAR_GATE}字: 引かれません（直近 2窓 で越えたのは {len(over2)} つ ＝ 2つ 続いていない）")
+        out.append(f"字の門 1周 +{CHAR_GATE}字: 引かれません"
+                   f"（直近 2窓 で越えたのは {len(over2)} つ ＝ 2つ 続いていない）" + level_caveat(vals))
     return out
 
 
@@ -466,19 +524,27 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
         m7 = measure7(worktree_text())   # 同じ（註）
         out.append(f"  いま 本文 {m7['body_lines']}行・{m7['body_chars']:,}字"
                    f"（**上の §0〜§6・§8 とは別の数** ＝ 足さないこと。**この行も作業ツリー**）")
+        s7vals = [p["s7_per_lap"] for p in s7]
         over = [p for p in s7[-2:] if p["s7_per_lap"] > CHAR_GATE]
-        out.append(f"  字の門 1周 +{CHAR_GATE}字: " + (
-            "**引かれました** —— 直近 2窓 とも越えています。"
-            "**`--split` で どの塊が吸ったかを名指ししてから、§5／§6 の形を当てること**"
-            if len(s7[-2:]) == 2 and len(over) == 2 else
-            f"引かれません（直近 2窓 で越えたのは {len(over)} つ）"))
+        if len(s7[-2:]) < 2:
+            s7line = too_few_windows(len(s7[-2:]), s7vals)
+        elif len(over) == 2:
+            s7line = ("**引かれました** —— 直近 2窓 とも越えています。"
+                      "**`--split` で どの塊が吸ったかを名指ししてから、§5／§6 の形を当てること**")
+        else:
+            s7line = f"引かれません（直近 2窓 で越えたのは {len(over)} つ）" + level_caveat(s7vals)
+        out.append(f"  字の門 1周 +{CHAR_GATE}字: " + s7line)
         # **塊ごとの門**（合計は打ち消しに対して盲・`split_drawn` の註・2026-09-11 07:3x）。
         sd = split_drawn(ps)
-        out.append(f"  塊ごとの門 1周 +{CHAR_GATE}字: " + (
-            "**引かれました** —— " + "・".join(sd) +
-            "。**合計が下を向いていても、この塊は伸びています**（打ち消し）。"
-            "§5／§6 の形を当てること（決めは本文・derivation は外）"
-            if sd else "引かれません（直近 2窓 とも越えた塊は 0 つ）"))
+        if sd:
+            sdline = ("**引かれました** —— " + "・".join(sd) +
+                      "。**合計が下を向いていても、この塊は伸びています**（打ち消し）。"
+                      "§5／§6 の形を当てること（決めは本文・derivation は外）")
+        elif len(s7[-2:]) < 2:
+            sdline = too_few_windows(len(s7[-2:]))
+        else:
+            sdline = "引かれません（直近 2窓 とも越えた塊は 0 つ）"
+        out.append(f"  塊ごとの門 1周 +{CHAR_GATE}字: " + sdline)
     out += book_report(ps)
     return "\n".join(out)
 
@@ -522,11 +588,15 @@ def book_report(ps: list[dict], now: dict | None = None) -> list[str]:
         vals = [c["per_lap"] for c in tail2 if c and c["per_lap"] is not None]
         if len(vals) == 2 and all(v > CHAR_GATE for v in vals):
             drawn.append(f"{sid}（{vals[0]:+.0f} / {vals[1]:+.0f}）")
-    out.append(f"  字の門 1周 +{CHAR_GATE}字: " + (
-        "**引かれました** —— " + "・".join(drawn) +
-        "。**この節は `hourly` の持ち場**（きょうの枠の本・§5）なので、"
-        "畳むかは hourly が決めること —— optimizer は数を並べるまで"
-        if drawn else "引かれません（直近 2窓 とも越えた節は 0 つ）"))
+    if drawn:
+        bline = ("**引かれました** —— " + "・".join(drawn) +
+                 "。**この節は `hourly` の持ち場**（きょうの枠の本・§5）なので、"
+                 "畳むかは hourly が決めること —— optimizer は数を並べるまで")
+    elif len(bs[-2:]) < 2:
+        bline = too_few_windows(len(bs[-2:]))
+    else:
+        bline = "引かれません（直近 2窓 とも越えた節は 0 つ）"
+    out.append(f"  字の門 1周 +{CHAR_GATE}字: " + bline)
     return out
 
 
