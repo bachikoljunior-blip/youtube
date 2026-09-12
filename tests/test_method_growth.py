@@ -451,3 +451,36 @@ def test_points_は塊ごとの数も同じ窓で持つこと():
         # 塊の和は合計（`s7_per_lap`）と一致すること
         # ＝ 別の挟みで数えていないことの陽性対照（`section7_spans` を 1つ 落とすと割れる）
         assert abs(sum(p["s7_split"].values()) - p["s7_per_lap"]) < 1e-6
+
+
+# --- 幅のある窓は「手の効き」を答えられない（2026-09-13 04:3x・optimizer・Opus） -------------
+# 実測: 02:5x の手のあと、6周窓は 1窓目 +671 / 2窓目 +678字/周（門 300 の上）だったが、
+# 同じ台帳を `--after '2026-09-13 02:42' --laps 1` で読むと +713 → -28字/周。
+# ＝ 6周窓の数は「手の前の周」を 5周 ぶん運んでいた。**印字が無いと、次の回は 2窓目 で誤って (ii) を引きます。**
+
+def test_幅のある窓には手の効きを読むなという印字が付くこと():
+    line = M.window_caveat(6)
+    assert "6周 幅" in line and "最大 5周" in line
+    assert "--after" in line          # 直し方（同じ台帳の読み直し）も一緒に言うこと
+    assert M.window_caveat(6) in M.report()
+
+
+def test_窓の頭を手に合わせた回には印字しないこと():
+    """`--after` で頭を固定した窓は、もう手の前の周を運んでいない ＝ 註は要らない。"""
+    out = M.report(laps=6, n=1, after=_at("2026-09-13 02:42"))
+    assert "手を打った回の効きを読まないこと" not in out
+
+
+def test_窓が_1周_なら印字しないこと():
+    """幅 1周 の窓は構造として手の前を運べない（`laps`-1 ＝ 0 周）。"""
+    assert "手を打った回の効きを読まないこと" not in M.report(laps=1, n=2)
+
+
+def test_positive_control_印字が消えたら本体の検査が落ちること(monkeypatch):
+    """**陽性対照**（§5 教訓の形 3つ目）: 註を当てにならない版へ差し替えると、上の 1つ目 が落ちること。
+
+    落ちる向きで書いてある（0 へ落ちる側 ＝ §5 教訓の形 3つ目・09/13 02:5x の頭打ちの罠を避ける）。
+    """
+    monkeypatch.setattr(M, "window_caveat", lambda laps: "  （註を消した版）")
+    out = M.report()
+    assert "6周 幅" not in out and "--after" not in out

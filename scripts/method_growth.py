@@ -422,9 +422,27 @@ def split_drawn(ps: list[dict]) -> list[str]:
     return drawn
 
 
+def window_caveat(laps: int) -> str:
+    """**幅のある窓は、手を打った回の効きを答えられない**（2026-09-13 04:3x・optimizer・Opus）。
+
+    窓が `laps` 周ぶん在るあいだ、手の刻をまたぐ窓は **手の前の周を最大 `laps`-1 周ぶん運びます**。
+    そこで読んだ数は「手の効き」ではなく「手の前がどうだったか」で、**手の直後ほど前の側が重い**。
+    実測（JOURNAL 09/13 04:3x）: 02:5x の手のあと、6周窓は 1窓目 +671／2窓目 +678字/周（門 300 の上）。
+    同じ台帳を `--after '2026-09-13 02:42' --laps 1` で読むと **+713 → -28字/周** ＝ **手の後の周は門の下**。
+    ＝ **2窓 待っても答えは変わりません**（窓が丸ごと手の後になるのは `laps` 周 後）。
+    **覆る条件**: 窓の幅を 1周 にした回が出たら、この註の「最大 `laps`-1 周」は 0 になる ＝ この行ごと畳むこと。
+    """
+    return (f"  **この窓では、手を打った回の効きを読まないこと** —— 窓は {laps}周 幅なので、"
+            f"手の刻が窓の中に在るあいだ、この数は手の**前**の周を最大 {laps - 1}周 ぶん運びます"
+            f"（窓が丸ごと手の後になるのは {laps}周 後）。"
+            f"手の効きは `--after '<手の刻 JST>'`（できれば `--laps 1`）で読むこと。")
+
+
 def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
     ps = points(laps, n, after)
     out = [f"METHOD の「毎回 読む」側（§0〜§6・§8）の伸び —— 窓は {laps}周・**周の刻で挟む**（commit ではない）"]
+    if laps > 1 and after is None:
+        out.append(window_caveat(laps))
     for p in ps:
         out.append(
             f"  {p['from'].astimezone(JST):%m/%d %H:%M} → {p['to'].astimezone(JST):%m/%d %H:%M} JST"
