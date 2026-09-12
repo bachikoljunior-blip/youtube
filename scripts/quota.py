@@ -2676,11 +2676,39 @@ def pace(now: datetime | None = None) -> dict | None:
         win_start, win_reset = win_reset, win_reset + span
         rolled += 1
     carried_laps, carry_mode = 0, "hours"
+    # --- **周で運ぶかは、`laps_in_window` ではなく `per_lap` が在るかで決める**
+    #     （2026-09-12 12:3x JST・optimizer・Opus。08:2x の借りた床が、**4つ目の口**に来ていなかった） ---
+    # 09/06 17:xx の覆る条件 (a) は「`rounds.jsonl` に周が記録されていない枠（`laps_in_window == 0`）では
+    # 周で運べないので時間で運ぶ」と書いています。**`laps_in_window == 0` ＝ 1周の重さが出せない**が、
+    # そのときの前提でした。**08:2x に `_per_lap_before` を足してから、その同値は切れています** ——
+    # **この枠で 1周も測れていなくても、前の枠から借りた `per_lap` が在る**からです。
+    # 実測 2026-09-12 12:2x（目盛り 09/12 07:20 の 0%・枠 09/12 07:00 → 09/19 07:00）:
+    #     laps_in_window 0（目盛りが枠の頭 20分 後 ＝ そのあいだに周は立たない）
+    #     per_lap 0.546%（`per_lap_floored` True ＝ 借りた床）・carried_laps **5**
+    #     → 門が偽 → **時間で運ぶ側へ落ち**、`carry_rate` は 0.000 %/時（同じ枠に2点目が無く区間が引けない）
+    #     → **used_now は 5周 立ったあとも 0.0%**（実際は 5 × 0.546 ＝ **2.73%**）
+    # **向きは「速すぎてよい」側**です（`used_now` が低い → `forward_rate` が高い → 床が短い）——
+    # この関数が冒頭で「古いまま割ると必ず『速すぎてよい』側に外れます」と書いている、その形そのもの。
+    # しかも**この枠のあいだ自分では治りません**（目盛りは人手でしか入らない）＝
+    # 次の目盛りが貼られるまで、何周 立っても 0% と言い続けます（166周 ぶんで 91 ポイント）。
+    # **同じ枠の中で、`fable_ration` は周の数で数えていました**（「fable 4体 × 0.93%」）＝
+    # **同じ塊の中で 2つ の口が別の数を言っていた**（METHOD §5 の「言っている所と、している所が別」）。
+    # **足すのは「借りた床のとき」だけ**（`per_lap_floored`）。`per_lap` が在るだけでは足りません ——
+    # `per_lap` の分母は `_births_between`（周が無ければ `quota.jsonl` の誕生へ落ちる）で、
+    # `carried_laps` は `rounds.jsonl` の周だけです。**`per_lap` だけを門にすると、周の台帳が空で
+    # 誕生だけが在る枠（`tests/test_pace.py` の 08/21 の形）で、単位の違う 2つ を掛けます。**
+    # **覆る条件 (a) は 1字も動いていません**: 周が記録されていない枠は `laps_in_window` 0・
+    # `per_lap_floored` False ＝ **そのまま時間で運びます**（検査 `tests/test_pace.py` の 2件）。
+    # **覆る条件**: (1) 借りた床で運んだ推定が、次の目盛りで実物から ±5 ポイント 以上 外れたら、
+    #   疑うのは門ではなく**借りた `per_lap` のほう**（枠をまたいで 1周の重さが変わった ＝
+    #   `_per_lap_before` の覆る条件 (2) の側）。
+    # (2) `carry_mode == "laps"` で `per_lap_floored` が True の回は、**推定が実測ではない**ので、
+    #   そのことを言う句は `quota.per_lap_words`（**1か所**・09/12 09:3x）。ここに口を増やさないこと。
     if rolled:
         # 新しい枠の中には目盛りが1つも無い。頭を 0% として運ぶ。
         elapsed = max(0.0, (now - win_start).total_seconds() / 3600)
         carried_laps = _laps_since(win_start, now)
-        if laps_in_window and per_lap:
+        if (laps_in_window or per_lap_floored) and per_lap:
             carry_mode = "laps"
             used_now = min(100.0, carried_laps * per_lap)
         else:
@@ -2688,7 +2716,7 @@ def pace(now: datetime | None = None) -> dict | None:
     else:
         elapsed = max(0.0, (now - at).total_seconds() / 3600)
         carried_laps = _laps_since(at, now)
-        if laps_in_window and per_lap:
+        if (laps_in_window or per_lap_floored) and per_lap:
             carry_mode = "laps"
             used_now = min(100.0, used + carried_laps * per_lap)
         else:

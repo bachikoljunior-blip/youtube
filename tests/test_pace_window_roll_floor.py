@@ -128,10 +128,24 @@ def test_床が出れば持続できる間隔も出る(tmp_path):
 
 def test_速さの側には床を当てない(tmp_path):
     """**新しい枠は本当に 0% から始まっています。** ここに前の枠の %/時 を当てると、
-    推定が上に外れ、`used_now` が実測でないぶんだけ膨らみます。"""
+    推定が上に外れ、`used_now` が実測でないぶんだけ膨らみます。
+
+    **2026-09-12 12:3x に `used_now == 0.0` を外しました**（optimizer・Opus）——
+    あれは「速さを当てていない」ではなく、**周で運ぶ門が借りた床に来ていなかった**
+    せいで出ていた数でした（`carry_rate` が 0.000 %/時 ＝ 同じ枠に2点目が無い）。
+    **当てないのは `rate` のほうだけ**で、**立った周のぶんは運びます**
+    （`quota.pace` の 12:3x の註・検査 `tests/test_pace_carry_by_laps.py`）。
+    ここで 0.0 を不変条件として書くと、**何周 立っても 0% と言う側**を固定します
+    （METHOD §5 教訓の形 6つ目）。
+    """
     p = _rolled(tmp_path)
     assert p["rate_floored"] is False
-    assert p["used_now"] == pytest.approx(0.0, abs=1e-9)
+    # **速さは当たっていない**: 借りた `rate` はどこにも入っていない
+    assert p["pre"] is not None and p["pre"]["rate"] > 0
+    assert p["carry_rate"] != pytest.approx(p["pre"]["rate"], rel=1e-9)
+    # **周のぶんは運ぶ**: 借りた 1周の重さ × 目盛りの後に立った周
+    assert p["carry_mode"] == "laps"
+    assert p["used_now"] == pytest.approx(p["carried_laps"] * p["per_lap"], rel=1e-9)
 
 
 def test_普通の枠は1つも動かない(tmp_path):
