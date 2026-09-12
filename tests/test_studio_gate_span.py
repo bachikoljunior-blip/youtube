@@ -37,81 +37,55 @@ def test_振れ幅は今の点を挟む() -> None:
     assert all(len(p) == 3 for p in g["points"])
 
 
-def test_振れ幅は鋸の歯で点ではない() -> None:
-    """24時間 の幅が `gate_span` の覆る条件 (2) の門より広い**回が続いていない**こと。
+def test_点と上限は門の同じ側に居る() -> None:
+    """**門 (2) の答えが、読み方（点／上限）で割れていないこと**（`gate_span` の覆る条件 (2-新)）。
 
-    **これが狭くなったら**（帯と外が同じ速さで積まれるようになったら）、
-    点で読んでよい ＝ そのときこの検査ごと書き換える（覆る条件 (2)）。
-
-    **2026-09-13 00:1x（optimizer・Opus）に、点から連へ直しました。**
-    この回に 24時間 の幅が **0.168倍** ＝ 門 0.2 の下へ 1点 だけ入り、**この検査が赤になりました**。
-    ところが註の (2) は「**下回ったまま `SPAN_NARROW_NEED`（3回）続いたら**」で、
-    **1点 では引かれていません**（1つ 手前は 0.221倍）。
-    ＝ **註は「続いたら」と言い、見張りは「点」で鳴っていました** ——
-    §5 教訓の形 7つ目（註と印字が食い違えば読まれるのは印字のほう）の、**検査の側での例**。
-    連を数える口は `trend.span_narrow_run`（**単位は「測り」＝ 周ではない**・同 註）。
+    **2026-09-13 02:5x（`hourly`・Opus）に、幅の連から この形へ書き直しました。**
+    00:1x が足した `span_narrow_run`（幅 0.2倍 が測り 3回）は 09/13 01:49 に**引かれました**が、
+    引いた先の「点で読んでよい」は**答えを 1度も変えません** —— 台帳の全履歴 **171刻** を
+    切って読み直して、点（`now`）と上限（`hi`）で門 0.5 の答えが割れた刻は **0件**。
+    割れるのは「窓が門を跨ぎ、**かつ** `now` だけが門の下」の刻だけで、
+    そこは 09/10 09:4x が「上限で読む」と決めた当の形です。
+    さらに幅そのものは、分母が積もるだけで下がります（1測りの刻み 0.077 → 0.011倍・
+    折返しは 7回 で **0 になっていません**）＝ **固定の幅の門は時計**でした。
+    畳んだ理由と数は `trend.gate_span` の註、derivation は JOURNAL 09/13 02:5x。
     """
-    r = trend.span_narrow_run(_rows())
-    assert r["now"] is not None, "24時間 に比の点が 1つ しか無い —— 床（`quota.pace()`）を見ること"
-    assert not r["drawn"], (
-        f"幅が {float(r['now']):.3f}倍（門 {r['gate']}倍）で **{r['run']}/{r['need']}回 続いた** "
-        f"—— `gate_span` の覆る条件 (2)。点で読んでよい形になったので、註とこの検査を書き直すこと。"
-        f"並び: {r['widths']}")
+    g = trend.gate_span(_rows())
+    s = trend.span_split(g)
+    assert s["now"] is not None, "24時間 に比の点が無い —— 床（`quota.pace()`）を見ること"
+    assert not s["differ"], (
+        f"点 {s['now']:.3f} と上限 {s['hi']:.3f} が門 {s['gate']} の両側に割れました "
+        f"＝ `gate_span` の覆る条件 (2-新) の刻（履歴 0/171）。**読むのは上限のまま**にして、"
+        f"この刻を JOURNAL に書くこと（判定は `hourly`・§5）")
 
 
-def test_連は測りで数える_周ではない() -> None:
-    """**単位の見張り**（`span_narrow_run` の註）。
-
-    幅が動くのは `measure` を撃った刻だけなので、連は**測り**で数える。
-    `widths` の刻が台帳の `measured` の刻の部分列であることで、それを押さえる。
-    """
-    rows = _rows()
-    r = trend.span_narrow_run(rows)
-    occ = {trend._at({"at": a}).strftime("%m/%d %H:%M") for a in _occasions(rows)}
-    for w in r["widths"]:
-        assert w["at"] in occ, f"{w['at']} は `measured` の刻ではありません（周で数えていないか）"
-    # 新しい順に並んでいること（連は新しいほうから数える）
-    ats = [w["at"] for w in r["widths"]]
-    assert ats == sorted(ats, reverse=True), ats
-
-
-def test_連の門は註の数と同じ場所から来ること() -> None:
-    """**門を 2か所 に置かない**（`span_narrow_run` の覆る条件 (3)）。"""
-    r = trend.span_narrow_run(_rows())
-    assert r["gate"] == trend.SPAN_NARROW_GATE == 0.2
-    assert r["need"] == trend.SPAN_NARROW_NEED == 3
-
-
-def test_連の陽性対照_門を緩めれば連は伸びること() -> None:
+def test_割れる刻は作れること_陽性対照() -> None:
     """**陽性対照**（§5 教訓の形 3つ目「壊したら落ちるまで撃つ」）。
 
-    門を実測の幅より大きく取れば、同じ台帳で連は**必ず 1 以上 伸びます**。
-    伸びなければ、数えているのは幅ではありません。
+    `differ` が立つのは **門を跨ぎ、かつ点が門の下** の刻だけ —— 合成で 3通り 撃つ。
     """
-    rows = _rows()
-    base = trend.span_narrow_run(rows)
-    widths = [float(w["width"]) for w in base["widths"]]
-    if len(widths) < 2:
-        pytest.skip("窓に刻が 2つ 無い")
-    loose = max(widths) + 1.0
-    saved = trend.SPAN_NARROW_GATE
-    try:
-        trend.SPAN_NARROW_GATE = loose
-        got = trend.span_narrow_run(rows)
-    finally:
-        trend.SPAN_NARROW_GATE = saved
-    assert got["run"] > base["run"], (
-        f"門を {loose:.3f} まで緩めても連が {got['run']} のまま ＝ 幅を読んでいません")
-    # **借りた物は借りた形で返す**（§5 教訓の形 11つ目）
-    assert trend.SPAN_NARROW_GATE == 0.2
+    below = trend.span_split({"now": 0.42, "hi": 1.80, "n": 9})
+    assert below["differ"], "点が門の下・上限が上 ＝ 割れる刻（これが立たないなら読んでいません）"
+    both_up = trend.span_split({"now": 1.52, "hi": 1.53, "n": 9})
+    assert not both_up["differ"]
+    both_down = trend.span_split({"now": 0.30, "hi": 0.49, "n": 9})
+    assert not both_down["differ"], "両方 門の下 ＝ どちらで読んでも引かれる側（割れていない）"
+    assert trend.span_split({"now": None, "hi": None, "n": 0})["differ"] is False
 
 
-def test_印字は連と単位を言うこと() -> None:
-    """**註ではなく印字が読まれる**（§5 教訓の形 7つ目）—— 連と単位が画面に出ていること。"""
+def test_門は一か所から来ること() -> None:
+    """**門を 2か所 に置かない**（`span_split` の覆る条件 (2)）—— 比の門 0.5 の置き場は 1つ。"""
+    assert trend.GATE_RATIO == 0.5
+    assert trend.span_split(trend.gate_span(_rows()))["gate"] == trend.GATE_RATIO
     line = trend._span_line(_rows())
-    r = trend.span_narrow_run(_rows())
-    assert f"{r['run']}/{r['need']}回" in line, line
-    assert "単位は「測り」" in line
+    assert f"{trend.GATE_RATIO} を切った回だけ" in line, line
+
+
+def test_印字は点と上限を並べること() -> None:
+    """**註ではなく印字が読まれる**（§5 教訓の形 7つ目）—— 割れていないことが画面に出ていること。"""
+    g = trend.gate_span(_rows())
+    line = trend._span_line(_rows())
+    assert f"点 {float(g['now']):.3f} と上限 {float(g['hi']):.3f}" in line, line
 
 
 def test_門は振れ幅の上限で読む_越えたら教える() -> None:
