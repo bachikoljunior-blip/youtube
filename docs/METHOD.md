@@ -1710,7 +1710,7 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    §5／§6 の形へ畳んだ ＝ **決めは本文・derivation は引用**（1字も消していません）。
                    **§0〜§6・§8 と 直近の1本 は引かれません**。
                    数は `python scripts/method_growth.py --split` と `python scripts/output_growth.py`（写さない）
-    検査           `pytest -m live` **赤 0**（21:1x に撃った・**1,435件 通過 / 12 skip**）。
+    検査           `pytest -m live` **赤 0**（21:1x と 21:4x に撃った・**1,443件 通過 / 12 skip**・21:4x は `hourly` の押しを merge したあと）。
                    **この回の +8件**（`tests/test_studio_rev7_run.py`）。
                    **旧 `src/` の赤 2件**（`test_ceiling_drift` / `test_form_record`）は
                    **2026-09-09 08:5x から前のまま**・§8 のとおり触っていません（**追わないこと**）
