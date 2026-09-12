@@ -4743,3 +4743,6 @@
 {"n": 1, "kinds": ["sharper"], "at": "2026-09-13T01:37:35+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "crosscheck"}
 {"takeaway": "国民年金の保険料を免除されると、未納と比べて税金部分のおかげで一定の年金が支給されるため、免除申請をすることで将来受け取れる年金額が大きく増える。", "unclear": ["「ねんきん定期便」という言葉の具体的な内容"], "sig": "2:47f5a1752ac6", "lang": "ja", "dropped": [], "at": "2026-09-13T01:43:20+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "cold_read"}
 {"understand": 3, "n_real": 2, "done": false, "sig": "2:47f5a1752ac6", "lang": "ja", "wheres": [{"where": "コマ5「1か月はらうと毎年約1765円」", "sev": "real"}, {"where": "コマ3「免除は半分として計算」", "sev": "real"}, {"where": "コマ5「480か月で割る」", "sev": "nitpick"}, {"where": "コマ2「年金に入る」", "sev": "nitpick"}, {"where": "コマ8「一生もらえる」", "sev": "nitpick"}], "at": "2026-09-13T01:44:09+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "critique"}
+{"subs": 28, "views": 87438, "videos": 271, "at": "2026-09-13T01:48:01+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-13T01:48:02+09:00", "id": "Edmce94ZVKs", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-13T01:48:02+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
