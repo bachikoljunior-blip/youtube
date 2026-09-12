@@ -166,6 +166,35 @@ def test_full_and_short_agree_on_the_flat_verdict():
     assert "とは読めません" in trend.channel_line_short(rows)
 
 
+# ---- full の**中**で 2つ の verdict を言わないこと（2026-09-13 03:4x・optimizer・Opus）
+# **踏んだ形**: 上の検査は「full も『とは読めません』と言うこと」しか見ておらず、
+# **その手前で full が「引かれました ＝ …チャンネルの側が止まっていないかを外すこと」と
+# 言っているか**は 1件も押さえていませんでした ＝ 同じ 1行 が 2つ の verdict を言う。
+# 短い行の側は `"チャンネルの側を外すこと" not in short` で最初から押さえてあります。
+
+def test_full_does_not_draw_the_gate_when_the_flat_is_unreadable():
+    rows = _short_flat_rows()
+    g = trend.channel_growth(rows)
+    assert g["flat_laps"] >= trend.CHANNEL_FLAT_LAPS and g["flat_readable"] is False
+    full = trend.channel_line(rows)
+    assert "チャンネルの側が止まっていないかを外すこと" not in full
+    assert "とは読めません" in full
+
+
+def test_positive_control_full_still_draws_the_gate_when_readable():
+    """**陽性対照**: 時間の門を通る並びでは、full は いままでどおり verdict を言うこと。
+
+    **「0 へ落ちる向き」で書いてあります**（§5 教訓の形・09/13 02:5x）—— 手本が 1つも無い並び
+    （`step_hi is None` ＝ 比べる相手が無い）だけが、周の門で verdict まで行く側です。
+    """
+    rows = [_row("2026-09-10T15:24:00+09:00", 28, 84781),
+            _row("2026-09-10T20:00:00+09:00", 28, 84781),
+            _row("2026-09-11T02:12:00+09:00", 28, 84781)]
+    g = trend.channel_growth(rows)
+    assert g["flat_laps"] >= trend.CHANNEL_FLAT_LAPS and g["flat_readable"] is True
+    assert "チャンネルの側が止まっていないかを外すこと" in trend.channel_line(rows)
+
+
 # ---- 平らの門は「挟みの上端」（2026-09-11 11:3x・optimizer・Opus）
 # **踏んだ形**: 04:0x は手本の平らの**下端**（`flat_h_lo`）を門にしていた。手本は 1例で、
 # その真の長さは `flat_h_lo`〜`flat_h_hi` のどこかに在る ＝ 下端で鳴らすと、
