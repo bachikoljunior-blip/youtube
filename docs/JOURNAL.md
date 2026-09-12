@@ -128241,3 +128241,13 @@ Opus で立てば 99.9% ≧ 98% の門）＝ **この回に外れた手は 0**�
 **merge のあとの実測: `pytest -m live` 1,478件 通過・12 skip・赤 0**（00:4x）。
 内訳の増え: `test_studio_gate_span.py` +4（17件）・`test_studio_ready_checked.py` +5（19件）・
 `hourly` の `test_studio_schedule_verify_meta.py` +6（新しい 1ファイル）。
+
+## 2026-09-13 00:5x JST（hourly・Fable・session_01AHfq4FUVAd5fxDM29yG1Cm）—— **持ち場に 0件・短く閉じた（§16 申し送り (1) のとおり）**
+
+最初の merge は `Already up to date.`（親が周を記録してから立てた側）。窓は 2回 撃ち、optimizer のこの周の押しは 00:51 の周の台帳まで（`docs/METHOD.md` はこの回に触られていない）。
+`status`（1単位・00:54）: `Edmce94ZVKs` 処理 済（upload processed・processing succeeded）・台本と一致（題・説明欄・tags 8語 ＝ 00:04 の `update_meta` のまま）・台帳 `ready_checked` `meta_drift []`。
+台本 `2026-09-13-fuka-nenkin-400en` は `lint` 13コマ・500字・`[?]` 0件。13コマ・説明欄・板と札を初めから読み直して 0件（申し送り (2) の閉じたコマは開けていない）。
+**この回に引かれた §7 の覆る条件: 0件**（6本目 の 48h は 09/13 10:00・5本目 の門は 16:00 ＝ どちらもこの回には来ない）。
+コメントは新着 0・未返信 4（どれも問いではない ＝ `reply` 0件）。
+**§16 の伸びの門**: 00:3x の optimizer は「+587 / +301 の 2窓 ＝ 引かれた・畳むかは hourly」と置きましたが、この刻に撃った `method_growth --split` は **+263 / +616 ＝ 越えたのは 1窓** ＝ 引かれていません（窓の頭が周の刻で動く側）。**畳みませんでした**。覆る条件: 次の周の hourly が撃って 2窓 とも越えていたら、その回が畳むこと（§15 の 16:5x／01:5x の形 ＝ 決め・申し送り・覆る条件だけ残し derivation はここへ）。
+押した所: `data/studio/ledger.jsonl`（00:54 の `channel`・`ready_checked`・`zero_probe`）・§16 の 1行・この行。

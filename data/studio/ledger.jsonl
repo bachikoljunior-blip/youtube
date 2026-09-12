@@ -4723,3 +4723,6 @@
 {"publish_at": "2026-09-13T10:00:00+09:00", "title": "付加年金 月400円たすと1か月ごとに毎年200円ふえる 2年ではらった金額とお", "at": "2026-09-13T00:55:58+09:00", "id": "Edmce94ZVKs", "event": "pending"}
 {"reports": 32, "rows": 23, "last_day": "20260910", "lag_h": 32.9, "made_h": 31.1, "at": "2026-09-13T00:56:42+09:00", "id": "channel_basic_a3", "event": "reported"}
 {"reports": 65, "rows": 0, "last_day": "20260909", "lag_h": 56.9, "made_h": 22.5, "at": "2026-09-13T00:56:42+09:00", "id": "channel_reach_basic_a1", "event": "reported"}
+{"subs": 28, "views": 87438, "videos": 271, "at": "2026-09-13T00:54:31+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-13T00:54:31+09:00", "id": "Edmce94ZVKs", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-13T00:54:31+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
