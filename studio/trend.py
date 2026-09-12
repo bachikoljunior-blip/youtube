@@ -3200,6 +3200,17 @@ def flat_video_gain(rows: list[dict]) -> dict:
     **覆る条件（`blind` の側）**: `blind` が **0 のまま** `proves_alive is False` の回が
     3周 続いたら、そのとき初めて §7 (m) の「平らの中の伸びが 0」を数に使ってよい。
 
+    **`blind == 0` を、この判定の門に使わないこと**（2026-09-12 14:1x・optimizer・Opus。**実物で踏んだ**）:
+    **`confirmed == 0` の意味は 2つ ではなく 3つ**でした —— (a) `blind > 0`（測れなかった）・
+    (b) `blind == 0`（測れて、伸びた本が 0本）に加えて、**(c) 平らが `REPLICA_LAG_H` より短く、
+    そもそも訊けていない**回が在ります。(c) では `channel_video_delta` の `measurable` が偽で、
+    **`grew` も `blind` も 0 のまま**（数える前に `continue` する）＝ **(b) と見分けが付きません。**
+    **実物**: 2026-09-12 13:5x の周は 平ら **2.0時間**・`grew` 0・`blind` 0・`confirmed` `None` で、
+    時間の門（3周）は引かれていました。**`blind == 0` で数えると、訊いてもいない回で
+    §7 (m) の当て所が引かれます。** ＝ **門に当てる述語は 1つ だけ: `proves_alive is False`**
+    （これは (b) のときにしか立ちません）。**`confirmed` と `blind` を手で組み合わせないこと。**
+    (c) の回に線が 1字も言っていなかったのも同じ回に閉じました（`channel_line` / `channel_line_short`）。
+
     **覆る条件**: (1) `confirmed` が正なのに、そのあとチャンネルの総再生が
     **その分を受け取らないまま刻みを 2つ 跨いだ**回が出たら、そのときは伸びの側（`measure`）の
     包絡を疑うこと（いまは「チャンネルの読みが遅い」と読んでいる）。
@@ -3443,7 +3454,10 @@ def channel_video_delta(rows: list[dict], t0: dt.datetime, t1: dt.datetime) -> d
     **`grew` は窓の中で伸びた本の数**（`blind` の分母）。
     **覆る条件 (4)**: `measure` が 1周 に 2回 以上 撃たれるようになったら、`blind` は自然に減ります
     —— **減らないまま `blind == grew` の回が 3周 続いたら**、抑えの取り方（`REPLICA_LAG_H` の側）を
-    疑うこと。(5) 逆に `blind == 0` の回が 7周 続いたら、この欄は外してよい。
+    疑うこと。(5) 逆に `blind == 0` の回が 7周 続いたら、この欄は外してよい
+    （**この (5) を数えるときは `sum_confirmed is None` の回を外すこと** —— 窓が遅れより短い回は
+    `measurable` が偽で、`grew` も `blind` も **0 のまま**返ります ＝ 「測れて 0本」ではなく
+    「訊いていない」。2026-09-12 14:1x に実物で踏んだ・`flat_video_gain` の註）。
     """
     out = {"sum": 0, "n": 0, "fresh": 0, "skipped": 0, "no_base": 0,
            "sum_confirmed": None, "unconfirmable": 0, "lag_h": REPLICA_LAG_H,
@@ -3813,6 +3827,18 @@ def channel_line(rows: list[dict]) -> str:
         elif g["flat_vid_confirmed"] == 0:
             flat += ("**この平らの中で確かめられた本の伸びは 0回 です**（`trend.flat_video_gain`）——"
                      "**「だから止まった」とは読めません**（`measure` が触るのは 19本 だけ・向きは片側）。")
+        elif g["flat_vid_confirmed"] is None:
+            # **3つ目の意味 ＝ そもそも訊けていない**（2026-09-12 14:1x・optimizer・Opus。**実物で踏んだ**）。
+            # 平らが `REPLICA_LAG_H` より短い窓では `channel_video_delta` が
+            # `sum_confirmed` を `None` のまま返し、**`grew` も `blind` も 0 のまま**です
+            # （`measurable` が偽で、数える前に `continue` する）。
+            # ＝ **`blind == 0` は「測れて、伸びが 0 だった」を意味しません** ——
+            # 19:5x が閉じたのは `blind > 0` の側だけで、こちらは**線が 1字も言わない**まま残っていました。
+            flat += (f"**平らの中の伸びは、遅れ {REPLICA_LAG_H:.1f}時間 より短いこの窓では訊けていません**"
+                     "（抑え `min(late)` を取る所が窓の中に無い・`trend.flat_video_gain` の覆る条件 (2)）。"
+                     "**`grew` も `blind` も 0 ですが、それは「伸びた本が無かった」ではありません** ＝ "
+                     "**§7 (m) の『平らの中の伸びが 0 の回』に、この回を数えないこと**"
+                     "（数えてよいのは `proves_alive is False` の回だけ）。")
     # **総再生が動かない窓で登録だけが動いたら、応答が丸ごと古いのではない**（`channel_growth` の註 (4)）
     if g["d_views"] == 0 and g["d_subs"]:
         flat += (f"**同じ窓で登録は {g['d_subs']:+d} 動いています** ＝ "
@@ -3993,6 +4019,11 @@ def channel_line_short(rows: list[dict]) -> str:
                    f"（挟み・{_bench_words(g)}）の"
                    "**上端**に届いていない ＝ 「チャンネルが止まった」とは読めません**"
                    "（`trend.channel_steps`）")
+        # **短い行も、訊けていないことを言うこと**（`channel_line_short` の覆る条件 (2)
+        # 「2つ が違う verdict を言ったら片方を消す」・2026-09-12 14:1x に 3件目を**出る前に**塞いだ）。
+        if g["flat_vid_confirmed"] is None:
+            verdict += (f"（**平らの中の伸びは、遅れ {REPLICA_LAG_H:.1f}時間 より短いこの窓では訊けていません** ＝ "
+                        "`blind == 0` を「伸びが 0 だった」と読まないこと・`trend.flat_video_gain`）")
     else:
         verdict = ("**本ごとの 0回 を読む前に見ること** —— 総再生が動いていれば、"
                    "0回 は**その本の配りの側**です")

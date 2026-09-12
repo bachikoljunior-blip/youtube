@@ -187,3 +187,91 @@ def test_伸びた本が_1本も無い回は_これまでどおり_0回と言う
     rows.append(_vid("2026-09-11T02:05:00+09:00", "oldone", 500, age_h=126.0))
     fv = trend.flat_video_gain(rows)
     assert fv["grew"] == 0 and fv["blind"] == 0 and fv["proves_alive"] is False
+
+
+# ---------------------------------------------------------------------------
+# **`confirmed == 0` の意味は 2つ ではなく 3つ**（2026-09-12 14:1x・optimizer・Opus。**実物で踏んだ**）
+#
+# 19:5x は (a) `blind > 0`（測れなかった）と (b) `blind == 0`（測れて 0本）を分け、
+# §7 (m) に「その『0 の回』は **`blind == 0` の回だけ**です」と書きました。
+# **ところが `blind == 0` は 3つ目の回でも立ちます**: 平らが `REPLICA_LAG_H` より短い窓では
+# `channel_video_delta` の `measurable` が偽で、`grew` も `blind` も **0 のまま** ＝
+# **そもそも訊けていない**のに、(b)（測れて伸びが 0本）と見分けが付きません。
+#
+# **実物**: 2026-09-12 13:5x の周 —— 平ら **4周・2.0時間**（門 3周 ＝ **引かれていた**）・
+# `grew` 0・`blind` 0・`confirmed` `None`・同じ窓で本は `sum` +208回。
+# **そして `channel_line` は、この 3つ目の回に 1字も言っていませんでした**
+# （3つの `elif` がどれも `None` を拾わない）＝ 読む側からは「反証が無かった」に見えます。
+#
+# **直し**: 門に当てる述語を 1つ に寄せる（`proves_alive is False` だけ）＋ 線が理由を言う。
+#
+# **陽性対照**（`.pyc` を消してから撃った・METHOD §5 教訓の形 3つ目／6つ目）:
+# `channel_line` の `flat_vid_confirmed is None` の枝を外すと **1件**／
+# `channel_line_short` の同じ枝を外すと **1件**／
+# `channel_video_delta` の `measurable` を常に真にすると **1件**（`confirmed` が 0 になり
+# `proves_alive` が `False` へ倒れる ＝ 門が訊いてもいない回で引かれる側）。
+# ---------------------------------------------------------------------------
+
+
+def _flat_shorter_than_lag() -> list[dict]:
+    """**門（3周）は引かれているのに、平らが遅れより短い**並び（09/12 13:5x の実物の形）。
+
+    手前に刻みを 1つ 置いて手本（`step_flat_h`）を作り、そのあとを **2.0時間・4周** 平らにする。
+    平らの中で本は伸びている（`sum` は正）が、確かめられる部分（平ら − 遅れ）が無いので
+    `confirmed` は `None`。
+    """
+    rows = [_ch(f"2026-09-12T{h:02d}:00:00+09:00", 84781) for h in (7, 8, 9, 10, 11)]
+    rows.append(_ch("2026-09-12T11:52:00+09:00", 86406))      # 刻み
+    rows += [_ch("2026-09-12T12:32:00+09:00", 86406),
+             _ch("2026-09-12T13:12:00+09:00", 86406),
+             _ch("2026-09-12T13:52:00+09:00", 86406)]
+    # 平らは 11:52 → 13:52（2.0時間 ＜ 遅れ 2.8時間）。基準の点は窓の手前に置くこと。
+    for at, v, age in (("2026-09-12T11:00:00+09:00", 0, 1.0),
+                       ("2026-09-12T12:32:00+09:00", 208, 2.8),
+                       ("2026-09-12T13:52:00+09:00", 434, 3.9)):
+        rows.append(_vid(at, "seventh", v, age_h=age))
+    return rows
+
+
+def test_平らが遅れより短い回は_grewもblindも0のまま() -> None:
+    """**この 0 を (b)（測れて伸びが 0本）と読まないこと** —— 数える前に外れている。"""
+    fv = trend.flat_video_gain(_flat_shorter_than_lag())
+    assert fv["h"] is not None and fv["h"] < trend.REPLICA_LAG_H
+    assert fv["confirmed"] is None and fv["proves_alive"] is None
+    # **ここが (b) と見分けの付かない所**
+    assert fv["grew"] == 0 and fv["blind"] == 0
+    # 同じ窓で本は伸びている（見えるようになった分）＝ 「伸びが無かった」ではない
+    assert fv["sum"] > 0
+
+
+def test_門が引かれていても_平らが遅れより短ければ線が理由を言う() -> None:
+    rows = _flat_shorter_than_lag()
+    g = trend.channel_growth(rows)
+    assert g["flat_laps"] >= trend.CHANNEL_FLAT_LAPS      # 時間の門は引かれている
+    assert g["flat_vid_confirmed"] is None
+    line = trend.channel_line(rows)
+    assert "この窓では訊けていません" in line
+    assert "この回を数えないこと" in line
+    # **断定も反証もしないこと**（向きは片側・訊いていないだけ）
+    assert "チャンネルは止まっていません" not in line
+    assert "確かめられた本の伸びは 0回" not in line
+    assert "「伸びが 0 だった」ではなく「測れなかった」" not in line
+
+
+def test_短い行も_同じ回に同じことを言う() -> None:
+    """**2つ が違う verdict を言ったら片方を消す**（`channel_line_short` の覆る条件 (2)）。"""
+    rows = _flat_shorter_than_lag()
+    short = trend.channel_line_short(rows)
+    assert "訊けていません" in short
+    assert "チャンネルは止まっていません" not in short
+
+
+def test_門に当てる述語は_proves_alive_ひとつだけ() -> None:
+    """`blind == 0` は 3つの回で立つ ＝ 門には使えない。`proves_alive is False` は (b) だけ。"""
+    asked = trend.flat_video_gain(_flat_with_one_late_read())      # (a) 測れなかった
+    short = trend.flat_video_gain(_flat_shorter_than_lag())        # (c) 訊けていない
+    grown = trend.flat_video_gain(_flat_with_a_growing_video())    # 伸びが在る
+    # **`blind == 0` は (c) でも 伸びの在る回でも立つ**
+    assert short["blind"] == 0 and grown["blind"] == 0 and asked["blind"] > 0
+    # **`proves_alive is False` は、この 3つ のどれでも立たない**
+    assert [x["proves_alive"] for x in (asked, short, grown)] == [None, None, True]
