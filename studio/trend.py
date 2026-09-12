@@ -2337,6 +2337,10 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # §4 (0-c) の「外を1回 引く」の連（**本**で数える・`trend.outside_runs` の註
     #  ＝ 「N本 続いたら」と書いて N を数える口が無い族の 4つ目・`hourly` が §16 (8) で渡した）。
     out.append(outside_line())
+    # `hear.tail_voice` / `head_voice` の覆る条件（`分けられない` が 3本 続けたら閾ではなく引き方）の連
+    #  —— **同じ族の 10例目**。答えは 09/09 から台帳に積んであり、**読む物だけが無かった**
+    #  （`trend.voice_runs` の註。**単位は「本」** ＝ 同じ本の聞き直しで数えない）。
+    out.append(voice_line(rows))
     # §7 末尾「1日1本」の覆る条件（500回 が 7本 続いたら 2本/日 を試す）の連
     #  —— **同じ族の 5つ目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`）。
     out.append(views_streak_line(rows))
@@ -3361,6 +3365,99 @@ def outside_line(method: "Path | None" = None) -> str:
                  "**縮めてよいかの判定は `hourly`**（§5・台本を持つ側）。")
     body += (f"  直近は §{last['sec']}（公表ページ {last['page']}・改正 {last['reform']}）。"
              "**行の無い本は数えません**（連は復元しない ＝ §4 19:4x の決め）。")
+    return body
+
+
+#: `hear.tail_voice` の覆る条件（**`分けられない` が 3本 続けて出るなら、閾（0.2／0.4秒）が
+#: 音の実物と合っていない ＝ 秒ではなく「欠けた語のモーラ数」から要る秒を出す側へ移すこと**）の連の門。
+#: **`hear.voice_verdict` の閾は頭と末尾で同じ**なので、`voice` と `head_voice` は同じ連に入れます。
+VOICE_UNSURE_NEED = 3
+
+
+def voice_runs(rows: list[dict], need: int = VOICE_UNSURE_NEED) -> dict:
+    """**音の側の答え（`hear.tail_voice` / `head_voice`）の `分けられない` が、本で何本 続いているか**
+    （2026-09-13 01:5x JST・optimizer・Opus が足した。台帳の `heard` の行だけ・**API 0単位**）。
+
+    **なぜ要るか**: `hear.tail_voice` の覆る条件は「**`分けられない` が 3本 続けて出るなら、
+    閾（0.2／0.4秒）が音の実物と合っていない**」と書いてありますが、**その連を数える口が
+    在りませんでした** —— `late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・
+    `views_streak`・`rev7_run`・`feature_cohorts`・`span_narrow_run`・`report_vs_ledger` の
+    `censored` と**同じ族の 10例目**（「N本 続いたら」と覆る条件に書いて、N を数える口が無い）。
+    しかも `cli.cmd_hear` は `voice` / `head_voice` の答えを
+    「次の回が数えるため」と註を付けて台帳へ**毎回 積んでいました** ＝
+    **数は 09/09 から在り、読む物だけが無かった**側です（`meta_fixes` と同じ形）。
+
+    **単位は「本」で、周でも聞き直しでもありません。** 同じ本を 1周 に 5回 聞き直す回が在り
+    （実測 09/12 の本 ＝ `heard` 10行）、行で数えると連は**引かれる側へ甘く**なります。
+    **音の側が 1度も答えなかった本は、連を伸ばしも切りもしません**（`tail_voice` は
+    末尾に差の出たコマでしか撃たれないので、差の無い本は「在る／無い」を言っていない ＝
+    `span_narrow_run` が「測っていない周」を数えないのと同じ向き）。
+
+    本の並びは **`id` の日付**（`2026-09-14-...`）で読みます —— 台帳の刻ではありません
+    （前の本を後から聞き直す周が在るので、刻で並べると本の順が入れ替わります）。
+
+    返すもの: ``run``・``need``・``gate``（= `need`）・``drawn``・``spoke``（音の側が答えた本の数）・
+    ``silent``（答えなかった本の数）・``books``（新しい順の本ごとの内訳。**判定した実物を返り値に残す**
+    ＝ §5 教訓の形 4つ目）。
+
+    **覆る条件**: (1) `drawn` が立ったら、直すのは閾の数ではなく**引き方**です
+    （`hear.tail_voice` の註 ＝ 欠けた語のモーラ数から要る秒を出す側へ）。
+    **閾を 2か所 に置かないこと** —— 0.2／0.4 は `hear.VOICE_GAP_ABSENT` / `VOICE_GAP_PRESENT` の 1か所。
+    (2) 「当たったか」（`音は在る` と出たコマが耳で本当に在ったか）は、**この口では数えられません**
+    —— 台帳に在るのは答えだけで、当たり外れは本の節に在ります。
+    `tail_voice` のもう 1つ の覆る条件（**3本 続けて当たったら `tail_probe` の印字をやめて寄せる**）を
+    数えるには、**その判定を台帳へ積む口が先に要ります**（積むのは `hourly` の側 ＝ 本を出す回）。
+    (3) 1本 の中で `分けられない` が 1つ でも出れば、その本は「出た」に数えます
+    （コマの数で重みを付けない）—— 重みを付ける形にするなら、この註と検査を一緒に書き直すこと。
+    """
+    books: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") != "heard":
+            continue
+        bid = str(r.get("id") or "")
+        b = books.setdefault(bid, {"id": bid, "n": 0, "present": 0, "absent": 0, "unsure": 0})
+        for field in ("voice", "head_voice"):
+            for v in (r.get(field) or {}).values():
+                key = {"音は在る": "present", "音が無い": "absent",
+                       "分けられない": "unsure"}.get(str(v))
+                if key is None:
+                    continue
+                b["n"] += 1
+                b[key] += 1
+    order = sorted(books.values(), key=lambda b: str(b["id"]), reverse=True)
+    spoke = [b for b in order if b["n"]]
+    run = 0
+    for b in spoke:                      # **答えた本だけ**を新しいほうから数える（覆る条件 (3)）
+        if b["unsure"]:
+            run += 1
+        else:
+            break
+    return {"run": run, "need": need, "gate": need, "drawn": run >= need,
+            "spoke": len(spoke), "silent": len(order) - len(spoke),
+            "books": order, "unit": "本"}
+
+
+def voice_line(rows: list[dict]) -> str:
+    """`voice_runs` を1行にする（`trend` が毎周 印字 ＝ **手で数えないこと**・註は `voice_runs`）。"""
+    r = voice_runs(rows)
+    if not r["spoke"]:
+        return ("**音の側の答え（`hear.tail_voice` / `head_voice`）: 答えた本 0本**"
+                "（`trend.voice_runs`・台帳だけ・API 0単位）—— **この 0 は「音が無い」ではなく"
+                "「末尾・頭に差の出たコマが 1つ も無かった」**です。")
+    shown = [b for b in r["books"] if b["n"]][:int(r["run"]) + 1]
+    body = (f"**音の側の答え**（`hear.tail_voice` / `head_voice` の覆る条件・`trend.voice_runs`・"
+            f"台帳だけ・**API 0単位**）: **`分けられない` の連 {r['run']}/{r['need']}本**"
+            f"（**単位は「本」＝ 周でも聞き直しでもありません** —— 同じ本を 1周 に 5回 聞き直す回が在り、"
+            f"行で数えると連が甘くなります・同 註）。"
+            f"**音の側が 1度も答えなかった本 {r['silent']}本 は、連を伸ばしも切りもしません**"
+            f"（答えた本 {r['spoke']}本）。")
+    body += ("  新しいほうから: "
+             + "・".join(f"{b['id'][:10]} 在る{b['present']}／無い{b['absent']}／"
+                         f"分けられない{b['unsure']}" for b in shown) + "。")
+    if r["drawn"]:
+        body += ("  !! **門に届きました ＝ 閾（0.2／0.4秒）が音の実物と合っていません** —— "
+                 "**直すのは閾の数ではなく引き方**（欠けた語のモーラ数から要る秒を出す側へ・"
+                 "`hear.tail_voice` の註の覆る条件）。")
     return body
 
 
@@ -5514,7 +5611,9 @@ def reporting_due_words(rows: list[dict], last_day: str | None,
     if d["why"] == "early":
         return (f"  **`reporting` は撃たなくてよい回です** —— {last}・次の報告の日 "
                 f"**{d['next_day']}** の見込みは {eta:%m/%d %H:%M} JST ＝ **あと {gap:.1f}時間**"
-                f"（`trend.reporting_due`・置かれるまで {d['made_h']:.1f}時間）")
+                f"（`trend.reporting_due`・見込みの出どころは"
+                f"**窓が閉じてから置かれるまでの {d['made_h']:.1f}時間** ＝ 台帳の `made_h`。"
+                f"**この数は残り時間ではありません**）")
     if d["why"] == "waited":
         return (f"  **`reporting` は見込みの後に撃って、まだ空でした** —— {last}・"
                 f"報告の日 **{d['next_day']}** は遅れている側 ＝ "
