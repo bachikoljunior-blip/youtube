@@ -1226,9 +1226,35 @@ def analytics_recent_ids(rows: list[dict], within_h: float = 24 * 10,
     return [vid for vid, _ in sorted(seen.items(), key=lambda kv: kv[1], reverse=True)]
 
 
+#: 1回の引きで**必ず 1行**書かれる出来事（`cmd_analytics` の末尾・**日が動かなくても書く**）。
+#: `analytics_day` は**動いた日だけ**なので、引きの刻の正本にはなりません（下の註）。
+ANALYTICS_PULL_EVENT = "analytics_traffic"
+
+
 def analytics_last_at(rows: list[dict]) -> dt.datetime | None:
+    """**最後に `cli analytics` を撃った刻**（門 `analytics_due` が読む）。
+
+    **`analytics_day` だけを見ないこと**（2026-09-14 01:0x・optimizer・Opus が実物で踏んだ）——
+    `analytics_days_to_log` は **数が動いた日だけ**を台帳へ足すので、
+    **何も動かなかった引きは `analytics_day` を 1行も残しません**。
+    そのとき この関数は**前の引きの刻を返し続け**、門（20時間）は開いたまま ＝
+    **毎周 Analytics API を撃ちます**（別枠のクエリが 1周 3回＋カーブ）。
+
+    **まだ踏んでいませんが、あと 1歩 でした**: 2026-09-14 00:52 の引きは 14日 のうち
+    **3日（09-03〜09-05）しか動かず**、その 3行 で門が閉じました。
+    古い日が書き直されなくなれば **0行** です。
+
+    **正本は `analytics_traffic`** —— `cmd_analytics` が引きの末尾で**必ず 1行**書きます
+    （`lag_days` と最後の日を持つのも この行）。**両方の max を採る**のは、
+    この口が入る前の台帳に `analytics_day` しか無い回が在るからです。
+
+    **覆る条件**: (1) `cmd_analytics` が `analytics_traffic` を条件つきで書くように変わったら、
+    この関数の正本もその回に一緒に直すこと（**1回の引き ＝ 1行** が前提）。
+    (2) 引きの刻を他にも要る所が出たら、`trend.analytics_state` の `at` と**同じ規則**にすること
+    （いま 2か所・どちらも「両方の max」）。
+    """
     ats = [dt.datetime.fromisoformat(r["at"]) for r in rows
-           if r.get("event") == "analytics_day"]
+           if r.get("event") in ("analytics_day", ANALYTICS_PULL_EVENT)]
     return max(ats) if ats else None
 
 

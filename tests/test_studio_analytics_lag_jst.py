@@ -58,19 +58,55 @@ def test_遅れは読む刻から数え直す():
     assert "**遅れ 5日" in trend.analytics_line(rows, now=later)
 
 
-def test_本物の台帳でも遅れは3日のまま():
-    """**本物の台帳**（live）: 引きは 4回 とも「最後の日 ＝ 引いた JST の日 - 3日」。
+def test_本物の台帳の引きは_JSTの日で数えてある():
+    """**本物の台帳**（live）: 引きごとに書かれた `lag_days` が、**JST の日の差**と合うこと。
 
-    **1行でも 3日 でない回が出たら、まず「引いた刻」を見ること**（`analytics` の 覆る条件 (1)）——
-    API が速くなったのではなく、数え方が UTC へ戻った側かもしれません。
+    **2026-09-14 01:0x に書き直しました**（optimizer・Opus。**赤で見つけた**）——
+    前の形は 2つ とも「きょうの状態」を不変条件にしていました（§5 の教訓の形 6つ目）:
+
+      (i) **「遅れは 4回 とも 3日」を門にしていた** —— 遅れは API だけでは決まりません。
+          **こちらが引く刻でも動きます**（門 20時間 ＝ 刻が 1日 4時間 ずつ前へ歩く・
+          `trend.analytics_draws` の註）。実測 09/14 00:52 の引きは **遅れ 4日**。
+      (ii) **引きの「最後の日」を `analytics_day` の max で当てていた** ——
+          `cli.analytics_days_to_log` は**数が動いた日だけ**を足すので、
+          **その max は API の最後の日ではありません**（実測 09/14 00:52 の引きは
+          09-03〜09-05 の 3行 だけ ＝ max は 09-05・API の最後の日は 09-10）。
+          **1回の引きで必ず 1行 書かれるのは `analytics_traffic`** のほう。
+
+    **残す不変条件は 2つ**（どちらも日が経っても腐らない）:
+      **(a) 遅れは 3日 より短くならない**（短くなったら `analytics` の 覆る条件 (1) の刻 ——
+          そのときも**まず引いた刻を見ること**）。
+      **(b) 書かれた `lag_days` は、引いた JST の日 − 最後の日**（＝ UTC へ戻ったら落ちる）。
+          **(b) を当てるのは 2026-09-13 19:3x の直しより後の行だけ** ——
+          それより前の 2行 は UTC で数えた偽の 2日 で、**台帳は書き換えません**（`lag_days` の註）。
     """
-    pulls: dict[str, str] = {}
+    fixed = dt.datetime(2026, 9, 13, 19, 30, tzinfo=JST)
+    seen = 0
     for r in ledger_rows():
-        if r.get("event") == "analytics_day":
-            pulls[r["at"]] = max(pulls.get(r["at"], ""), str(r.get("id") or ""))
-    if not pulls:
-        return
-    for at, last_day in pulls.items():
-        got = (dt.datetime.fromisoformat(at).astimezone(JST).date()
-               - dt.date.fromisoformat(last_day)).days
-        assert got == 3, f"{at} の引きの遅れが {got}日（最後の日 {last_day}）"
+        if r.get("event") != "analytics_traffic" or not r.get("id"):
+            continue
+        at = dt.datetime.fromisoformat(r["at"]).astimezone(JST)
+        got = (at.date() - dt.date.fromisoformat(r["id"])).days
+        assert got >= 3, f"{at:%m/%d %H:%M} の引きの遅れが {got}日（`analytics` の 覆る条件 (1)）"
+        if at >= fixed and r.get("lag_days") is not None:
+            seen += 1
+            assert r["lag_days"] == got, (
+                f"{at:%m/%d %H:%M} の `lag_days` {r['lag_days']} が JST の日の差 {got} と割れています"
+                "（UTC で数え直した側・`analytics.lag_days` の註）")
+    assert seen, "直しより後の引きが 1行 もありません（この検査は何も見ていません）"
+
+
+def test_直しより前の2行はUTCの偽の2日のまま_陽性対照():
+    """**陽性対照**: 09/12 08:25・09/13 04:38 の 2行 は、いまも `lag_days: 2`（JST では 3）。
+
+    ＝ 上の (b) を**全部の行**に当てたら落ちます（＝ 絞り `fixed` が効いていることの証拠）。
+    **台帳を書き換えて緑にしないこと** —— この 2行 が「UTC で数えていた回が在った」の記録です。
+    """
+    bad = []
+    for r in ledger_rows():
+        if r.get("event") != "analytics_traffic" or r.get("lag_days") is None:
+            continue
+        at = dt.datetime.fromisoformat(r["at"]).astimezone(JST)
+        if r["lag_days"] != (at.date() - dt.date.fromisoformat(r["id"])).days:
+            bad.append(f"{at:%m/%d %H:%M}")
+    assert bad == ["09/12 08:25", "09/13 04:38"], bad
