@@ -1,4 +1,4 @@
-"""`scripts/turf_run.py` の見張り（§5 の file ごとの取り分の連）。
+"""`scripts/turf_run.py` の見張り（§5 の取り分の覆る条件 (2) ＝ `!!` の連）。
 
 **陽性対照で測ってあります** —— どの検査も、門か当たりを 1つ 外すと落ちます
 （§5 教訓の形 3つ目: 「在るか」で見る形は、畳んでも通ってしまう）。
@@ -109,18 +109,70 @@ def test_判定を持つ側のfileでなければ数えない_陽性対照() -> 
     assert turf.marks_from(rs, tt, {"scripts/quota.py"}) != []
 
 
+def _mark(both: bool, h: int = 3) -> dict:
+    return {"round": _at(h), "files": ["studio/trend.py"],
+            "both": ["studio/trend.py"] if both else []}
+
+
+def test_連は末尾から続く印だけを数える() -> None:
+    assert turf.bang_streak([_mark(True), _mark(True), _mark(True)]) == 3
+    # 末尾が印なし ＝ 連は 0（**居合わせていない周は反例にならない**）
+    assert turf.bang_streak([_mark(True), _mark(True), _mark(False)]) == 0
+
+
+def test_印の無い周は連を切る_陽性対照() -> None:
+    """`!!` の総数で数えていれば 3 になる並び。**末尾から数えれば 1**。"""
+    ms = [_mark(True), _mark(True), _mark(False), _mark(True)]
+    assert sum(1 for m in ms if m["both"]) == 3      # 総数で数えた場合（＝ 誤り）
+    assert turf.bang_streak(ms) == 1                 # 末尾から（＝ §5 の「3回 続き」）
+
+
 def test_門は3回で_連が届かなければ引かれない() -> None:
     assert turf.GATE == 3
-    rs = [_at(3), _at(4)]
+    marks = [_mark(True), _mark(True)]
+    assert turf.bang_streak(marks) < turf.GATE
+
+
+def test_触れた周の数と連は別の数() -> None:
+    """02:5x の閉じた連（触れた周の数）を、いまの連として読まないための見張り。"""
+    rs = [_at(3), _at(4), _at(5)]
     tt = [(_at(3, 10), "optimizer", {"studio/trend.py"}),
-          (_at(4, 10), "optimizer", {"studio/trend.py"})]
-    assert len(turf.marks_from(rs, tt, {"studio/trend.py"})) < turf.GATE
+          (_at(4, 10), "optimizer", {"studio/trend.py"}),
+          (_at(5, 10), "optimizer", {"studio/trend.py"})]
+    marks = turf.marks_from(rs, tt, {"studio/trend.py"})
+    assert len(marks) == 3 and turf.bang_streak(marks) == 0
+
+
+def test_引かれたかは触れた周ではなく連で決まる_陽性対照() -> None:
+    """`drawn` を `len(marks)` に戻すと落ちる（02:5x の閉じた連へ戻る形）。"""
+    ms = [_mark(False, 3), _mark(False, 4), _mark(False, 5), _mark(False, 6)]
+    v = turf.verdict(ms)
+    assert v["touched"] == 4 and v["touched"] >= v["gate"]   # 閉じた連なら「引かれました」
+    assert v["run"] == 0 and v["drawn"] is False             # いまの連では引かれない
+
+
+def test_連が門に届けば引かれる() -> None:
+    v = turf.verdict([_mark(False, 2), _mark(True, 3), _mark(True, 4), _mark(True, 5)])
+    assert v["run"] == 3 and v["drawn"] is True
 
 
 def test_いまのrepoで撃てて_行に連と門と起点が出る() -> None:
     res = turf.run(laps=40)
     assert res["gate"] == 3
-    assert res["run"] == len(res["marks"])
+    assert res["run"] == turf.bang_streak(res["marks"])
+    assert res["touched"] == len(res["marks"])
     out = turf.line(res)
     assert "連:" in out and "門 3回" in out
     assert ("引かれました" in out) == res["drawn"]
+
+
+def test_閉じた連を引かれたと印字しない_陽性対照() -> None:
+    """触れた周が門を越えていても、`!!` が続いていなければ「引かれました」と言わないこと。"""
+    res = dict(turf.run(laps=40))
+    res["marks"] = [_mark(False, 3), _mark(False, 4), _mark(False, 5), _mark(False, 6)]
+    res["touched"] = 4
+    res["run"] = turf.bang_streak(res["marks"])
+    res["drawn"] = res["run"] >= turf.GATE
+    out = turf.line(res)
+    assert res["run"] == 0 and "引かれました" not in out
+    assert "触れた周 4つ" in out
