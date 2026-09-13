@@ -2430,6 +2430,58 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
 ANALYTICS_MIN_VIEWS = 30
 
 
+def analytics_draws(tr_rows: list[dict]) -> dict:
+    """**引きの数と、新しい日が入らなかった引き（空引き）**（`analytics_traffic` だけ・API 0単位）。
+
+    **なぜ要るか**（2026-09-14 01:0x・optimizer・Opus。**この回に 1本目 が出た**）:
+    `cli analytics` の門は「前の引きから 20時間」で、周は 1時間 弱 なので、
+    **引きの刻は 1日に 約 4時間 ずつ前へ歩きます**（実測 09/10 16:07 → 09/11 12:18 →
+    09/12 08:25 → 09/13 04:38 → **09/14 00:52**）。
+    そして 00:52 の引きは **最後の日が 09-10 のまま** ＝ **新しい日が 1日も入りませんでした**
+    （API の遅れは 3日 のままで、**こちらが API の日替わりより手前へ歩いた**側）。
+
+    **この空引きは、数の側にも出ます** —— `rev7_draws` は空引きを落とし、
+    `rev7_source` は**同じ日の引き直しを新しいほうで置き換える**ので、
+    同じ周の印字で「最後の引き」が **09/13 04:38 と 09/14 00:52 の 2つ**になります
+    （§7 の収益の節は、その 2行 を並べて読ませます）。**数える口が無いと、次の回は
+    「引きが 2回 入った」と読みます。**
+
+    **`--force` の引き直しは空引きに数えません**（実測 4回 中 3回 がそれ ——
+    09/10 16:07→16:17→16:18・09/11 12:18→12:20 は**数分 差**で、門を通っていません）。
+    分けるのは**前の引きからの間隔が門（`cli.ANALYTICS_MIN_H`）以上か**だけで、
+    JST の日では分けません（門の刻が真夜中を跨ぐと、同じ日に 2回 入る回が出ます）。
+
+    返り: `{"draws", "empty", "empty_run", "walk_h"}`。
+    `walk_h` は直近 2回 の引きの間隔（時間）。
+
+    **覆る条件**: (1) 空引きが **2回目**が出たら、門を「前の引きから 20時間」から
+        **刻で留める**側（JST の決まった時刻より後だけ）へ変えること ——
+        いまは n=1 で、API の日替わりの刻は **00:52〜04:38 JST のあいだ**としか言えません。
+    (2) 空引きが出た回に `rev7_draws` と `rev7_source` の「最後の引き」が割れたままなら、
+        直す先は門ではなく `rev7_source` の畳み方（**判定は `hourly`**・§5 ＝ 申し送り）。
+    (3) 門（`cli.ANALYTICS_MIN_H`）が 24時間 以上 になったら、刻は前へ歩かなくなる ＝
+        この口は連を数えるだけでよい。
+    """
+    from .cli import ANALYTICS_MIN_H       # 門は 1か所（`cli`）。module の頭で import すると輪になる
+    seen = sorted(tr_rows, key=lambda r: r["at"])
+    empty = run = 0
+    for prev, cur in zip(seen, seen[1:]):
+        gap = ((dt.datetime.fromisoformat(cur["at"])
+                - dt.datetime.fromisoformat(prev["at"])).total_seconds() / 3600)
+        if gap < ANALYTICS_MIN_H:
+            continue                          # `--force` の引き直し ＝ 門を通っていない
+        if cur.get("id") == prev.get("id"):
+            empty += 1
+            run += 1
+        else:
+            run = 0
+    walk = None
+    if len(seen) >= 2:
+        walk = ((dt.datetime.fromisoformat(seen[-1]["at"])
+                 - dt.datetime.fromisoformat(seen[-2]["at"])).total_seconds() / 3600)
+    return {"draws": len(seen), "empty": empty, "empty_run": run, "walk_h": walk}
+
+
 def analytics_state(rows: list[dict], now: dt.datetime | None = None) -> dict:
     """台帳の `analytics_*` をまとめる（**API 0単位** ＝ 引いたのは `cli analytics` の回）。
 
@@ -2458,7 +2510,10 @@ def analytics_state(rows: list[dict], now: dt.datetime | None = None) -> dict:
     if not day_rows:
         return {}
     last_day = max(r["id"] for r in day_rows)
-    at = max(dt.datetime.fromisoformat(r["at"]) for r in day_rows)
+    # **引きの刻は `analytics_traffic` から**（`cli.analytics_last_at` と同じ規則）——
+    # `analytics_day` は**動いた日だけ**なので、何も動かなかった引きは 1行も残しません。
+    at = max(dt.datetime.fromisoformat(r["at"])
+             for r in (day_rows + tr_rows))
     days = sorted(({r["id"]: r for r in day_rows}).values(), key=lambda r: r["id"])[-3:]
     last_tr = max(tr_rows, key=lambda r: r["at"]) if tr_rows else None
     latest = {}
@@ -2486,7 +2541,8 @@ def analytics_state(rows: list[dict], now: dt.datetime | None = None) -> dict:
             "new": _side(True), "old": _side(False),
             "subs": sum(int(r.get("subs_gained") or 0) for r in latest.values()),
             "shorts_pct": (src.get("SHORTS", 0) / tot * 100) if tot else None,
-            "sources": src}
+            "sources": src,
+            **analytics_draws(tr_rows)}
 
 
 def analytics_line(rows: list[dict], now: dt.datetime | None = None) -> str:
@@ -2510,11 +2566,16 @@ def analytics_line(rows: list[dict], now: dt.datetime | None = None) -> str:
     # **台帳の `lag_at_pull` は印字しません** —— 09/12・09/13 の 2行 は UTC で数えた偽の 2日 で、
     # 並べると「引いてから日が変わった」と読ませます（どちらも `analytics_state` の註）。
     lag = f"**遅れ {a['lag_days']}日 ＝ きょう公開した本には答えません**"
+    # **空引き**（新しい日が入らなかった引き）は、門の刻が API の日替わりより手前へ歩いた印。
+    empty = ""
+    if a.get("empty"):
+        empty = (f"**空引き {a['empty']}回**（新しい日が 1日も入らなかった引き・連 {a['empty_run']}回）"
+                 f"——**門の刻が 1日 4時間 ずつ前へ歩きます**（`trend.analytics_draws` の覆る条件 (1)）。")
     return (f"**維持率と流入**（Analytics API・台帳から・**Data API 0単位**）: 最後の日 **{a['last_day']}**"
             f"（引いたのは {a['age_h']:.0f}時間 前・{lag}）。"
             f"日ごとの再生 {d}。{_side(a['new'], '新しい作り')} 対 {_side(a['old'], '旧作り')}"
             f"——**%と秒で向きが逆になります**（判定は `hourly`・§5）。"
-            f"窓の中の**登録の増え 合計 {a['subs']}**{sp}")
+            f"窓の中の**登録の増え 合計 {a['subs']}**{sp}。{empty}")
 
 
 #: §7 の収益の節の 覆る条件 (4) の門。**単位は「引き」で、周ではありません**（`rev7_run` の註）。
