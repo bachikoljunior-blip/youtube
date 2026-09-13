@@ -2320,6 +2320,11 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  中位を下回ったら 絞るか外す）を数える口 —— **同じ族の 7例目・8例目**
     #  （`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・`views_streak`・`rev7_run`）。
     out.append(feature_line(rows))
+    # §7 末尾の「形」の覆る条件（新しい作り 7本 の 48h の中央値が、旧作りの帯 60〜191回 を
+    #  越えなければ 形か題材が原因）と、その (1-a)（5〜7本目 で 437回 を下回る本 2本）を数える口
+    #  —— **同じ族の 9例目**。2026-09-12 10:1x に手で書かれた「5/7 本・中央値 140回」は、
+    #  **24時間 で 6/7 本・338〜377回（帯の中 → 帯の上）へ反転しました**（`trend.shape_run` の註）。
+    out.append(shape_line(rows))
     out.append(analytics_line(rows, now=now))
     # §7 の収益の節の 覆る条件 (4)（直近7日の平均が続けて上がったら、分子はチャンネルの回復の側）の連
     #  —— **同じ族の 6例目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・
@@ -3707,6 +3712,145 @@ def feature_line(rows: list[dict], scripts: "Path | None" = None) -> str:
             + "　**48h は挟みで読みます**（齢 48.0h ちょうどの点を持つ本は 0本 ＝ "
               "点を 1つ 選ぶと判定が動く・`views_at_age` の註）。"
               "**2つ の型は同じ本に乗るので、どちらが効いたかは分けられません**（覆る条件 (4)）。")
+
+
+
+#: §7「形」の門 —— **新しい作りの本を「何本」出して** 48h の中央値を旧作りと比べるか。
+SHAPE_GATE = 7
+#: §1 の表の「09/01〜 1本/日で 60〜191回」（旧作りの帯）。**この口では引き直していません**
+#: —— §1 の写しで、動かすのは §1 の側（`shape_run` の 覆る条件 (2)）。
+SHAPE_OLD_BAND = (60, 191)
+#: §7「形」の 新しい覆る条件 (1-a)（2026-09-11 14:2x・`hourly`）——
+#: 「5〜7本目 の 48h が **437回** を下回る本が **2本** 出たら、n=1 を戻す」。
+SHAPE_N1_VIEWS = 437
+SHAPE_N1_GATE = 2
+#: (1-a) が数える本の並び（**1 始まり・両端を含む**）。
+SHAPE_N1_RANGE = (5, 7)
+
+
+def studio_books(rows: list[dict], scripts: "Path | None" = None) -> list[dict]:
+    """**新しい作りの本**を、公開の順に並べて 48h の挟みを付ける（台本 ＋ 台帳だけ・**API 0単位**）。
+
+    返り: ``idx``（**何本目**か・1 始まり）・``sid``・``id``（video_id）・``day``・
+    ``published``・``at48``（`views_at_age` の挟み）。
+
+    **`feature_cohorts` は同じ 8行 を自分の中に持っています。畳んでいません** ——
+    あちらは §7「いまの数」が「**判定は `hourly`**・`trend.feature_cohorts`」と名指しした関数で、
+    §5 の 2026-09-13 02:5x の決め（**判定を持たない側は、名指しされた file の別の関数にも手を入れない**）が
+    掛かる側だからです。**覆る条件**: その決めが緩んだら（同 覆る条件 ＝ 二重にならない回が 3回）、
+    `feature_cohorts` をこの関数の上に載せ直すこと。
+    """
+    from .script import SCRIPTS
+    base = Path(scripts) if scripts is not None else SCRIPTS
+    vids = _script_video_ids(rows)
+    mine = ours(rows)
+    ser = series(rows)
+    out: list[dict] = []
+    for i, p in enumerate(sorted(base.glob("*.json")), start=1):
+        sid = p.stem
+        vid = vids.get(sid)
+        pts = ser.get(vid or "", [])
+        published = bool(vid and vid in mine and pts)
+        at48: dict = {"reached": False, "lo": None, "hi": None, "exact": False}
+        day = sid[:10]
+        if published:
+            at48 = views_at_age(pts, envelope(pts))
+            day = published_at(pts).strftime("%Y-%m-%d")
+        out.append({"idx": i, "sid": sid, "id": vid, "day": day,
+                    "published": published, "at48": at48})
+    return out
+
+
+def shape_run(rows: list[dict], scripts: "Path | None" = None) -> dict:
+    """**§7「形」の「7本 の 48h の中央値」を数える口**（台本 ＋ 台帳だけ・**API 0単位**）。
+
+    **なぜ（2026-09-13 10:1x JST・optimizer・Opus）**: §7 末尾の「形」は
+    「**新しい作りの本を 7本 出して、48時間の再生の中央値が旧作り（60〜191回）を越えなければ、
+    書き方ではなく形か題材が原因**」と書いていますが、**その 7本 と中央値を数える物が
+    1つも在りませんでした** —— `late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・
+    `views_streak`・`rev7_run`・`feature_cohorts`（2型）と **同じ族の 9例目**
+    （「N本 で判定する」と覆る条件に書きながら、N を数える口が無い）。
+
+    **手で運んだ数は、この回に実際に古くなっていました**: §7「形」の行は
+    2026-09-12 10:1x（`hourly`）に **「いま 5/7 本・中央値 140回 ＝ 旧作りの帯の中へ戻りました」** と
+    書かれ、**その 24時間 後（09/13 10:00 JST ＝ 6本目 の 48h）に 6/7 本・中央値 338〜377回 ＝
+    帯の上 へ反転しています**。同じ行の 決め (5) が「**1本で判定が反転する**」と書いていた当のものが、
+    **書いた側の数のほうで起きました。**
+
+    **この口が答えるのは 4つ だけ**:
+
+    * 新しい作りの本が **何本** 在り、うち **48h に着いた本が何本** か（＝ 門 7本 までの残り）
+    * その 48h を**挟みのまま**並べた **中位**（`views_at_age` ＝ 齢 48.0h ちょうどの点は実物 0本）
+    * それが **旧作りの帯（60〜191回）のどちら側**か（**重なったら「分けられない」** ＝ 言い切らない）
+    * 覆る条件 (1-a) の連 —— **5〜7本目 のうち 48h が 437回 を下回った本の数**（門 2本）
+
+    **0回 の本も 1本 として数えます**（§7「形」の 決め (5)・`feature_cohorts` と同じ側）。
+
+    **判定は `hourly`**（§5 ＝ 形を変えるかは台本を持つ側・optimizer はこの数を並べるまで）。
+
+    **覆る条件**: (1) 門（7本）に届いた回に挟みが帯と重なったら（``verdict == "分けられない"``）、
+    **そこで判定を下さないこと** —— 要るのは齢 48h ちょうどの点で、いまの測りの間隔（約 55分）では
+    取れません（`feature_cohorts` の 覆る条件 (1) と同じ壁・値段は 1周ぶん）。
+    (2) **旧作りの帯 60〜191回 は §1 の表の写しで、この口では引き直していません。**
+    同じ挟みで 09/01〜09/05 を数え直すと **0〜347回**（15本・0回 と 1580秒 の長尺を含む）になり、
+    **帯の作り方（どの本を入れたか）が §1 に書かれていません** ＝ 引き直すなら §1 の側を先に直すこと
+    （**判定は `hourly`**・derivation は JOURNAL 09/13 10:1x）。
+    (3) 門に届いたあとも本は増えます —— **中位は動き続けます**が、
+    「形か題材が原因」の判定は **7本 の刻で 1度** 下すものです（§7「形」の本文）。
+    届いたあとの中位で判定を上書きするなら、その理由をその回に書くこと。
+    """
+    books = studio_books(rows, scripts)
+    ready = [b for b in books if b["at48"]["reached"]]
+    lo_band, hi_band = SHAPE_OLD_BAND
+    mid = _median_bracket([b["at48"] for b in ready]) if ready else None
+    lo_i, hi_i = SHAPE_N1_RANGE
+    n1_range = [b for b in books if lo_i <= b["idx"] <= hi_i]
+    n1_below = [b for b in n1_range
+                if b["at48"]["reached"] and b["at48"]["hi"] < SHAPE_N1_VIEWS]
+    n1_wait = [b for b in n1_range if not b["at48"]["reached"]]
+    verdict = "まだ"
+    if len(ready) >= SHAPE_GATE and mid is not None:
+        if mid["lo"] > hi_band:
+            verdict = "帯の上"
+        elif mid["hi"] < lo_band:
+            verdict = "帯の下"
+        elif lo_band <= mid["lo"] and mid["hi"] <= hi_band:
+            verdict = "帯の中"
+        else:
+            verdict = "分けられない"
+    return {"gate": SHAPE_GATE, "band": SHAPE_OLD_BAND, "books": books,
+            "n": len(books), "ready": ready, "n_ready": len(ready),
+            "short": max(0, SHAPE_GATE - len(ready)), "mid": mid, "verdict": verdict,
+            "n1_gate": SHAPE_N1_GATE, "n1_views": SHAPE_N1_VIEWS,
+            "n1_below": n1_below, "n1_wait": n1_wait}
+
+
+def shape_line(rows: list[dict], scripts: "Path | None" = None) -> str:
+    """`shape_run` を1行にする（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
+    r = shape_run(rows, scripts)
+    lo_band, hi_band = r["band"]
+    body = (f"**形（§7 末尾の「形」の覆る条件を数える口・`trend.shape_run`・台本と台帳だけ・"
+            f"**API 0単位**）: 新しい作りの本 {r['n']}本"
+            f"（48h に着いた {r['n_ready']}本／門 {r['gate']}本）** ＝ "
+            + "・".join(
+                f"{b['day'][5:]}{'' if b['published'] else '（未公開）'} "
+                + (_bracket_words(b["at48"]) if b["at48"]["reached"] else "まだ")
+                for b in r["books"]))
+    if r["mid"] is not None:
+        body += (f"　→ **中位 {_bracket_words(r['mid'])}** 対 **旧作りの帯 {lo_band}〜{hi_band}回**"
+                 f"（§1 の表の写し・**この口では引き直していません**・覆る条件 (2)）")
+    if r["verdict"] == "まだ":
+        body += (f"　→ **まだ引けません**（48h に着く本が あと {r['short']}本"
+                 "。**この中位は途中の数です** —— 1本 で反転します・決め (5)）")
+    elif r["verdict"] == "分けられない":
+        body += "　→ !! **門に届きましたが、挟みが帯と重なって分けられません**（覆る条件 (1)）"
+    else:
+        body += f"　→ !! **門に届きました。中位は {r['verdict']}**（**判定は `hourly`**・§5）"
+    body += (f"　**(1-a)（5〜7本目 の 48h が {r['n1_views']}回 を下回った本）: "
+             f"{len(r['n1_below'])}本／門 {r['n1_gate']}本**"
+             + (f"（まだ 48h に着いていない {len(r['n1_wait'])}本）" if r["n1_wait"] else "")
+             + "。**48h は挟みで読みます**（`views_at_age`）・**0回 の本も数えます**（決め (5)）")
+    return body
 
 
 def image_orders(rows: list[dict], orders: "Path | None" = None,
