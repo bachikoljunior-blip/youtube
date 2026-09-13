@@ -125,3 +125,54 @@ def test_最後の印の刻を出す():
 def test_再生が付いた本は門の外でも名指ししない():
     s = trend.zero_probe_line([OK] + _series("z", [80.2], views=5))
     assert "印はもう増えません" not in s
+
+
+# --- 2026-09-13 19:0x・optimizer・Opus -------------------------------------
+# **印字の 2つ の食い違いを閉じた**（derivation は JOURNAL 09/13 19:0x）:
+#   (1) 0件 の文が「齢 3〜48h」と書いていた —— 門は 2026-09-12 19:3x に **78h** へ動いている
+#       （§5 の教訓の形 6つ目「門の定数から引くか、その場で決めること」）
+#   (2) 「1周 1単位」を**いつでも**印字していた —— `cli.zero_probe_target` は門の外の本を
+#       返さないので、門の中に 0回 の本が居ない周は **0単位**。同じ 1文が
+#       「1周 1単位」と「この本の印はもう増えません」を同時に言っていた
+#       （教訓の形 7つ目 ＝ 註と印字が食い違えば、読まれるのは印字のほう）
+# **陽性対照**（§5 の教訓の形 3つ目。撃って落ちることを確かめた）:
+#   * `cost` を `"1周 1単位"` に固定する → `test_門の中に本が居ない周は0単位と言う` と
+#     `test_門を越えた本だけの周は単位を要らないと言う` の **2件** が落ちる
+#   * 0件 の文を「齢 3〜48h」に戻す → `test_0件の文の門は定数から引く` が落ちる
+#   * `live` の絞りを `age <= ZERO_PROBE_MAX_H` だけにする（下端を外す）→
+#     `test_門の下端より若い本はまだ単位を要らない` が落ちる
+
+
+def test_0件の文の門は定数から引く():
+    s = trend.zero_probe_line([])
+    assert f"{trend.ZERO_PROBE_MIN_H:.0f}〜{trend.ZERO_PROBE_MAX_H:.0f}h" in s
+    assert "3〜48h" not in s
+
+
+def test_門の中に本が居る周は1単位と言う():
+    s = trend.zero_probe_line([OK] + _series("z", [10.0, 57.4]))
+    assert "1周 1単位" in s and "0単位" not in s
+
+
+def test_門の中に本が居ない周は0単位と言う():
+    """0回 の本が 1本も無い周（＝ `zero_probe_target` は None を返す）。"""
+    s = trend.zero_probe_line([OK] + _series("z", [10.0, 57.4], views=5))
+    assert "0単位" in s and "1周 1単位" not in s
+
+
+def test_門を越えた本だけの周は単位を要らないと言う():
+    """**この回に踏んだ実物の形**（`2YZ_4FXC-XI` 齢 80.7h）——
+    `closed` が「印はもう増えません」と言う同じ 1文が「1周 1単位」と言っていた。"""
+    s = trend.zero_probe_line([OK] + _series("z", [10.0, 80.2]))
+    assert "印はもう増えません" in s and "0単位" in s and "1周 1単位" not in s
+
+
+def test_門の下端より若い本はまだ単位を要らない():
+    """`ZERO_PROBE_MIN_H` の下は `cli.zero_probe_target` も返さない（門は 2つ とも当てる）。"""
+    z = trend.zero_probes([OK] + _series("z", [0.5, 1.2]))
+    assert z["live"] == []
+
+
+def test_liveとclosedは同じ本を二重に数えない():
+    z = trend.zero_probes([OK] + _series("z", [10.0, 80.2]))
+    assert [c["id"] for c in z["closed"]] == ["z"] and z["live"] == []

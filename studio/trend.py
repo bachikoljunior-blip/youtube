@@ -3148,6 +3148,18 @@ def zero_probes(rows: list[dict]) -> dict:
     実測: 5本目 `2YZ_4FXC-XI` の最後の印は 齢 47.1h で、そのあと 10時間 1件も増えていないのに、
     §7「いまの数」は毎周 この件数を「0回 は本物」の根拠として写していました）。
 
+    **`live` は「いま門の中に居る 0回 の本」**（齢 `ZERO_PROBE_MIN_H` 〜 `ZERO_PROBE_MAX_H`）
+    ＝ **次の `status` / `measure` が実際に 1単位 を撃つ本**（2026-09-13 19:0x・optimizer・Opus）。
+    **`closed` の裏です** —— `closed` は「この本の印はもう増えない」を言い、
+    `live` は「この周に単位が要るか」を言います。
+    **なぜ要るか**: 印字は「（`zero_probe`・1周 1単位）」を**いつでも**出していました。
+    ところが `cli.zero_probe_target` は門の外の本を返さないので、**門の中に 0回 の本が 1本も居ない周は
+    0単位**です。実測 2026-09-13 19:0x: 唯一の 0回 の本 `2YZ_4FXC-XI` が 齢 78h を越え（最後の印 15:54）、
+    **同じ 1文が「1周 1単位」と「この本の印はもう増えません」を同時に言っていました**
+    （§5 の教訓の形 7つ目 ＝ **註と印字が食い違えば、読まれるのは印字のほう**）。
+    **覆る条件**: (4) `zero_probe_target` の門が齢だけでなくなったら（例: 「0回 のあいだ毎周」へ移した ＝
+    上の (3)）、`live` の絞りも一緒に書き直すこと —— **門は `cli` と `trend` の 2か所に在ります**。
+
     **覆る条件**: (1) `bad` が 1件でも出たら `cli.zero_probe_target` の (1) ＝
     `first_view`・`hold` の側にも印を回すこと（0回 を読む前に必ず見る数になる）。
     (2) `books`（撃った本の数）が 7本 を越えて `bad` が 0 なら、この口は外してよい ——
@@ -3164,21 +3176,31 @@ def zero_probes(rows: list[dict]) -> dict:
     # **門を越えた 0回 の本**（＝ この本の印はもう増えない）。**齢は台帳の最後の点**。
     closed = [{"id": vid, "age_h": age} for vid, age in sorted(zero_now.items())
               if age > ZERO_PROBE_MAX_H]
+    # **門の中に居る 0回 の本**（＝ 次の周が 1単位 撃つ本。`cli.zero_probe_target` と同じ絞り）。
+    live = [{"id": vid, "age_h": age} for vid, age in sorted(zero_now.items())
+            if ZERO_PROBE_MIN_H <= age <= ZERO_PROBE_MAX_H]
     last = ps[-1] if ps else None
     return {"n": len(ps), "books": len({r.get("id") for r in ps}),
             "ok": len(ps) - len(bad), "bad": bad,
-            "last": last, "closed": closed}
+            "last": last, "closed": closed, "live": live}
 
 
 def zero_probe_line(rows: list[dict]) -> str:
     """`zero_probes` を1行にする（`trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
     z = zero_probes(rows)
+    # **単位は門の中に本が居る周にだけ要ります**（`live`・2026-09-13 19:0x の註）。
+    cost = ("1周 1単位" if z["live"]
+            else f"**この周は 0単位**（門 齢 {ZERO_PROBE_MIN_H:.0f}〜{ZERO_PROBE_MAX_H:.0f}h "
+                 "の中に 0回 の本が居ない）")
     if z["n"] == 0:
+        # **門の数は定数から引くこと**（§5 の教訓の形 6つ目）。
+        # ここは 2026-09-12 19:3x に門が 48h → 78h へ動いたあとも「齢 3〜48h」と印字していた。
         return ("**公開ずみで 0回 の本の処理: 印 0件**（`zero_probe`）—— "
                 "**この 0 は「落ちた本が無い」ではなく「0回 の本がこの窓に無かった」**です"
-                "（`cli.zero_probe_target` の門は 齢 3〜48h の studio の本だけ）。")
+                f"（`cli.zero_probe_target` の門は 齢 {ZERO_PROBE_MIN_H:.0f}〜{ZERO_PROBE_MAX_H:.0f}h の "
+                "studio の本だけ）。")
     body = (f"**公開ずみで 0回 の本の処理: 印 {z['n']}件・{z['books']}本** —— "
-            f"**`ok` {z['ok']}件 / `ok` でない {len(z['bad'])}件**（`zero_probe`・1周 1単位）。")
+            f"**`ok` {z['ok']}件 / `ok` でない {len(z['bad'])}件**（`zero_probe`・{cost}）。")
     if z["bad"]:
         body += ("  !! " + "・".join(f"{r.get('id')} upload {r.get('upload')}／"
                                      f"processing {r.get('processing')}／失敗 {r.get('failure')}"
