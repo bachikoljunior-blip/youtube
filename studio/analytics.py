@@ -47,6 +47,10 @@
 **覆る条件**:
   (1) `lag_days()` が **3日 より短い**回が出たら、この註の「3日」を書き直すこと
       （短くなれば、公開した本の維持率をその週のうちに読めます）。
+      **2026-09-13 19:3x に 1度 鳴りましたが、偽でした** —— `lag_days()` が UTC の日で数えており、
+      **引いた刻が JST 09:00 より前に動いた 2回 だけ 2日 に見えていた**（実測は `lag_days` の註）。
+      **API の遅れは 4回 とも 3日 で、この「3日」は書き直しません。**
+      ＝ **次にこの条件が鳴ったら、まず「引いた刻」を見ること**（`analytics_traffic` の `at`）。
   (2) 認証が落ちたら（`refresh_token` のスコープに `yt-analytics.readonly` が無い）
       `svc()` が例外を投げます。**そのときは黙って 0 を返さないこと** ——
       「引けなかった」と「0だった」を分けるのは §4 (0-b) の族そのものです。
@@ -64,7 +68,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from .common import env
+from .common import env, now_jst
 
 #: 本ごとに引く数（`dimensions=video`）。**並びが台帳の欄の名前になります。**
 VIDEO_METRICS = ("views", "estimatedMinutesWatched", "averageViewDuration",
@@ -106,11 +110,37 @@ def daily(days: int = 14, today: dt.date | None = None) -> list[dict]:
 
 
 def lag_days(rows: list[dict], today: dt.date | None = None) -> int | None:
-    """`daily()` の返りから「最後の日は何日 前か」。行が無ければ `None`（**0 ではない**）。"""
+    """`daily()` の返りから「最後の日は何日 前か」。行が無ければ `None`（**0 ではない**）。
+
+    **数えるのは JST の日**（2026-09-13 19:3x・optimizer・Opus が直した）。
+    `dt.date.today()` は**この機械の UTC の日**で、JST の 00:00〜09:00 に撃つと**1日 手前**を指します。
+    ＝ **引いた刻が朝に動いただけで、遅れが 3日 から 2日 へ縮んで見えます。**
+
+    **実測**（台帳の `analytics_traffic` 7行・API 0単位）: 引いた刻と、そのとき書かれた `lag_days`
+
+        09/10 16:07 JST（UTC 09/10）  最後の日 09-07  →  3   ← 正しい
+        09/11 12:18 JST（UTC 09/11）  最後の日 09-08  →  3   ← 正しい
+        09/12 08:25 JST（UTC 09/11）  最後の日 09-09  →  2   ← **偽**（JST では 3）
+        09/13 04:38 JST（UTC 09/12）  最後の日 09-10  →  2   ← **偽**（JST では 3）
+
+    **API の遅れは 4回 とも 3日 で、1度も動いていません。** 動いたのは撃った刻だけです。
+    この偽の 2日 は、この註の **覆る条件 (1)**（「3日 より短い回が出たら『3日』を書き直すこと」）を
+    **鳴らす形**でした ＝ 次の回に「維持率をその週のうちに読める」と読ませます。
+
+    **同じ欠陥は旧道具が 2026-08-18 に踏んで直しています**（`src/status.py` の `_lag_days`・
+    検査 `tests/test_status_analytics_lag.py` の「遅れの日数はJSTで数える」＝
+    「JST 01:4x に『3日前』と『4日遅れ』が同時に出ました」）。
+    **新しい道具は 09/10 にゼロから書いて、同じ所へ戻りました**（§8 の「持ち込まない」の値段の実物）。
+
+    **覆る条件**: (1) 撃つ刻を JST 09:00 より後だけに固定する回が来ても、**この関数は JST のまま**
+    にすること（刻の決めと数え方を 2か所 に置かない）。
+    (2) 台帳の `day` が JST でない日付を返し始めたら（API の日の境目が変わったら）、
+    ここではなく `daily()` の側に註を書くこと。
+    """
     if not rows:
         return None
     last = max(dt.date.fromisoformat(r["day"]) for r in rows)
-    return ((today or dt.date.today()) - last).days
+    return ((today or now_jst().date()) - last).days
 
 
 def per_video(ids: list[str], start: str, end: str) -> list[dict]:

@@ -2432,12 +2432,23 @@ ANALYTICS_MIN_VIEWS = 30
 def analytics_state(rows: list[dict], now: dt.datetime | None = None) -> dict:
     """台帳の `analytics_*` をまとめる（**API 0単位** ＝ 引いたのは `cli analytics` の回）。
 
-    返り: `last_day`（最後に引けた日）・`lag_days`・`age_h`（引いてから何時間）・
+    返り: `last_day`（最後に引けた日）・`lag_days`・`lag_at_pull`・`age_h`（引いてから何時間）・
     `days`（日ごとの再生の直近3日）・`new`/`old`（新しい作り／旧作りの 平均視聴秒・平均視聴率）・
     `subs`（窓の中の登録の増えの合計）・`shorts_pct`（ショートのフィードの割合）。
 
     **新／旧 を分ける印は、行に書いてある `studio` です** —— `trend` は台帳しか読まないので、
     `scheduled` を数え直さないこと（`cli` が引いた回の判定をそのまま持つ）。
+
+    **`lag_days` は いま から数え直します**（2026-09-13 19:3x・optimizer・Opus）。
+    それまでは台帳の `analytics_traffic` の `lag_days`（**引いた刻の数**）をそのまま印字しており、
+    **引いてから 1日 経った回も「遅れ 2日」と言い続けていました** —— この行の言い分
+    （「**きょう**公開した本には答えません」）は **いま**の話なので、**いま**の数で言うこと。
+    **引いた刻の数は `lag_at_pull` に残します**（2つ が割れたら、それは引いてから日が変わった印）。
+    **同じ族**: `feature_cohorts` の「手で運んだ数が反転した」（09/13 10:1x）・
+    `zero_probe_line` の「門が動いたのに古い門を印字」（09/13 19:0x）＝
+    **数を作った刻と、読む刻が違う**側。
+    **覆る条件**: 台帳の `lag_at_pull` と、ここで数え直した `lag_days` が **3日 以上 割れる**回が出たら、
+    それは `analytics` を長く撃っていない側 ＝ 遅れではなく「引いていない」と印字すること。
     """
     now = now or now_jst()
     day_rows = [r for r in rows if r.get("event") == "analytics_day"]
@@ -2465,7 +2476,10 @@ def analytics_state(rows: list[dict], now: dt.datetime | None = None) -> dict:
                 "sec_med": sec[len(sec) // 2], "pct_med": pct[len(pct) // 2]}
     src = (last_tr or {}).get("sources") or {}
     tot = sum(src.values())
-    return {"last_day": last_day, "lag_days": (last_tr or {}).get("lag_days"),
+    return {"last_day": last_day,
+            # **いま から数え直す**（上の註）。台帳の数は `lag_at_pull` に残す。
+            "lag_days": (now.date() - dt.date.fromisoformat(last_day)).days,
+            "lag_at_pull": (last_tr or {}).get("lag_days"),
             "age_h": (now - at).total_seconds() / 3600,
             "days": [(r["id"], r["views"]) for r in days],
             "new": _side(True), "old": _side(False),
@@ -2491,8 +2505,12 @@ def analytics_line(rows: list[dict], now: dt.datetime | None = None) -> str:
         return (f"{name} {x['n']}本 **平均視聴 中央 {x['sec_med']}秒**（{x['avg_seconds'][0]}〜{x['avg_seconds'][-1]}）"
                 f"・**平均視聴率 中央 {x['pct_med']:.1f}%**（{x['avg_percent'][0]:.1f}〜{x['avg_percent'][-1]:.1f}）")
     sp = f"・**ショートのフィード {a['shorts_pct']:.1f}%**" if a["shorts_pct"] is not None else ""
+    # **遅れは いま から数え直した数**（`analytics_state` の註）。
+    # **台帳の `lag_at_pull` は印字しません** —— 09/12・09/13 の 2行 は UTC で数えた偽の 2日 で、
+    # 並べると「引いてから日が変わった」と読ませます（どちらも `analytics_state` の註）。
+    lag = f"**遅れ {a['lag_days']}日 ＝ きょう公開した本には答えません**"
     return (f"**維持率と流入**（Analytics API・台帳から・**Data API 0単位**）: 最後の日 **{a['last_day']}**"
-            f"（引いたのは {a['age_h']:.0f}時間 前・**遅れ {a['lag_days']}日 ＝ きょう公開した本には答えません**）。"
+            f"（引いたのは {a['age_h']:.0f}時間 前・{lag}）。"
             f"日ごとの再生 {d}。{_side(a['new'], '新しい作り')} 対 {_side(a['old'], '旧作り')}"
             f"——**%と秒で向きが逆になります**（判定は `hourly`・§5）。"
             f"窓の中の**登録の増え 合計 {a['subs']}**{sp}")
