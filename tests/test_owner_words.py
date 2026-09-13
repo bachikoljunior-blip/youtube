@@ -301,7 +301,7 @@ def test_別の所で札が付いた言葉は_どちらの族の未分類にも�
     filed = sorted(ow.FILED_IDS)
     assert filed, "`FILED_IDS` が空なら、この検査は空を見ている"
     rows = [_row("2026-09-13T12:00:00+09:00", "2e87f87e"),
-            *[_row(f"2026-09-13T2{i}:00:00+09:00", rid) for i, rid in enumerate(filed)]]
+            *[_row(f"2026-09-13T20:{i:02d}:00+09:00", rid) for i, rid in enumerate(filed)]]
     res = ow.run(days_back=999, path=_ledger(tmp_path, rows))
     assert res["unclassified"] == []
     assert res["yomi_unclassified"] == []
@@ -311,7 +311,7 @@ def test_札の無い扱いに戻すと両方の族に並ぶ_陽性対照(tmp_pa
     """規則（`known` に `FILED_IDS` を入れる）を外したら落ちること。"""
     filed = sorted(ow.FILED_IDS)
     rows = [_row("2026-09-13T12:00:00+09:00", "2e87f87e"),
-            *[_row(f"2026-09-13T2{i}:00:00+09:00", rid) for i, rid in enumerate(filed)]]
+            *[_row(f"2026-09-13T20:{i:02d}:00+09:00", rid) for i, rid in enumerate(filed)]]
     saved = ow.FILED_IDS
     try:
         ow.FILED_IDS = {}
