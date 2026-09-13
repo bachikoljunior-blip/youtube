@@ -134,3 +134,39 @@ def test_立った回は門を引かない():
     a = trend.views_absent(rows)
     assert a["drawn"] is False and a["n"] == 1
     assert "数から外すこと" in trend.views_absent_line(rows)
+
+
+def test_印字した門から引くと道具と同じ答えになる():
+    """**印字した門 −  いまの分母 ＝ 印字した「あと N本」** であること。
+
+    2026-09-13 21:5x JST（optimizer・Opus）に足した。**実物で払っていた値段**:
+    `views_absent_line` は **「門 7本 … ＝ 4本 ＝ あと 4本」**と印字していました
+    （`drawn` が `> GATE` ＝ 8本 で引くのに、印字は 7本）。読む側が引くと **3本** で、
+    道具の答え（4本）と割れます。`trend.py` の他の門は全部 `>=` で、同じ言い回しのまま
+    引き算が合う ＝ **この 1つ だけが同じ字で別の算**でした。
+
+    **陽性対照**（撃って落とした）: 印字を `VIEWS_ABSENT_GATE` に戻すと、この検査が落ちる。
+    """
+    import re
+
+    rows = []
+    for i in range(4):
+        rows += _early(f"y{i}", i + 1)
+    line = trend.views_absent_line(rows)
+    gate = int(re.search(r"門 (\d+)本", line).group(1))
+    denom = int(re.search(r"＝ (\d+)本\*\* ＝", line).group(1))
+    rest = int(re.search(r"あと \*\*(\d+)本\*\*", line).group(1))
+    assert gate - denom == rest, f"印字した門 {gate} − 分母 {denom} ＝ {rest} にならない"
+    assert gate == trend.VIEWS_ABSENT_NEED
+
+
+def test_門の数と引かれる本の数は同じ物から出る():
+    """`drawn` が立つ本の数 ＝ 印字した門。定数を 2か所 に置かないこと。"""
+    rows = []
+    for i in range(trend.VIEWS_ABSENT_NEED - 1):
+        rows += _early(f"y{i}", i + 1)
+    assert trend.views_absent(rows)["drawn"] is False
+    rows += _early("last", trend.VIEWS_ABSENT_NEED)
+    a = trend.views_absent(rows)
+    assert a["since_books_early"] == trend.VIEWS_ABSENT_NEED
+    assert a["drawn"] is True

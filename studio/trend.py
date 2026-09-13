@@ -3347,6 +3347,18 @@ VIEWS_ABSENT_SINCE = "2026-09-10T14:20:00+09:00"
 #: §7 (j) の覆る条件 (2) の門（**本**の数。2026-09-10 21:0x に置かれた「7本」を定数にした）。
 VIEWS_ABSENT_GATE = 7
 
+#: **その門を「引くのに要る本の数」に直した物**（＝ 7本 を**越える** ＝ 8本）。
+#: **2026-09-13 21:5x JST・optimizer・Opus が足した。**
+#: **なぜ**: §7 (j) は「7本 過ぎて」＝ `> GATE` なのに、`views_absent_line` は
+#: **「門 7本 ＝ いま 4本 ＝ あと 4本」**と印字していました（読む側が引くと 3本）。
+#: `trend.py` の他の門（`views_streak`・`rev7_run`・`blind_run`・`feature_cohorts`・
+#: `shape_run`・`report_empty_run`）は**全部 `>=`** で、同じ言い回しのまま引き算が合います
+#: ＝ **この 1つ だけが、同じ字で別の算**でした（`quota` の「印字は 1桁しか出さない」と同じ族）。
+#: **決め: 振る舞いは変えず（8本 のまま）、印字と `drawn` と `need` を この 1つ の数から出す。**
+#: **覆る条件**: §7 (j) の原文が「7本 で」（＝ `>=`）へ書き直された回は、ここを
+#: `VIEWS_ABSENT_GATE` に戻すこと（そのとき引かれる本の数が 8 → 7 に動く ＝ 決めが動く）。
+VIEWS_ABSENT_NEED = VIEWS_ABSENT_GATE + 1
+
 
 def views_absent(rows: list[dict]) -> dict:
     """**`viewCount` の欄が無い読み**（台帳 `measured` の `views_absent`）を数える。API 0単位。
@@ -3377,7 +3389,8 @@ def views_absent(rows: list[dict]) -> dict:
 
     **覆る条件**: (1) `n` が **1件でも立ったら**、その本の 0回 を `first_view`・`hold`・§7 (c) の
     数から外すこと（`yt.views_of` の覆る条件 (1) と同じ ＝ ここはその**数える口**）。
-    (2) `since_books_early` が **`VIEWS_ABSENT_GATE`本** を越えて `n` が 0 なら、この口は外してよい
+    (2) `since_books_early` が **`VIEWS_ABSENT_NEED`本**（＝ `VIEWS_ABSENT_GATE` を越える）
+    に届いて `n` が 0 なら、この口は外してよい
     （**`since_books` のほうでは読まないこと** ＝ 上の分母の註）。
     (3) `views_absent` が False でも書かれるように `cli` を変えたら、`since_books` は
     刻ではなく**欄の有無**で数えること（そのほうが正確 ＝ この定数は消える）。
@@ -3401,7 +3414,7 @@ def views_absent(rows: list[dict]) -> dict:
             "early": early, "late": late,
             "late_first_age_h": min((first[k] for k in late
                                      if first[k] is not None), default=None),
-            "drawn": not marks and len(early) > VIEWS_ABSENT_GATE,
+            "drawn": not marks and len(early) >= VIEWS_ABSENT_NEED,
             "marks": marks}
 
 
@@ -3409,7 +3422,7 @@ def views_absent_line(rows: list[dict]) -> str:
     """`views_absent` を1行にする（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
     a = views_absent(rows)
     if a["n"] == 0:
-        need = VIEWS_ABSENT_GATE + 1 - a["since_books_early"]
+        need = VIEWS_ABSENT_NEED - a["since_books_early"]
         verdict = ("**引かれました ＝ この口は外してよい**" if a["drawn"]
                    else f"**まだ引けません**（あと **{need}本**）")
         late = ""
@@ -3422,7 +3435,8 @@ def views_absent_line(rows: list[dict]) -> str:
                       "（`views_of` の 3つ の原因の 1つ）。**この数で門を読まないこと**（覆る条件 (2)(4)）。")
         return ("**`viewCount` の欄が無い読み: 0件**（台帳 `views_absent`・`yt.views_of`）—— "
                 "**1度でも立ったら、その本の台帳の 0回 を「配りが来ていない」と読まないこと**"
-                f"（覆る条件 (1)）。**門 {VIEWS_ABSENT_GATE}本 の分母は"
+                f"（覆る条件 (1)）。**門 {VIEWS_ABSENT_NEED}本"
+                f"（§7 (j) の「{VIEWS_ABSENT_GATE}本 過ぎて」＝ **越える** ＝ この数）の分母は"
                 f"「齢 {FIRST_VIEW_EARLY_H:.1f}h までに この口の下で初めて測った本」"
                 f"＝ {a['since_books_early']}本** ＝ {verdict}。" + late)
     return (f"**`viewCount` の欄が無い読み: {a['n']}件・{len(a['books'])}本** —— "
