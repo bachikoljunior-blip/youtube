@@ -545,3 +545,119 @@ def test_4塊_と_塊ごと_と_節ごと_と_本の節_も窓が_1つ_なら測
     out = M.report(laps=k - 1, n=2, after=cut)
     assert out.count("まだ測れません") == 5      # 字の門・節ごと・4塊・塊ごと・本の節
     assert "引かれません（直近 2窓" not in out
+
+
+# ---------------------------------------------------------------------------
+# `span_carry` —— **合計が引かれ、塊ごとが引かれない**窓で、吸っている塊を名指しする
+# （2026-09-14 01:5x・optimizer・Opus。実測は JOURNAL 同刻）
+# ---------------------------------------------------------------------------
+
+def test_通算は片窓が門の下でも_2窓_伸び続けた塊を名指しすること():
+    """**この口が在る理由そのもの** —— この回の実測（6周窓・いまの数 +352 / +264）。
+
+    `split_drawn` は「2窓 とも越えたら」なので **鳴りません**。
+    それでも 12周窓で 1つ に読むと **+308字/周**（門 300 の上）で、合計の門は引かれています。
+    """
+    ps = [_s7p(いまの数=352), _s7p(いまの数=264)]
+    assert M.split_drawn(ps) == []                      # 塊ごとの門は鳴らない
+    line = "".join(M.span_carry(ps))
+    assert "いまの数 +308字/周（+352 / +264）" in line
+
+
+def test_positive_control_通算は片窓の跳ねでは鳴らないこと():
+    """通算だけで読むと **+700 / +10**（通算 +355）でも鳴ってしまう ——
+    両窓が門の半分を越えていることを足してある（`span_carry` の註）。"""
+    ps = [_s7p(いまの数=700), _s7p(いまの数=10)]
+    assert (700 + 10) / 2 > M.CHAR_GATE                 # 通算だけなら門の上
+    assert "いまの数" not in "".join(M.span_carry(ps))
+    assert "0 つ" in "".join(M.span_carry(ps))
+
+
+def test_通算は窓が_1つ_しか無ければ何も言わないこと():
+    assert M.span_carry([_s7p(いまの数=900)]) == []
+    assert M.span_carry([]) == []
+
+
+def test_通算は塊ごとの門の答えを変えないこと():
+    ps = [_s7p(いまの数=400), _s7p(いまの数=400)]
+    assert M.split_drawn(ps) == ["いまの数（+400 / +400）"]
+    assert "いまの数" in "".join(M.span_carry(ps))      # 通算も名指しはする
+    # が、`report` が通算を足すのは **塊ごとが鳴っていない**ときだけ（下の検査）
+
+
+def test_positive_control_通算の行は合計が引かれた窓にだけ出ること(monkeypatch):
+    """**壊したら落ちるまで撃つ** —— 行が在るだけでは繋がっている証拠になりません。"""
+    monkeypatch.setattr(M, "span_carry", lambda ps: ["  通算（2窓 を 1つ に読む）: **見張りの印**"])
+    monkeypatch.setattr(M, "split_drawn", lambda ps: [])
+    got = M.report()
+    drawn = [l for l in got.split("\n") if "字の門" in l and "**引かれました**" in l]
+    assert ("見張りの印" in got) == bool(drawn)
+    # 塊ごとが鳴っている窓では足さない（名指しは `split_drawn` が先・`span_carry` の覆る条件 (2)）
+    monkeypatch.setattr(M, "split_drawn", lambda ps: ["いまの数（+400 / +400）"])
+    assert "見張りの印" not in M.report()
+
+
+# ---------------------------------------------------------------------------
+# `now_rows` —— §7「いまの数」の **行ごと**の字（08:1x の型が守れているかを数える口）
+# ---------------------------------------------------------------------------
+
+_表 = ("読み方\n"
+      "## 0.\nA\n"
+      "## 7.\n"
+      "### いまの数（**毎周 上書き**する1塊）\n"
+      "    **この塊の形**（2026-…）: 置いてよいのは 数 と 口の名 だけ。\n"
+      "    測った刻       2026-09-14 00:4x JST\n"
+      "    この回         あいうえお\n"
+      "                   かきくけこ\n"
+      "                   さしすせそ\n"
+      "**【2026-09-10 21:4x】日付つきの節\n中身\n"
+      "- **【2026-09-09 01:5x】もう1つの日付つきの節\n中身\n"
+      "- **形**: 末尾の一覧\n"
+      "## 8.\nC\n## 9.\nD\n")
+
+
+def test_行ごとに数え_ラベルで名を取ること():
+    rows, head = M.now_rows(_表)
+    assert [r[0] for r in rows] == ["測った刻", "この回"]
+    assert rows[1][2] == 3                              # 続きの行は前の行に付く
+    assert head > 0                                     # 見出しと「この塊の形」は頭の側
+
+
+def test_positive_control_型の段落は行として数えないこと():
+    """「この塊の形」は 字下げ 4 で始まりますが **ラベルの列を持ちません** ——
+    行として数えると、型そのものが「越えた行」に化けます（`now_rows` の覆る条件 (2)）。"""
+    rows, _ = M.now_rows(_表)
+    assert all("この塊の形" not in r[0] for r in rows)
+
+
+def test_行と頭の合計は塊の字と一致すること():
+    rows, head = M.now_rows(_表)
+    assert sum(r[1] for r in rows) + head == M.measure7_split(_表)["いまの数"]["body_chars"]
+
+
+def test_行の門は越えた行を大きい順に名指しすること():
+    out = "\n".join(M.now_rows_report(_表))
+    assert "行の門" in out
+    long = "    でかい行         " + "あ" * (M.ROW_GATE + 10) + "\n"
+    got = "\n".join(M.now_rows_report(_表.replace("    この回         あいうえお\n", long)))
+    assert "**引かれました**" in got and "でかい行" in got
+
+
+def test_positive_control_門を潰すと越えた行が黙ること(monkeypatch):
+    long = "    でかい行         " + "あ" * (M.ROW_GATE + 10) + "\n"
+    t = _表.replace("    この回         あいうえお\n", long)
+    assert "でかい行" in "\n".join(M.now_rows_report(t))
+    monkeypatch.setattr(M, "ROW_GATE", 10 ** 6)
+    assert "引かれません" in "\n".join(M.now_rows_report(t))
+
+
+def test_行ごとの並びは_split_のときだけ出ること():
+    assert len(M.now_rows_report(_表, full=True)) > len(M.now_rows_report(_表, full=False))
+
+
+def test_挟みが外れても報告は止まらないこと():
+    assert M.now_rows_report("（§7 が無い字）") == []
+
+
+def test_報告に行ごとの口が出ること():
+    assert "`now_rows`" in M.report()

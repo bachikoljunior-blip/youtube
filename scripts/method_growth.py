@@ -577,6 +577,127 @@ def split_drawn(ps: list[dict]) -> list[str]:
     return drawn
 
 
+#: 「いまの数」の 1行 が抱えてよい字（**1周ぶんの門と同じ数**・`now_rows` の註）。
+ROW_GATE = CHAR_GATE
+
+#: 「いまの数」の 1行 の書き出し（字下げ 4 ＋ ラベル ＋ 2字 以上 の空き ＋ 中身）。
+#: **見出しではありません** —— この形を外れた行は、前の行の続きとして数えます。
+NOW_ROW = re.compile(r"^ {4}(\S(?:.*?\S)?)\s{2,}\S")
+
+
+def now_rows(text: str) -> tuple[list[tuple[str, int, int]], int]:
+    """§7「いまの数」を **行ごと**に数える（2026-09-14 01:5x・optimizer・Opus が足した）。
+
+    返すのは `[(ラベル, 字, 行数), …]`（大きい順ではなく、METHOD の並び）と、
+    **表より前の頭**（見出し ＋「この塊の形」の段落）の字。
+
+    **なぜ要るか**（この回に数えた）: この塊には **型**が在ります ——
+    **ここに置いてよいのは 数・その数を持つ口の名・宛先（判定は誰か）・日付の指し の 4つ だけ**
+    （2026-09-13 08:1x・JOURNAL 同刻）。08:1x はその型を当てて **10,530 → 7,902字** に畳みました。
+    **3窓 後に 13,169字 へ戻っています**（`--split`）。**型は在るのに、守れているかを数える口が
+    1つ もありませんでした** —— 破れているかは、毎回 人が塊を読んで手で数えるしかない形です。
+    ＝ METHOD が repo でいちばん多い壊れ方と呼ぶもの（**言っている所と、している所が別**）が、
+    「型」の側に在りました。`method_growth` / `checks.py` と同じ扱いにします。
+
+    **なぜ「行の字」で数えるか**（型そのものは機械には読めない）: 禁じられている 3種
+    （前の回の報告・`trend` が毎周 印字する註意・数ではない恒久の手順）は**どれも散文**で、
+    **1行 に収まりません**。実測（この回・41行）: 中央 **153字** に対し、
+    **300字 を越えた 7行 が 3,704字（表の 45%）**で、いちばん大きい 3行 は
+    「この回」893字（＝ 禁じられた (i) そのもの）・「枠（親の速さ）」720字・「伸びの門」717字
+    ＝ **どれも `quota` / `method_growth` が毎周 印字する側の写し**でした。
+    **＝ 行の字は、型の破れの代理として当たります。**
+
+    **覆る条件**:
+     (1) 300字 を越えた行を読んで、**中身が 4つ の型に収まっていた**回が出たら、
+         代理は当たっていない ＝ 門を上げるのではなく、この口を畳んで JOURNAL に理由を書くこと。
+     (2) 表の行が `NOW_ROW` の形（字下げ 4 ＋ ラベル ＋ 2字 空き）を外れたら、この数は黙って
+         **頭の側**へ寄ります ＝ 頭の字が跳ねた回は、まず挟みを疑うこと（`_now_cut` の覆る条件 (1) と同じ向き）。
+     (3) 型そのものが変わったら（4つ が 3つ／5つ になったら）、この註の「なぜ」を書き直すこと。
+    """
+    lines = text.split("\n")
+    a, b = section7_spans(lines)[1]
+    blk = lines[a:b]
+    rows: list[list] = []
+    head = [blk[0]]
+    for ln in blk[1:]:
+        m = NOW_ROW.match(ln)
+        if m:
+            rows.append([m.group(1), [ln]])
+        elif rows:
+            rows[-1][1].append(ln)
+        else:
+            head.append(ln)
+    return ([(lab, _count(ls)["body_chars"], len(ls)) for lab, ls in rows],
+            _count(head)["body_chars"])
+
+
+def now_rows_report(text: str, full: bool = False) -> list[str]:
+    """`now_rows` の印字（門の 1行 ＋ `--split` のときは並び）。"""
+    try:
+        rows, head = now_rows(text)
+    except (KeyError, ValueError, IndexError):
+        return []
+    over = sorted([r for r in rows if r[1] > ROW_GATE], key=lambda r: -r[1])
+    tot = sum(r[1] for r in rows)
+    out = [f"**§7「いまの数」の 行ごと**（**置いてよいのは 数・口の名・宛先・日付の指し の 4つ だけ**"
+           f"・2026-09-13 08:1x の型・`now_rows`）: 表 {len(rows)}行・{tot:,}字 ／ 頭 {head:,}字"]
+    if over:
+        out.append(f"  行の門 1行 +{ROW_GATE}字: **引かれました** —— **{len(over)}行**"
+                   f"（合わせて {sum(r[1] for r in over):,}字 ＝ 表の {sum(r[1] for r in over) * 100 // max(tot, 1)}%）: "
+                   + "・".join(f"{lab} {c:,}字" for lab, c, _ in over[:5])
+                   + ("…" if len(over) > 5 else "")
+                   + "。**越えた行は、4つ の型のどれに当たるかを 1行ずつ見てから畳むこと**"
+                     "（畳めない 1行 が出たら `now_rows` の覆る条件 (1)）")
+    else:
+        out.append(f"  行の門 1行 +{ROW_GATE}字: 引かれません（越えた行は 0 行）")
+    if full:
+        for lab, c, n in sorted(rows, key=lambda r: -r[1]):
+            out.append(f"    {c:6,d}字  {n:3d}行  {lab}")
+    return out
+
+
+def span_carry(ps: list[dict]) -> list[str]:
+    """**合計の門が引かれ、塊ごとの門が引かれない**とき、吸っている塊を名指しする
+    （2026-09-14 01:5x・optimizer・Opus が足した）。
+
+    **なぜ要るか**（この回に踏んだ）: 塊の門は「**直近 2窓 とも** 1周 +300字 を越えたら」です。
+    **1つ の塊が両方の窓を伸び続けていても、片方が門の下なら鳴りません。**
+    実測（この回・6周窓）: 合計は **+352 / +425字/周** で **引かれ**、
+    内訳は「いまの数」が **+352 / +264** ＝ **塊ごとの門は「越えた塊は 0 つ」**と答えます。
+    **12周窓で同じ 2窓 を 1つ に読むと、その塊は +308字/周**（門の上）。
+    ＝ 「合計は引かれたが、責任のある塊は無い」という**読めない答え**が返ります。
+
+    **通算で読む** —— 窓の幅は同じなので、2窓 の平均がその塊の 1周ぶんです。
+    **跳ねで鳴らないように**、両方の窓が **門の半分**を越えている塊だけを名指しします
+    （片窓 +700 / +10 のような形は、通算 +355 でも鳴らない）。
+
+    **この行は門の答えを変えません** —— `split_drawn` はそのままです。
+    足すのは「引かれた合計を、どの塊が抱えているか」の 1行 だけ。
+
+    **覆る条件**: (1) ここが名指しした塊を畳んだのに、次の窓で合計の門が引かれたままなら、
+    吸っているのは 1つ ではない ＝ 通算の並びを全部 印字すること。
+    (2) `split_drawn` が引かれた回に、この行が**別の塊**を名指ししたら、
+    通算と 2窓 とも の どちらで読むかを決め直すこと（いまは `split_drawn` が先）。
+    """
+    ok = [p for p in ps if p.get("s7_split")]
+    tail2 = ok[-2:]
+    if len(tail2) < 2:
+        return []
+    named = []
+    for nm in SPAN7_NAMES:
+        vals = [p["s7_split"][nm] for p in tail2]
+        mean = sum(vals) / len(vals)
+        if mean > CHAR_GATE and all(v > CHAR_GATE / 2 for v in vals):
+            named.append((mean, nm, vals))
+    if not named:
+        return ["  通算（2窓 を 1つ に読む）: 門を越えた塊は 0 つ"
+                f"（門 1周 +{CHAR_GATE}字・両窓とも +{CHAR_GATE // 2}字 の上・`span_carry`）"]
+    named.sort(reverse=True)
+    return ["  通算（2窓 を 1つ に読む）: **" + "・".join(
+        f"{nm} {mean:+.0f}字/周（{vals[0]:+.0f} / {vals[1]:+.0f}）" for mean, nm, vals in named)
+        + f"** ＝ 引かれた合計を抱えているのはこの塊（門 1周 +{CHAR_GATE}字・`span_carry`）"]
+
+
 def window_caveat(laps: int) -> str:
     """**幅のある窓は、手を打った回の効きを答えられない**（2026-09-13 04:3x・optimizer・Opus）。
 
@@ -593,7 +714,7 @@ def window_caveat(laps: int) -> str:
             f"手の効きは `--after '<手の刻 JST>'`（できれば `--laps 1`）で読むこと。")
 
 
-def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
+def report(laps: int = 6, n: int = 3, after: datetime | None = None, split: bool = False) -> str:
     ps = points(laps, n, after)
     out = [f"METHOD の「毎回 読む」側（§0〜§6・§8）の伸び —— 窓は {laps}周・**周の刻で挟む**（commit ではない）"]
     if laps > 1 and after is None:
@@ -654,6 +775,10 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
         else:
             sdline = "引かれません（直近 2窓 とも越えた塊は 0 つ）"
         out.append(f"  塊ごとの門 1周 +{CHAR_GATE}字: " + sdline)
+        # **合計が引かれ、塊ごとが引かれない**窓では、通算で吸っている塊を名指しする（`span_carry` の註）。
+        if len(over) == 2 and not sd:
+            out += span_carry(ps)
+    out += now_rows_report(worktree_text(), full=split)
     out += book_report(ps)
     return "\n".join(out)
 
@@ -717,7 +842,7 @@ def main() -> int:
     ap.add_argument("--split", action="store_true", help="門が引かれた回に、どの塊が吸ったかを名指しする")
     a = ap.parse_args()
     after = datetime.strptime(a.after, "%Y-%m-%d %H:%M").replace(tzinfo=JST) if a.after else None
-    print(report(a.laps, a.points, after))
+    print(report(a.laps, a.points, after, a.split))
     if a.split:
         print(split_report(a.laps, a.points, after))
     return 0
