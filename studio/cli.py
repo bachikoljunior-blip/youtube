@@ -65,6 +65,95 @@ def lineup_mark(v: dict, studio_ids: set[str]) -> str:
     return "  [旧作り]"
 
 
+ROUNDS = ROOT / "data" / "rounds.jsonl"
+# きょうの枠の刻（`schedule --at` に渡す時刻。§7 末尾の覆る条件「時刻 10:00」と同じ物）。
+SLOT_AT = "10:00"
+
+
+def lap_hours(limit: int = 40, path: Path | None = None) -> float | None:
+    """**周と周のあいだは実測で何時間か**（`data/rounds.jsonl` の中央値・API 0単位）。
+
+    時刻を当てません。周が 2つ 未満なら `None`（呼ぶ側は「周」を言わずに時間だけ言うこと）。
+    **役では分けません** —— `empty_slot_mark` が数えたいのは「この blank をあと何体が読むか」で、
+    それは 2役 の合流した並びのほうだからです。
+    """
+    path = ROUNDS if path is None else path
+    if not path.exists():
+        return None
+    seen: list[str] = []
+    for ln in path.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        try:
+            r = json.loads(ln)
+        except Exception:  # noqa: BLE001
+            continue
+        at = str(r.get("round") or r.get("at") or "")
+        if at and at not in seen:
+            seen.append(at)
+    ts = []
+    for x in sorted(seen)[-limit:]:
+        try:
+            ts.append(dt.datetime.fromisoformat(x))
+        except ValueError:
+            continue
+    if len(ts) < 2:
+        return None
+    gaps = sorted((ts[i + 1] - ts[i]).total_seconds() / 3600.0 for i in range(len(ts) - 1))
+    mid = len(gaps) // 2
+    return gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2.0
+
+
+def empty_slot_mark(lineup: list[dict], now: dt.datetime, scripts_dir: Path | None = None,
+                    rounds_path: Path | None = None) -> str:
+    """**きょうの枠が空のとき、名指しで「予約しろ」と言う**（2026-09-14 01:0x・hourly・Opus）。
+
+    **穴（`lineup_mark` と同じ族の 2つ目・1つ上の段）**: `cmd_status` の「きょうの枠:」は
+    `today_lineup()` を回すだけなので、**枠が空の回は 1字も印字しません**。
+    `lineup_mark` は「印が無いので 3周の hourly が通り過ぎた」（§12 23:0x）で足された物ですが、
+    **並んでいる本に印を付けるだけで、1本も並んでいない側には何も言いません。**
+
+    **この回に踏みました**: 09/13 21:0x の `hourly` が §17 の申し送りに
+    「`build` を 1回 撃ってから予約すること」と書いて 09/14 当日へ渡し、
+    枠は **09/14 00:53 まで空のまま**でした（渡し方は正しく、この回が取って予約した ＝ `-bSkulqONhI`）。
+    危ないのは渡し方ではなく**印**のほうです —— **空の行は 00:49 と 09:49 で同じ字**で、
+    9時間 の余りと 11分 の余りが**見分けられません**。実測 09/13 23:49 の周は
+    入れ物の立て直しで**サブ 2体 が落ちて**おり（`data/parent_wakes.jsonl`）、
+    落ちる周が続けば、この blank を 09:5x の回が同じ顔で読みます。
+
+    **だから余りは「時間」ではなく「あと何周」で言います** —— 打てるのは周だけで、
+    時間ではないからです（周は実測の中央値・`lap_hours`）。
+
+    返り: 印字する 1行（枠に本が並んでいれば空文字）。**API 0単位**（台本の名前と `rounds.jsonl` だけ）。
+
+    **覆る条件**:
+     (1) この印が出ている回が **2周 続けて**予約しなかったら、足りないのは印ではなく
+         **その回に予約できない理由**（絵が無い・mp4 が焼けない など）＝ その理由の側を印字すること。
+     (2) 枠の刻（10:00）が動いたら `SLOT_AT` の 1か所 を直すこと（写しを作らない・§5 の教訓 7つ目）。
+     (3) 「きょうの日付の台本が無い」側が出た回が 1度でも在ったら、そこは §5 の表の 1行目
+         （題材を決めて台本を書く）へ入る口 ＝ 印ではなく表のほうを読むこと。
+    """
+    if lineup:
+        return ""
+    base = script.SCRIPTS if scripts_dir is None else Path(scripts_dir)
+    today = f"{now:%Y-%m-%d}"
+    names = sorted(p.stem for p in base.glob(f"{today}-*.json")) if base.exists() else []
+    hh, mm = map(int, SLOT_AT.split(":"))
+    at = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    left = (at - now).total_seconds() / 3600.0
+    if not names:
+        return (f"  !! きょうの枠が空で、きょうの日付（{today}）の台本もありません"
+                f" → §5 の表の 1行目（題材を決めて台本を書く）")
+    who = "・".join(f"`{n}`" for n in names)
+    if left <= 0:
+        return (f"  !! きょうの枠が空のまま {SLOT_AT} を過ぎました（いま {now:%H:%M}）。台本 {who} は在る"
+                f" —— きょうは 1本も出ません。**次の枠へ回すこと**（`--at` は当日だけ・§5 の表）")
+    gap = lap_hours(path=rounds_path)
+    laps = f"・残り およそ {left / gap:.0f}周（周 {gap:.2f}h・実測）" if gap else ""
+    return (f"  !! きょうの枠が空です（台本 {who} は在る）→ `build` → `schedule --at {SLOT_AT}`。"
+            f"{SLOT_AT} まで あと {left:.1f}h{laps}")
+
+
 def meta_drift(video_id: str, rd: dict, rows: list[dict] | None = None) -> list[str] | None:
     """上がっている本の 題・説明欄・tags が、台帳 `scheduled` の台本と食い違っている所（2026-09-09 01:5x・hourly・Fable）。
 
@@ -435,7 +524,11 @@ def cmd_status(a):
         print("  " + cl)
     print(f"いま {now_jst():%m/%d %H:%M} JST")
     print("きょうの枠:")
-    for v in yt.today_lineup(vids):
+    lineup_today = yt.today_lineup(vids)
+    esm = empty_slot_mark(lineup_today, now_jst())
+    if esm:
+        print(esm)
+    for v in lineup_today:
         print(f"  {yt.when(v):%H:%M} {v['privacy']:8s} {v['id']} {v['views']:5d}回 {v['title'][:40]}{lineup_mark(v, sids)}")
         if v["privacy"] != "public":
             # 公開前の本だけ、YouTube 側の処理が終わっているかを添える（1単位。`yt.readiness` の註）。

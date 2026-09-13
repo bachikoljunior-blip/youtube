@@ -5289,3 +5289,10 @@
 {"day": "2026-09-10", "start": "2026-08-23", "studio": true, "views": 150, "marks": {"p10": 0.706, "p25": 0.588, "p50": 0.294, "p75": 0.235, "p95": 0.176}, "at": "2026-09-14T00:52:18+09:00", "id": "EkNqtkK49Bw", "event": "analytics_curve"}
 {"day": "2026-09-10", "start": "2026-08-23", "studio": false, "views": 439, "marks": {"p10": 1.058, "p25": 0.655, "p50": 0.448, "p75": 0.218, "p95": 0.138}, "at": "2026-09-14T00:52:18+09:00", "id": "4C7_gciPt8c", "event": "analytics_curve"}
 {"day": "2026-09-10", "start": "2026-08-23", "studio": false, "views": 350, "marks": {"p10": 1.06, "p25": 0.657, "p50": 0.537, "p75": 0.328, "p95": 0.149}, "at": "2026-09-14T00:52:18+09:00", "id": "N75-k7r6pLw", "event": "analytics_curve"}
+{"subs": 28, "views": 88254, "videos": 272, "at": "2026-09-14T00:49:40+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"views_live": 1015, "views_ledger": 1008, "over": 7, "age_h": 62.8, "src": "status", "at": "2026-09-14T00:49:41+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
+{"seconds": 90.7, "image": true, "chars": 460, "scenes": [7.7, 7.4, 7.9, 6.9, 11.1, 4.8, 7.9, 9.9, 6.1, 4.2, 10.7, 6.2], "sig": "1:ddd2c3928aa4", "at": "2026-09-14T00:52:11+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "built"}
+{"video_id": "-bSkulqONhI", "publish_at": "2026-09-14T10:00+09:00", "replaced": null, "title": "国民年金をはらえないとき 全額免除なら年金は2分の1入る 未納は0 #Shorts", "at": "2026-09-14T00:52:56+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "scheduled"}
+{"subs": 28, "views": 88254, "videos": 272, "at": "2026-09-14T00:53:09+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": false, "upload": "uploaded", "processing": "processing", "failure": null, "meta_drift": [], "at": "2026-09-14T00:53:10+09:00", "id": "-bSkulqONhI", "event": "ready_checked"}
+{"views_live": 1015, "views_ledger": 1008, "over": 7, "age_h": 62.9, "src": "status", "at": "2026-09-14T00:53:10+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
