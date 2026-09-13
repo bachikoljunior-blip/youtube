@@ -1716,8 +1716,12 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
     コメント        新着 **0件**・未返信 **4件**（問いは 0件 ＝ `cli reply` を撃つ先は 0）・
                    消えた **1件**・保留/迷惑 0件。**言い分は 3**（derivation は JOURNAL 09/13 21:5x）
     オーナーの言葉   **連も並びも `python scripts/owner_words.py` が印字する ＝ ここへ写さない**（API 0単位）。
-                   札の無い新しい言葉 **2件**（`6a67e8e7`・`95e92b1e`）・**判定は `hourly` とオーナー**（§5）・
+                   札の無い新しい言葉 **2件**（`6a67e8e7`・`95e92b1e` ＝ 札は `docs/GOAL.md` の達成期限の節・
+                   申し送り JOURNAL 09/14 02:4x）・**判定は `hourly` とオーナー**（§5）・
                    derivation は JOURNAL 09/13 14:0x／15:0x
+    オーナーへの訊き  **周も返事も `python scripts/owner_ask.py` が印字する ＝ ここへ写さない**（API 0単位・
+                   台帳 `data/owner_ask.jsonl`）。決めと覆る条件は `docs/GOAL.md` の達成期限の節 (4)／(4-a)〜(4-d)・
+                   **判定は `hourly` とオーナー**・derivation は JOURNAL 09/14 02:4x
     音の側の答え     **`分けられない` 0/3本**・答えた本 **5本**・1度も答えなかった本 **5本**
                    （`trend.voice_runs`・**単位は「本」**）
     平ら           戻った **17件**／戻らないまま **1件**／まだ言えない **1件**・境目 **60.4 〜 151.2時間**
