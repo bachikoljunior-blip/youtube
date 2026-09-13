@@ -2325,6 +2325,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  —— **同じ族の 6例目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・
     #  `views_streak`）。**単位は「引き」＝ 周ではありません**（`trend.rev7_run` の註）。
     out.append(rev7_line(rows))
+    #  そのすぐ隣に「上がった分の中身」を出す（`rev7_line` の「引かれました」は連だけを見るので、
+    #  この行が無いと分子の中身を見ないまま §1 を開けます・`trend.rev7_source_line` の註）。
+    out.append(rev7_source_line(rows))
     # 一括レポート（3つ目の枠・**Data API 0単位**）を、台帳の包絡と並べる
     # （§7 (o-4)(3)・`trend.report_vs_ledger` の註 ＝ **複製から返らない唯一の口**）。
     out.append(report_vs_ledger_line(rows))
@@ -2468,6 +2471,8 @@ REV7_RUN_GATE = 3
 #: 直近7日（収益の節の分子）と、その横に並べる 12日。
 REV7_DAYS = 7
 REV7_LONG_DAYS = 12
+#: **上がった分の出どころ**の門（`rev7_source`）。**単位は「引き」**（`rev7_run` と同じ）。
+REV7_SOURCE_GATE = 3
 #: 基準2（ショート 直近90日 1,000万回）。**公表ページの写し**（§7 の収益の節・覆る条件 (10)）。
 REV_GOAL_VIEWS = 10_000_000
 REV_GOAL_DAYS = 90
@@ -2589,6 +2594,87 @@ def rev7_line(rows: list[dict]) -> str:
     else:
         tail += "**判定は `hourly` とオーナー**（§5 ＝ optimizer は数を並べるまで）。"
     return head + tail
+
+
+def rev7_source(rows: list[dict]) -> dict:
+    """**上がった分は「新しい本」か「チャンネル全体の回復」か**（台帳の `analytics_video` だけ・API 0単位）。
+
+    **なぜ要るか**（2026-09-13 09:1x・`hourly`・Opus が足した）: §7 の収益の節の 覆る条件 (4) は
+    「直近7日の平均が 3回 続けて上がったら、**分子は『新しい本』ではなくチャンネル全体の回復の側**」
+    と書いてあり、`rev7_run` は **その連だけ**を数えます —— **分子が何でできているかを、
+    どの口も見ていませんでした。** 答えはもう台帳に在ります: `analytics_video` の `studio` の札
+    （`cli` が引きごとに本ごとで書く）。
+
+    **12日 では代われません**（この回の実測）: 12日 は **1097.6 → 933.3 → 864.9 → 664.9** で
+    3回 とも下がり、7日 は 3回 とも上がりました ＝ **どちらも同じ日を別の重みで足し直しただけ**で、
+    分子の中身は分けていません。**分けるのは `studio` の札だけです。**
+
+    返り: `{"draws", "old_run", "gate", "drawn"}`。`draws` は引き（`analytics_video` の同じ `at` の塊）
+    ごとに `{"at", "day", "start", "total", "studio", "old", "share"}`（古い順）。
+    **単位は「引き」**（`rev7_run` と同じ ＝ 周ではありません）。
+
+    **覆る条件**: (1) 古い側（`old`）が **3引き 続けて上がったら**、そのとき初めて
+        「チャンネル全体の回復」＝ (4) の刻（**判定は `hourly` とオーナー**・§5）。
+    (2) `studio` の札が付かない本が出たら（`cli` の側の欄落ち）、この分けは黙って狂います。
+        **`total` を `analytics_day` の合計と引き比べないこと** —— 窓の頭が 1日 ずれます
+        （実測 5,374 対 5,691）。見るのは **札の付いた本が 0本 になっていないか**のほう。
+    (3) 古い本を private に戻した回が出たら、`old` は「回復しなかった」ではなく「盤から降りた」側
+        ＝ 台帳の `unscheduled` と一緒に読むこと。
+    """
+    draws: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("event") == "analytics_video" and r.get("at"):
+            draws.setdefault(r["at"], []).append(r)
+    out: list[dict] = []
+    for at in sorted(draws):
+        g = draws[at]
+        tot = sum(int(r.get("views") or 0) for r in g)
+        new = sum(int(r.get("views") or 0) for r in g if r.get("studio"))
+        out.append({"at": dt.datetime.fromisoformat(at).astimezone(JST),
+                    "day": g[0].get("day"), "start": g[0].get("start"),
+                    "total": tot, "studio": new, "old": tot - new,
+                    "share": (new / tot) if tot else 0.0})
+    kept: list[dict] = []          # 同じ日までを引き直した回は落とす（`rev7_draws` と同じ規則）
+    for d in out:
+        if kept and kept[-1]["day"] == d["day"]:
+            kept[-1] = d
+        else:
+            kept.append(d)
+    old_run = 0
+    for prev, cur in zip(kept, kept[1:]):
+        old_run = old_run + 1 if cur["old"] > prev["old"] else 0
+    return {"draws": kept, "old_run": old_run, "gate": REV7_SOURCE_GATE,
+            "drawn": old_run >= REV7_SOURCE_GATE}
+
+
+def rev7_source_line(rows: list[dict]) -> str:
+    """`rev7_source` を1行にする（`trend` が毎周 印字する ＝ **§7 へ写さないこと**）。
+
+    **§5 教訓の形 7つ目**（覆る条件を註に書いたら、それを読む**印字**も一緒に作ること）——
+    `rev7_line` の「引かれました」は連だけを見て「チャンネル全体の回復の側」と言い切るので、
+    **その隣にこの行が無いと、読む側は分子の中身を見ないまま §1 を開けます。**
+    """
+    s = rev7_source(rows)
+    draws = s["draws"]
+    if len(draws) < 2:
+        return ("**上がった分の出どころ（(4) の分子の中身）: まだ引きが 2回 そろっていません**"
+                "（`trend.rev7_source`）")
+    d = draws[-1]
+    new_ser = " → ".join(f"{x['studio']:,}" for x in draws[-4:])
+    old_ser = " → ".join(f"{x['old']:,}" for x in draws[-4:])
+    line = (f"**上がった分の出どころ**（`analytics_video` の `studio` の札・**Data API 0単位**・"
+            f"`trend.rev7_source`）: 最後の引き **{d['at']:%m/%d %H:%M}**（窓 {d['start']}〜{d['day']}）は "
+            f"**新しい本 {d['studio']:,}回 / 古い本 {d['old']:,}回**（新しい本の取り分 **{d['share']*100:.1f}%**）。"
+            f"**引きごとの並び（新しい 4つ まで）: 新しい本 {new_ser} ／ 古い本 {old_ser}**。")
+    if s["drawn"]:
+        line += (f"**古い側が {s['old_run']}/{s['gate']}引き 続けて上がっています ＝ "
+                 "ここで初めて『チャンネル全体の回復』です**（`rev7_source` の覆る条件 (1)・"
+                 "**判定は `hourly` とオーナー**・§5）。")
+    else:
+        line += (f"**古い側の連は {s['old_run']}/{s['gate']}引き** ＝ "
+                 "**上がった分は新しい本の側です** —— **`rev7_line` の「引かれました」だけで "
+                 "§1 の「量は毒」を開けないこと**（2026-09-13 09:1x の判定・§7 の収益の節 (4)）。")
+    return line
 
 
 def curve_state(rows: list[dict]) -> dict:
