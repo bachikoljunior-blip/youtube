@@ -394,3 +394,51 @@ def test_伸びが_0_の回は向きが片側だと言う():
     short = trend.channel_line_short(rows)
     assert "チャンネルの側を外すこと" in short
     assert "平らの中の本の伸びは 0回" in short and "「だから止まった」ではない" in short
+
+
+def _short_flat_with_big_gain_rows() -> list[dict]:
+    """平らが `REPLICA_LAG_H` より短い並び（＝ 反証が立ちようのない側）。
+
+    平らの中の本は 100 → 300回 と大きく伸ばしてあるので、**立たない理由は
+    「伸びが無い」ではなく「窓が遅れより短い」**（`channel_video_delta` の `measurable`）。
+    """
+    return [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T10:00:00+09:00", 27, 84500),   # 刻み
+            _row("2026-09-10T11:00:00+09:00", 27, 84500),   # 平ら 2周・1.0時間
+            _m("2026-09-10T10:00:00+09:00", "aaa", 100, 20.0),
+            _m("2026-09-10T11:00:00+09:00", "aaa", 300, 21.0)]
+
+
+def test_反証は平らが遅れより短い窓では立たない():
+    """**短い行の 3周 の門を、この反証のために広げないこと**（2026-09-13 09:1x）。
+
+    `flat_alive` は `flat_h >= REPLICA_LAG_H` を通らないと立ちません。
+    親の床では 3周 の平らがそこまで伸びないので、短い行の
+    `flat_laps >= CHANNEL_FLAT_LAPS` は**この反証に対して 1度も縛りません**
+    （台帳の全 187周: `flat_laps == 2` は 11周・うち `flat_alive` は **0周**）。
+    **この関係が崩れたら落ちます** ＝ そのとき枝を `flat_laps >= 2` へ揃えること
+    （`channel_line_short` の 09/13 09:1x の覆る条件 (1)(2)）。
+    """
+    rows = _short_flat_with_big_gain_rows()
+    g = trend.channel_growth(rows)
+    assert g["flat_laps"] < trend.CHANNEL_FLAT_LAPS
+    assert g["flat_h"] < trend.REPLICA_LAG_H
+    # **「伸びが 0」ではなく「訊けていない」**（`flat_video_gain` の (c)）
+    assert g["flat_vid_confirmed"] is None and g["flat_alive"] is None
+    short = trend.channel_line_short(rows)
+    assert "チャンネルは止まっていません" not in short
+
+
+def test_positive_control_平らを遅れより長くすると反証が立つ():
+    """**陽性対照**: 同じ並びの平らを `REPLICA_LAG_H` より長くすると、反証が立ち
+    full も短い行も「止まっていません」と言うこと ＝ 上の検査は窓の長さを見ている。"""
+    rows = [_row("2026-09-10T09:00:00+09:00", 27, 84000),
+            _row("2026-09-10T10:00:00+09:00", 27, 84500),
+            _row("2026-09-10T14:00:00+09:00", 27, 84500),   # 平ら 2周・4.0時間
+            _m("2026-09-10T10:00:00+09:00", "aaa", 100, 20.0),
+            _m("2026-09-10T13:30:00+09:00", "aaa", 100, 23.5),
+            _m("2026-09-10T14:00:00+09:00", "aaa", 300, 24.0)]
+    g = trend.channel_growth(rows)
+    assert g["flat_h"] >= trend.REPLICA_LAG_H
+    assert g["flat_alive"] is True and g["flat_vid_confirmed"] > 0
+    assert "チャンネルは止まっていません" in trend.channel_line(rows)
