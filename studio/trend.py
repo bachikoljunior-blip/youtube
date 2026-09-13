@@ -2832,6 +2832,13 @@ def rev7_source(rows: list[dict]) -> dict:
         （実測 5,374 対 5,691）。見るのは **札の付いた本が 0本 になっていないか**のほう。
     (3) 古い本を private に戻した回が出たら、`old` は「回復しなかった」ではなく「盤から降りた」側
         ＝ 台帳の `unscheduled` と一緒に読むこと。
+    (4) **空引き（日が進まなかった引き）は、刻も値も進めません**（2026-09-14 02:5x・`hourly`・Opus が直した
+        ＝ 01:0x の optimizer の申し送り）。註は「`rev7_draws` と同じ規則」と書きながら、`kept[-1] = d` で
+        **あとの読みへ置き換えて**いました。**harm は刻だけではありません** —— 引き直した日だけが
+        「熟した読み」になるので、**その日で上がって次の日で下がる見かけの段**が `old_run` に入ります
+        （実測の空引き 3回 は値が同じなので数は動かず、最後の引きの刻だけが 09/14 00:52 → 09/13 04:38 へ戻ります）。
+        **覆る条件**: 同じ日の引き直しで値が動き、そのとき「熟した読み」のほうが要ると判断したら、
+        **`rev7_draws` と両方を同じ向きに変えること**（片方だけ変えると、また同じ食い違いが戻ります）。
     """
     draws: dict[str, list[dict]] = {}
     for r in rows:
@@ -2846,12 +2853,11 @@ def rev7_source(rows: list[dict]) -> dict:
                     "day": g[0].get("day"), "start": g[0].get("start"),
                     "total": tot, "studio": new, "old": tot - new,
                     "share": (new / tot) if tot else 0.0})
-    kept: list[dict] = []          # 同じ日までを引き直した回は落とす（`rev7_draws` と同じ規則）
+    kept: list[dict] = []          # 同じ日までを引き直した回は落とす（`rev7_draws` と**同じ規則 ＝ 最初の読みを残す**）
     for d in out:
         if kept and kept[-1]["day"] == d["day"]:
-            kept[-1] = d
-        else:
-            kept.append(d)
+            continue               # 空引き（日が進まなかった引き）は、刻も値も進めない
+        kept.append(d)
     old_run = 0
     for prev, cur in zip(kept, kept[1:]):
         old_run = old_run + 1 if cur["old"] > prev["old"] else 0
