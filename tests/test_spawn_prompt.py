@@ -462,3 +462,31 @@ def test_cli_without_siblings_names_the_other_role(capsys) -> None:
     out = capsys.readouterr().out
     assert "立てた時点ではいません" in out
 
+
+def test_型がstatusのコメントの出し方について道具と同じことを言っている() -> None:
+    """**型が道具の挙動を主張していて、道具が直ったあとも主張が残っていました。**
+
+    型は長いあいだ「`status` は直近3件しか出さない」と書き、それを理由に
+    `comments`（API 1単位）を撃たせていました。ところが `cli.comments_to_show` は
+    **新着と未返信を必ず全部 出す**形に直っており（その註の 01:4x）、
+    型のほうだけが古いまま残っていました ＝ この repo でいちばん多い壊れ方
+    （**言っている所と、している所が別**）が、**親が毎周 子へ渡す本文**に出た側です。
+
+    **だから、字の見張りだけにしないこと** —— 下は道具のほうを撃って
+    「全部 出す」が本当かを確かめてから、型の字と突き合わせます（**陽性対照**:
+    `comments_to_show` を新しい順の窓に戻すと、この検査が落ちます）。
+
+    **覆る条件**: `comments_to_show` が「未返信の古い順に 3件 ＋ 残り n件」の形へ変わったら
+    （その関数の覆る条件）、型の字もその形へ書き直してから、この検査を直すこと。
+    """
+    from studio import cli as studio_cli
+
+    unanswered = [{"id": f"c{i}", "answered": False} for i in range(6)]
+    assert len(studio_cli.comments_to_show(unanswered, [])) == 6, (
+        "`status` が未返信を隠す形に戻っています")
+
+    body = sp.templates()["optimizer"]
+    assert "直近3件しか出さない" not in body, (
+        "型が `status` について、道具がもうしていないことを言っています")
+    assert "新着と未返信を必ず全部 出します" in body
+

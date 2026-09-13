@@ -1773,11 +1773,13 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    数は `method_growth.py --split` と `output_growth.py` が印字する ＝ 写さない。
                    (ii)（METHOD_LOG へ割る）は引きません（04:3x／07:2x）・derivation は JOURNAL 09/14 01:5x
     検査           **撃ち方は `python scripts/checks.py`**（束・秒は その註）。
-                   この回: studio **1,018件 緑**／親の手続き **733件 緑**（skip 11。
-                   **この回の +3 ＝ `trend.over_lag` の「まだ言えない」**・陽性対照つき）
+                   この回: studio **1,037件 緑**（skip 8）／親の手続き **734件 緑**（skip 11。
+                   **新しい検査は +4件**・陽性対照つき。**studio の +19 は束の file が増えた側**
+                   ＝ JOURNAL 09/14 08:3x）
     この回         **赤 0件**・**新しく引かれた覆る条件 0件**・**閉じた覆る条件 1件 ＝
-                   `cli.over_ledger` の (1)**（前の周の偽陽性・上の行）。
-                   **中身は JOURNAL 09/14 08:2x —— ここへ写さないこと**
+                   `cli.over_ledger` の (1)**（前の周の偽陽性・上の行）・
+                   **(e) 親の手続き 1件 ＝ 型が `status` について道具のしていないことを言っていた**。
+                   **中身は JOURNAL 09/14 08:2x／08:3x —— ここへ写さないこと**
     期限           **2026-12-13**（オーナー 09/13 20:0x・与件）。**残り日数・要る回数・要る登録・倍率は
                    `trend.rev_deadline` が毎周 印字する ＝ ここへ写さない**（**倍率は下端**）。
                    決めと覆る条件 4つ は §7 の収益の節と `rev_deadline` の註
