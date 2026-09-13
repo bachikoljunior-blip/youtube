@@ -5195,3 +5195,6 @@
 {"views": 716, "likes": 4, "comments": 4, "age_h": 129.6, "title": "年金を60歳からもらうと24%減る 80歳10か月より長生きなら損 #Short", "n_values": 1, "at": "2026-09-13T19:34:08+09:00", "id": "lQHX9LJ80Sg", "event": "measured"}
 {"views": 66, "likes": 0, "comments": 0, "age_h": 153.6, "title": "年金を70歳まで遅らせると 得になるのは81歳11か月から #Shorts", "n_values": 1, "at": "2026-09-13T19:34:08+09:00", "id": "nQbVxuWpWw8", "event": "measured"}
 {"views": 74, "likes": 0, "comments": 0, "age_h": 154.6, "title": "【育休181日目】手取り比22.0614pt低下 #Shorts", "n_values": 1, "at": "2026-09-13T19:34:08+09:00", "id": "PhQ2KvuQASQ", "event": "measured"}
+{"subs": 28, "views": 88254, "videos": 272, "at": "2026-09-13T19:33:02+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"views_live": 996, "views_ledger": 993, "over": 3, "age_h": 57.5, "src": "status", "at": "2026-09-13T19:33:03+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
+{"takeaway": "国民年金保険料が払えない場合、申請して免除を受けると申請しない未納よりも受け取る年金額が大きく異なるため、申請することが重要である。", "unclear": ["ねんきん定期便（具体的に何であり、どこで・どのように見るのか説明されていない）"], "sig": "2:59f31904ff4f", "lang": "ja", "dropped": [], "assumed": ["国民年金制度そのものの存在と基本的な仕組み", "65歳から年金受給が開始されること", "年金が死ぬまで（一生）続くこと", "40年が加入期間の標準であること", "満額（1年85万円）の根拠と計算方法", "国の税金で年金の半分が補助される具体的な仕組み", "免除申請の基準となる「収入が少ない」の具体的な金額"], "at": "2026-09-13T19:35:18+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "cold_read"}
