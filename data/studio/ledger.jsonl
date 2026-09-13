@@ -5144,3 +5144,14 @@
 {"seconds": 91.4, "image": true, "chars": 459, "scenes": [8.1, 7.4, 8.4, 6.9, 11.6, 5.0, 7.9, 10.0, 6.4, 4.7, 9.4, 5.7], "sig": "1:d6e06f7e8d69", "at": "2026-09-13T16:58:16+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "built"}
 {"mismatched": 0, "model": "small", "mode": "kana", "diffs": [], "near": [{"i": 1, "d": [["へ", "え"], ["", "お"]]}, {"i": 3, "d": [["は", "わ"]]}, {"i": 5, "d": [["つ", "す"]]}, {"i": 6, "d": [["い", "え"], ["ね", "め"]]}, {"i": 8, "d": [["げ", "ね"]]}, {"i": 11, "d": [["ょ", "お"]]}], "near_repeats": [], "near_quiet": {}, "escalated": [5, 7], "tail": {}, "voice": {}, "head": {}, "head_voice": {}, "sent": {}, "how": {"5": "small→medium", "7": "small→medium+prompt"}, "at": "2026-09-13T17:00:25+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "heard"}
 {"n": 0, "kinds": [], "at": "2026-09-13T17:02:31+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "crosscheck"}
+{"subs": 28, "views": 88254, "videos": 272, "at": "2026-09-13T17:44:09+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"views_live": 105, "views_ledger": 70, "over": 35, "age_h": 7.7, "src": "status", "at": "2026-09-13T17:44:09+09:00", "id": "Edmce94ZVKs", "event": "views_over"}
+{"views_live": 993, "views_ledger": 989, "over": 4, "age_h": 55.7, "src": "status", "at": "2026-09-13T17:44:09+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
+{"views": 106, "likes": 0, "comments": 0, "age_h": 7.7, "title": "付加年金 月400円たすと1か月ごとに毎年200円ふえる 2年ではらった金額とお", "n_values": 1, "at": "2026-09-13T17:44:40+09:00", "id": "Edmce94ZVKs", "event": "measured"}
+{"views": 788, "likes": 4, "comments": 0, "age_h": 31.7, "title": "退職金の税金 30年はたらけば1500万円までゼロ 退職所得控除 #Shorts", "n_values": 1, "at": "2026-09-13T17:44:40+09:00", "id": "4l3DDCLIRxg", "event": "measured"}
+{"views": 989, "likes": 1, "comments": 0, "age_h": 55.7, "title": "65歳から70歳まではたらくと年金が年10万円ふえる 在職定時改定 #Short", "n_values": 1, "at": "2026-09-13T17:44:40+09:00", "id": "mja40GJ-GHU", "event": "measured"}
+{"views": 0, "likes": 0, "comments": 0, "age_h": 79.7, "title": "夫が亡くなると妻の年金はいくら減るか 遺族厚生年金は4分の3 #Shorts", "n_values": 1, "at": "2026-09-13T17:44:40+09:00", "id": "2YZ_4FXC-XI", "event": "measured"}
+{"views": 966, "likes": 5, "comments": 0, "age_h": 103.7, "title": "配偶者が年下だと年金が年42万3700円ふえる 加給年金 #Shorts", "n_values": 1, "at": "2026-09-13T17:44:40+09:00", "id": "gv1u7n_pCAQ", "event": "measured"}
+{"views": 715, "likes": 4, "comments": 4, "age_h": 127.7, "title": "年金を60歳からもらうと24%減る 80歳10か月より長生きなら損 #Short", "n_values": 1, "at": "2026-09-13T17:44:40+09:00", "id": "lQHX9LJ80Sg", "event": "measured"}
+{"views": 66, "likes": 0, "comments": 0, "age_h": 151.7, "title": "年金を70歳まで遅らせると 得になるのは81歳11か月から #Shorts", "n_values": 1, "at": "2026-09-13T17:44:40+09:00", "id": "nQbVxuWpWw8", "event": "measured"}
+{"views": 74, "likes": 0, "comments": 0, "age_h": 152.7, "title": "【育休181日目】手取り比22.0614pt低下 #Shorts", "n_values": 1, "at": "2026-09-13T17:44:40+09:00", "id": "PhQ2KvuQASQ", "event": "measured"}

@@ -103,3 +103,40 @@ def test_境目の2つを印字する():
     assert "24.0時間 より長く見た" in line
     assert "20.9時間" in line and "61.6時間" in line
     assert f"{trend.ENVELOPE_LAG_H:.0f}時間 以上 見た" not in line
+
+
+# ---- 2026-09-13 18:0x に足した（optimizer・Opus）----
+# **ずっと 0回 の本は `resumed` に構造として入れない**（`env[-1] > env[i]` が 0 > 0 で必ず偽）
+# ＝ 混ぜると境目の**上端だけ**が毎周 下がり、測っていないのに幅が狭まる。
+
+
+def test_ずっと0回の本は境目に入れない():
+    """**陽性対照の当のもの**（実物 `2YZ_4FXC-XI` 齢 0.3→79.7h・ずっと 0回）。
+
+    絞りを外すと、この本が `shortest_stayed_h` を 79.4時間 へ引き下げ、
+    **「79.4時間 平らなら止まった」の唯一の根拠が、1度も配られなかった本**になる。
+    """
+    rows = _rows([(5.0, 100), (35.0, 100), (36.0, 200), (60.0, 200)], vid="V1")   # 30.0h 戻った
+    rows += _rows([(8.0, 300), (40.0, 300), (60.0, 300), (120.0, 300)], vid="V2")  # 112h 戻らない
+    rows += _rows([(0.3, 0), (20.0, 0), (50.0, 0), (79.7, 0)], vid="Z1")           # ずっと 0回
+    got = trend.flats(rows)
+    assert got["zero_view"] == ["Z1"]
+    assert [r["id"] for r in got["stayed"]] == ["V2"]
+    assert abs(got["shortest_stayed_h"] - 112.0) < 0.05   # 79.4 ではない
+
+
+def test_0回でも伸び始めた本は数える():
+    """**陰性対照**（覆る条件 (4)）: 外しているのは**ずっと 0回**の本だけ。
+    1回でも付いた本は、頭が 0回 の平らでもそのまま数える。"""
+    rows = _rows([(0.3, 0), (20.0, 0), (50.0, 0), (60.0, 12)], vid="Z2")
+    got = trend.flats(rows)
+    assert got["zero_view"] == []
+    assert got["resumed"] == 1
+
+
+def test_外した本を印字する():
+    """**陽性対照**: 黙って外すと、次の回は「境目が広がった」理由を台帳から引けない。"""
+    rows = _rows([(5.0, 100), (35.0, 100), (36.0, 200), (60.0, 200)], vid="V1")
+    rows += _rows([(0.3, 0), (20.0, 0), (50.0, 0), (79.7, 0)], vid="Z1")
+    line = [ln for ln in trend.lines(rows) if "平らは「止まった」ではない" in ln][0]
+    assert "ずっと 0回 の本 1本" in line and "Z1" in line
