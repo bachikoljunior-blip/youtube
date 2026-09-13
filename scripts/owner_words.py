@@ -196,7 +196,7 @@ FILED_IDS: dict[str, str] = {
                  " ＝ **許しは出た・口はまだ開いていない**（`channels.list(mine=true)` の items 1件）"
                  "・残りは `second_channel_token`（`YT_REFRESH_TOKEN` の取り直し）"),
     "3c564336": ("2026-09-14 クラウド環境にあるっつってんだろ"
-                 " → 札: `docs/GOAL.md` の達成期限の節 (4-b)（09/14 07:4x・`hourly` の判定）"
+                 " → 札: `docs/GOAL.md` の達成期限の節 (4-e)（09/14 07:2x・`hourly` の判定）"
                  "・台帳 `data/owner_ask.jsonl` の `second_channel_token` ＝ **返事ずみ**"
                  " ＝ **手渡しはしない・口は環境変数の側**（`docs/KICKOFF.md` 1）"),
     "0caa916e": ("2026-09-14 一括つってんだろ"
