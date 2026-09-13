@@ -71,6 +71,13 @@
      ＝ 手で数え直すこと。3度目に声が動いたら、そのときこそ刻の口を作ること。
  (y-4) `YOMI_IDS` と `CLARITY_IDS` の両方に載る言葉が **3件** になったら、族の切り方が
      言葉の粒に合っていない（いま 1件 ＝ `3f4ef885`）＝ 言葉ではなく**指摘ごと**に札を割ること。
+ (y-5) **2つ の門は同じ連に掛かるので、印字は 2つ とも verdict を出します**
+     （2026-09-13 16:0x・optimizer・Opus。15:0x は `complaint_gate` を返り値に持ちながら
+     **7本 の側の verdict しか印字していませんでした** ＝ §5 教訓の形 7つ目・17つ目）。
+     **引き方が逆向きです**: §3 の 9 は「**届いた回**」に引かれ、§2 の 声 (2) は
+     「**届いているときに次の指摘が来た回**」に引かれます。
+     **覆る条件**: 3つ目の門が同じ連に掛かったら、`yomi_line` の tail ではなく
+     **門ごとの 1行**（門・分子・引き方・判定者）を並べる形へ変えること。
 """
 
 from __future__ import annotations
@@ -122,6 +129,12 @@ YOMI_GATE_BOOKS = 7
 #: 指摘が続く側の門（**本**）。§2 の 声 の覆る条件 (2)
 #: 「(1) の書き換えを **3本** 続けて出してもオーナーの指摘が続いたら、残っているのは抑揚の側」。
 YOMI_COMPLAINT_GATE_BOOKS = 3
+
+#: **(1)（語そのものを書き換える）を決めた刻**（METHOD §2 の直す順・2026-09-11 13:0x・hourly・Opus）。
+#: §2 の 声 の覆る条件 (2) の分子は「**書き換えて出した本**」なので、この刻より前の本は数えません
+#: （`yomi_line` がその字を毎周 印字しているのに、**数える側はその絞りを持っていませんでした**）。
+#: **覆る条件**: §2 の (1)(2)(3) の順が書き直されたら、この刻も一緒に直すこと（刻は METHOD §2 の本文）。
+REWRITE_DECIDED_AT = datetime(2026, 9, 11, 13, 0, tzinfo=JST)
 
 #: **オーナーの言葉だが、上の 2族 のどちらでもないもの**（id → 一言）。
 #: これが在るので「まだ札の無い、より新しい言葉」は**族ごとに**正確に出せます
@@ -234,24 +247,52 @@ def yomi_streak(rows: list[dict], pub: list[tuple[datetime, str]] | None = None,
     オーナーが黙っていた日を数えても分子になりません。§3 の 9 も §2 の 声 の覆る条件 (2) も、
     数えているのは**本**です（「7本 出して 0 なら」「3本 続けて出しても」）。
 
-    返り: `{"words", "last", "run", "gate", "drawn", "prev_runs", "complaint_gate", "books"}`。
+    **同じ連に門が 2つ 掛かります**（2026-09-13 16:0x・optimizer・Opus が 2つ目を数え始めた）:
+
+        §3 の 9       門 **7本**・「0 なら この形で正しい」 ＝ **連が門に届いた回**に引かれる
+        §2 の 声 (2)  門 **3本**・「3本 続けて出しても指摘が続いたら」 ＝ **門に届いているときに
+                      次の指摘が来た回**に引かれる（届いた回そのものでは引かれません）
+
+    15:0x はこの 2つ を 1つ の `run` で数え、**印字は 7本 の側の verdict しか出していません**でした
+    （`complaint_gate` は返り値に在るのに、`yomi_line` は字で触れるだけ）＝ 読む側は
+    「まだ引けません（門 7本）」だけを見ます（§5 教訓の形 7つ目 ＝ 註と印字が食い違えば読まれるのは印字）。
+    **2つ目の分子は 1つ目より速く、いま 2/3本 です。**
+
+    **2つ目の分母は「書き換えて出した本」**（`REWRITE_DECIDED_AT` より後に公開した本だけ）——
+    §2 の (1) を決める前の本は「書き換えて出した本」ではありません。`yomi_line` はその字を
+    15:0x から印字していましたが、**数える側は絞りを持っていませんでした**。
+
+    返り: `{"words", "last", "run", "gate", "drawn", "prev_runs", "complaint_gate",
+    "complaint_run", "complaint_ready", "broken_after", "books", "after"}`。
     `prev_runs` は**指摘と指摘のあいだに出た本の数**（＝ 前の連が何本で切れたか）。
+    `broken_after` は `REWRITE_DECIDED_AT` より後に**切れた**連だけ（覆る条件 (y-2) の分子）。
     """
     pub = books(now=now) if pub is None else pub
     words = [r for r in rows if r.get("id") in YOMI_IDS]
     if not words:
         run = len(pub)
+        after_all = [b for b in pub if b[0] > REWRITE_DECIDED_AT]
         return {"words": [], "last": None, "run": run, "gate": YOMI_GATE_BOOKS,
                 "drawn": run >= YOMI_GATE_BOOKS, "prev_runs": [],
-                "complaint_gate": YOMI_COMPLAINT_GATE_BOOKS, "books": pub, "after": []}
+                "complaint_gate": YOMI_COMPLAINT_GATE_BOOKS,
+                "complaint_run": len(after_all),
+                "complaint_ready": len(after_all) >= YOMI_COMPLAINT_GATE_BOOKS,
+                "broken_after": [], "books": pub, "after": []}
     marks = [datetime.fromisoformat(r["at"]).astimezone(JST) for r in words]
     after = [b for b in pub if b[0] > marks[-1]]
-    prev = [{"from": words[i]["id"], "to": words[i + 1]["id"],
+    prev = [{"from": words[i]["id"], "to": words[i + 1]["id"], "at": marks[i + 1],
              "books": len([b for b in pub if marks[i] < b[0] <= marks[i + 1]])}
             for i in range(len(words) - 1)]
+    # **2つ目の門の分子**: いちばん新しい指摘より後 **かつ** (1) を決めた刻より後 の本だけ。
+    c_after = [b for b in after if b[0] > REWRITE_DECIDED_AT]
+    # **切れた連**（(y-2) の分子）も同じ絞りで —— 連を切った指摘が決めより後のものだけ。
+    broken = [p for p in prev if p["at"] > REWRITE_DECIDED_AT]
     return {"words": words, "last": words[-1], "run": len(after), "gate": YOMI_GATE_BOOKS,
             "drawn": len(after) >= YOMI_GATE_BOOKS, "prev_runs": prev,
-            "complaint_gate": YOMI_COMPLAINT_GATE_BOOKS, "books": pub, "after": after}
+            "complaint_gate": YOMI_COMPLAINT_GATE_BOOKS,
+            "complaint_run": len(c_after),
+            "complaint_ready": len(c_after) >= YOMI_COMPLAINT_GATE_BOOKS,
+            "broken_after": broken, "books": pub, "after": after}
 
 
 def _day(row: dict) -> str:
@@ -373,12 +414,25 @@ def yomi_line(res: dict | None = None) -> str:
         body.append("  いちばん新しい指摘のあとに公開した本: **0本**")
     for p in y["prev_runs"]:
         body.append(f"  前の連（指摘と指摘のあいだに出た本）: `{p['from']}` → `{p['to']}` ＝ **{p['books']}本**")
+    c_run, c_gate = y["complaint_run"], y["complaint_gate"]
+    if y["complaint_ready"]:
+        c_verdict = (f"**門に届いています（{c_run}/{c_gate}本）** ＝ **次の「読みが変」が来た回に引かれます**"
+                     "（そのときは Chirp3-HD へ戻すかをオーナーに訊く番・**判定は `hourly` とオーナー**）")
+    else:
+        c_verdict = (f"**まだ届いていません（{c_run}/{c_gate}本・あと {c_gate - c_run}本）** ＝ "
+                     "いま指摘が来ても引かれません（連が 0 に戻るだけ）")
     tail = [
-        f"  **§2 の 声 の覆る条件 (2)（{y['complaint_gate']}本 続けて出しても指摘が続いたら、"
-        "残っているのは抑揚の側 ＝ Chirp3-HD へ戻すかをオーナーに訊く）は、"
-        "この連が門に届いているときに次の指摘が来た回です**",
+        f"  **§2 の 声 の覆る条件 (2)** —— 書き換えて出した本 **{c_run}本**（門 {c_gate}本）: {c_verdict}。"
+        "**引かれるのは門に届いた回ではなく、届いているときに次の指摘が来た回です**（§3 の 9 と逆）",
+        f"  **同じ連に門が 2つ 掛かっています**（上の verdict は §3 の 9 の 門 {y['gate']}本 の側）——"
+        f"**2つ目のほうが速い**（いま {c_run}/{c_gate}本 対 {y['run']}/{y['gate']}本）。"
+        "**片方だけを読んで「まだ引けません」と書かないこと**（2026-09-13 16:0x に足した）",
+        f"  切れた連（(y-2) の分子・決めより後だけ）: **{len(y['broken_after'])}件**"
+        + ("（2件 とも 3本 以上 なら §2 の 声 の覆る条件 (2) の側）" if len(y["broken_after"]) < 2
+           else "・" + "・".join(f"`{p['to']}` ＝ {p['books']}本" for p in y["broken_after"])),
         "  **09/11 より前の連を、その分子に数えないこと** —— §2 の (1)(2)(3)（語そのものを書き換える）は "
-        "**2026-09-11 13:0x の決め**で、それより前の本は「書き換えて出した本」ではありません（判定は `hourly`）",
+        "**2026-09-11 13:0x の決め**で、それより前の本は「書き換えて出した本」ではありません（判定は `hourly`）"
+        "。**この絞りは字ではなく `REWRITE_DECIDED_AT` が持っています**",
     ]
     if res["yomi_unclassified"]:
         tail.append("  **まだ札の無い、より新しいオーナーの言葉**（読みの族なら `YOMI_IDS` に足すこと）:")
