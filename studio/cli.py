@@ -688,6 +688,16 @@ def cmd_read(a):
     print("言い返し:", r.get("takeaway"))
     for u in r.get("unclear") or []:
         print("  分からない:", u)
+    # **`assumed` は「分かったが、本文は説明していない」側**（2026-09-13 14:2x・hourly・Opus）。
+    # **なぜ足したか**: 冷読も critique も、**自分が知っている語の欠落を報告できません**
+    # （知っているので「分からない」に落ちない）。実物: 09/14 の本は 免除 と 未納 の差だけを
+    # 12コマ 使って計算しながら、その 2つ の違い（申請したかどうか）を コマ9 の落ちまで言っておらず、
+    # **輪 5周・冷読 5回・critique 5回 が 1度も名指ししていません**。オーナーは翌日それを
+    # 「説明不足があると思うな。話がつかめない」と言っています（`2e87f87e`）。
+    # ＝ **判定（分かるか）ではなく列挙（何を自分で補ったか）で訊く**と、模型は答えられます。
+    # **覆る条件は `critic.cold_read` の註**（3本 ぶんの実測がたまったら、そこで判定すること）。
+    for u in r.get("assumed") or []:
+        print("  説明されていない（知っていたから分かった）:", u)
     # **引き直しは印字する**（§5 の教訓 7つ目「覆る条件を註に書いたら、それを読む印字も一緒に作る」）。
     # 註は次の回が読む前提だが、印字は読むより先に目に入る ＝ 黙って引き直すと、
     # `critic.cold_read` の覆る条件 (1)(2) を数える回が「何回 引き直したか」に気づけない。
@@ -696,7 +706,7 @@ def cmd_read(a):
     if r.get("lang") == "en":
         print("  ＊**英語のまま**（§4 (1) は日本語の draw だけで比べる ＝ この行を件数の比べに入れないこと）")
     ledger("cold_read", a.id, takeaway=r.get("takeaway"), unclear=r.get("unclear"), sig=s.loop_sig(),
-           lang=r.get("lang"), dropped=r.get("dropped"))   # 言語と捨てた draw（`critic.cold_read` の覆る条件を次の回が数えるため）
+           lang=r.get("lang"), dropped=r.get("dropped"), assumed=r.get("assumed"))   # 言語と捨てた draw（`critic.cold_read` の覆る条件を次の回が数えるため）
     return 0
 
 
