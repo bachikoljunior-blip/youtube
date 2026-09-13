@@ -59,8 +59,24 @@ def test_三回目で門が引かれる():
     rows = _rising() + _draw("13T08:00:00", {"09-10": 5000})
     r = trend.rev7_run(rows)
     assert (r["run"], r["drawn"]) == (3, True)
-    assert "引かれました" in trend.rev7_line(rows)
-    assert "量は毒" in trend.rev7_line(rows)
+    assert "3/3回" in trend.rev7_line(rows)
+
+
+def test_門に届いた回の字は_閉じた判定を指す():
+    """**引いた側ではなく、引いたあとに残る側**（§5 教訓の形 17つ目・2026-09-14 05:0x）。
+
+    この門は 2026-09-13 09:1x に `hourly` が判定して閉じており（分子は「新しい本」の側）、
+    **印字だけが 19時間 のあいだ「§1 の『量は毒』を開け直せ」と言い続けていました。**
+    ＝ 門に届いた回に出すのは「閉じました」と、**残る側（`rev7_source`）への渡し**。
+    """
+    rows = _rising() + _draw("13T08:00:00", {"09-10": 5000})
+    line = trend.rev7_line(rows)
+    assert "閉じました" in line and "2026-09-13 09:1x" in line
+    assert "開けません" in line
+    assert "rev7_source" in line          # 残る側へ渡している
+    # **陽性対照**: 済んだ手を打たせる字が戻ったら落ちる。
+    assert "開け直すこと" not in line
+    assert "引かれました" not in line
 
 
 def test_古い日が書き直されても_過去の点はそのとき読めた数のまま():
