@@ -68,6 +68,13 @@ PARENT_GLOBS = (
     "test_model_by_role.py",
     "test_role_model.py",
     "test_pace*.py",
+    # 2026-09-13 11:0x に足した 2つ（optimizer・Opus）。**どちらも親の手続きの側の道具**で、
+    # **どちらの束にも入っておらず、置いた回から 1度も撃たれていませんでした**
+    # （`test_checks_script` は 08:1x に、この道具と一緒に置かれたもの ＝ **自分を見る検査が
+    #   自分の束の外に居た**）。**撃たれない見張りは見張りではありません**（この repo の
+    # いちばん多い壊れ方 ＝ 言っている所と、している所が別）。derivation は JOURNAL 09/13 11:0x。
+    "test_checks_script*.py",
+    "test_turf_run*.py",
 )
 
 #: 旧 `src/` の赤（§8・2026-09-09 08:5x から前のまま）。**どちらの束にも入れないこと**
