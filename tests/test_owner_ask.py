@@ -77,12 +77,38 @@ def test_answered_を追記したら黙る():
     assert "返事待ちは 0件" in body and "畳んでよい" in body
 
 
-def test_実物の台帳で_fix2_lift_が引かれている():
-    """**この回の実物** —— 09/13 21:0x の訊きは 09/13 23:49 の周で引かれた。"""
+def test_実物の台帳が読めて_答えの出た問いは引かれない():
+    """**実物の台帳**に当てる。**「きょうの状態」は書かない**（§5 教訓の形 6つ目）。
+
+    **2026-09-14 06:2x に踏んで直した**（optimizer・Opus）——
+    ここには「09/13 21:0x の訊きは 09/13 23:49 の周で引かれた」と、
+    **その日の状態が不変条件として**書いてありました。
+    オーナーが 06:15 に `fix2_lift` へ答えた瞬間に `drawn` は False になり、
+    **道具は正しく動いているのに検査だけが赤くなりました**（答えが来たら門は消える ＝ 道具の註のとおり）。
+    **齢も枠も日が経てば門を渡る** ＝ 実物に当てるなら、**日が経っても向きの変わらない不変条件**だけ:
+
+      (1) 台帳が読めて、問いが 1件 以上 在る
+      (2) `answered` の在る問いは **決して `drawn` にならない**（答えが来たら引くのではなく、その言葉が正本）
+      (3) `answered` の無い問いは「まだ引けない／言葉が出ている／引かれた」の **どれか 1つ**
+      (4) 印字の側: `answered` の在る問いは **返事ずみ**と出て、**返事待ちの件数に入らない**
+          （**陽性対照はここ** —— `lines()` が `answered` を見なくなると、実物の台帳で落ちます）
+    """
     root = Path(__file__).resolve().parent.parent
-    st = owner_ask.state(owner_ask._rows(root / "data/owner_ask.jsonl"),
-                         owner_ask._rows(root / "data/rounds.jsonl"),
-                         owner_ask._rows(root / "data/inbox.jsonl"))
-    fix2 = next(s for s in st if s["id"] == "fix2_lift")
-    assert fix2["drawn"] is True
-    assert fix2["replies"] == []
+    asks = owner_ask._rows(root / "data/owner_ask.jsonl")
+    rounds = owner_ask._rows(root / "data/rounds.jsonl")
+    inbox = owner_ask._rows(root / "data/inbox.jsonl")
+    st = owner_ask.state(asks, rounds, inbox)
+    assert st, "実物の台帳に問いが 1件 も無い"
+    for s in st:
+        if s["answered"]:
+            assert s["drawn"] is False, f"{s['id']}: 答えの出た問いが引かれている"
+        else:
+            states = [s["laps"] < owner_ask.GATE_LAPS, bool(s["replies"]), s["drawn"]]
+            assert sum(1 for x in states if x) >= 1, f"{s['id']}: どの状態でもない"
+    body = owner_ask.lines(asks, rounds, inbox)
+    answered = [s for s in st if s["answered"]]
+    assert answered, "実物の台帳に答えの出た問いが 1件 も無い（(4) を測れない）"
+    for s in answered:
+        line = next(x for x in body if f"`{s['id']}`" in x)
+        assert "返事ずみ" in line, f"{s['id']}: 印字が 返事ずみ になっていない"
+    assert f"返事待ち {len(st) - len(answered)}件" in body[0]
