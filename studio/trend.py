@@ -2326,6 +2326,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # 画像の注文の届き具合と、**届いた絵が いちばん新しい build に載っているか**
     # （`trend.image_orders` の註 ＝ 印字だけにしない族の 5つ目）。
     out.append(image_line(rows))
+    # **予約前の台本の輪の指紋**（`cli.loop_stale` は build を撃った回にしか言わない
+    #  ＝ 予約する回が build を撃たない周は、輪が古くても黙って通る・`trend.loop_open` の註）。
+    out.append(loop_open_line(rows, now=now))
     # 上がった本の 題・説明欄をあとから直した回（§4 の出口を抜けた欠陥の数・`trend.meta_fixes` の註
     #  ＝ 台帳に在るのに 1行も読まれていなかった族の 6つ目）。
     out.append(meta_fix_line(rows))
@@ -4185,6 +4188,91 @@ def image_orders(rows: list[dict], orders: "Path | None" = None,
     return {"n": len(oids), "delivered": len(oids) - len(missing),
             "missing": missing, "restale": restale,
             "built_books": len(last)}
+
+
+def loop_open(rows: list[dict], now: dt.datetime | None = None) -> dict:
+    """**まだ予約していない台本の、輪（§4 (1)）の答えが いまの本文のものか**
+    （2026-09-14 03:0x・optimizer・Opus が足した。**台帳と台本の file だけ ＝ API 0単位**）。
+
+    **なぜ `cli.loop_stale` が在るのに足したか（＝ 違う物を見ているか）**: あちらは
+    `lint` と `build` からしか撃たれません。**予約する回は build を撃たないことがあります**
+    —— `schedule` の `build_sig` の門は「焼きがいまの本文か」しか見ないので、
+    **焼きが合っていれば、輪が古くても黙って通ります**。
+    ＝ あちらは「その回が build を撃ったら言う」・こちらは「毎周 言う」。
+
+    **この回に実際に踏んだ形**（derivation は JOURNAL 09/14 03:0x）: 09/14 02:0x の回が
+    09/15 の本の コマ13 の `say` を直し、**read も critique も build も撃たずに**終い、
+    METHOD §18 に「輪は read 5回・critique 5回 で閉じた」と書きました。
+    **そのとき印字した口は 1つ もありません** —— 絵が同じ周に届いたので
+    `image_orders` の `!!`（絵は在るのに build が単色）だけが鳴り、
+    **絵が前の周に届いていれば、印は 0件 でした**。
+
+    **予約の刻に古かった本は、いまのところ 0/3本**（`loop_sig` を台帳に書き始めた
+    09/12 以降の 3本。リポジトリの履歴から予約の刻の台本を取り出して数えた
+    ＝ JOURNAL 09/14 03:0x）＝ **鳴る所は予約の刻ではなく、その手前の周です**。
+
+    **覆る条件**: (1) 予約ずみの本でこの行が鳴ったら、それは `schedule` の側に門が要る印
+    （そのとき `cli.cmd_schedule` へ `loop_stale` を足すこと）。
+    (2) 予約前の台本が 0件 の周が **7周** 続いたら（＝ あすの本を前の晩に書く形が変わった）、
+    この行は畳んでよい。(3) `loop_sig` の版（`script.LOOP_SIG_VERSION`）が変わった回は、
+    **版の違いを「本文が動いた」と読まないこと**（`cli.loop_stale` と同じ ＝ そこは `unknown`）。
+    """
+    from . import script as _script
+    now = now or now_jst()
+    done = {r["id"] for r in rows if r.get("event") == "scheduled" and r.get("id")}
+    last: dict[str, dict] = {}
+    for r in rows:
+        if r.get("id") and r.get("event") in ("cold_read", "critique"):
+            last[r["id"]] = r
+    books: list[dict] = []
+    d = _script.SCRIPTS
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        vid = f.stem
+        if vid in done:
+            continue
+        m = re.match(r"(\d{4})-(\d{2})-(\d{2})", vid)
+        if not m or dt.date(*map(int, m.groups())) < now.date():
+            continue          # **過ぎた日の台本は数えません**（もう出る本ではない）
+        try:
+            sig = _script.load(vid).loop_sig()
+        except Exception:     # noqa: BLE001  形が通らない台本は `lint` の側の話
+            continue
+        r = last.get(vid)
+        old = r.get("sig") if r else None
+        if r is None or old is None:
+            state = "unknown"           # 輪を撃つ前／指紋を書く前の行 ＝ 言えない（嘘より安い）
+        elif old == sig:
+            state = "fresh"
+        elif old.split(":")[0] != sig.split(":")[0]:
+            state = "unknown"           # 版が違う ＝ 本文が動いたとは言えない
+        else:
+            state = "stale"
+        books.append({"id": vid, "state": state, "sig": sig, "was": old,
+                      "at": (r or {}).get("at"), "event": (r or {}).get("event")})
+    return {"books": books,
+            "stale": [b["id"] for b in books if b["state"] == "stale"],
+            "unknown": [b["id"] for b in books if b["state"] == "unknown"]}
+
+
+def loop_open_line(rows: list[dict], now: dt.datetime | None = None) -> str:
+    """`loop_open` を1行に（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
+    q = loop_open(rows, now=now)
+    n = len(q["books"])
+    if not n:
+        return ("**予約前の台本 0件**（`trend.loop_open`・台帳と台本の file だけ・**API 0単位**）"
+                " ＝ この周に見る輪はありません。")
+    body = (f"**予約前の台本 {n}件 の輪の指紋**（§4 (1) の答えが いまの本文のものか・"
+            "`trend.loop_open`・**API 0単位**）: ")
+    body += "・".join(f"{b['id']} {b['state']}" for b in q["books"])
+    if q["stale"]:
+        body += ("  !! **輪は古い本文で閉じています: " + "・".join(q["stale"])
+                 + "** ＝ **read → critique を撃ち直してから予約すること**"
+                 "（§4 (1)「直す → 最初から評価し直す」。**`schedule` の `build_sig` の門は"
+                 "焼きしか見ないので、ここは黙って通ります**）。")
+    if q["unknown"]:
+        body += ("  `unknown`（輪をまだ撃っていないか、指紋の版が違う）: "
+                 + "・".join(q["unknown"]) + " ＝ **「古い」とは言えません**（`loop_open` の註 (3)）。")
+    return body
 
 
 def image_line(rows: list[dict]) -> str:

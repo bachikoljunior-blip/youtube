@@ -45,7 +45,17 @@ def test_公開されて_measured_が付いたら予約として二重に数え�
     now = dt.datetime(2026, 9, 9, 0, 0, tzinfo=JST)
     out = trend.lines(rows, now=now)
     assert out[0] == "09/08（2本）", out
-    assert "予約" not in "\n".join(out), out
+    # **見出しと「予」の行だけを見ます**（2026-09-14 03:0x に絞った・optimizer・Opus）——
+    # ここは 09/13 まで `"予約" not in "\n".join(out)` でした。`trend` の**他の行**が
+    # 「予約」の 2字 を持った回に、この検査は**日の見出しと関係なく赤くなります**
+    # （実際に `trend.loop_open_line`（予約前の台本の輪）で赤くなった）。
+    # **代理を全文に当てると、当のものではない所で鳴ります** ＝ §5 教訓の形 11つ目と同じ族。
+    body = "\n".join(out)
+    assert "＋予約" not in out[0], out
+    assert "予 OLDSCH" not in body, out
+    # **陽性対照**: 戻った形（measured が付く前）では、この 2つ の当てが**両方とも**鳴ること。
+    before = trend.lines(ROWS, now=NOW)
+    assert "＋予約" in before[0] and "予 OLDSCH" in "\n".join(before), before
 
 
 def test_予約が無い日の見出しは変わらない():
