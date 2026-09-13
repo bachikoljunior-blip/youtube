@@ -4538,6 +4538,44 @@ def blind_run_words(rows: list[dict], limit: int = 40, short: bool = False,
     return out
 
 
+def blind_cut_words(rows: list[dict], limit: int = 40, short: bool = False) -> str:
+    """**連なりを「切った」周も、その場で言うこと**（2026-09-13 17:0x・optimizer・Opus。**API 0単位**）。
+
+    **踏んだ形（この回の実物）**: 16:0x の周は `blind == grew` が **1周** 続いており、
+    §7「いまの数」はその 1周 を写しました。**16:4x の周で伸びが確かめられ（`proves_alive is True`）、
+    連なりは 0 に切れています** —— ところが `channel_line` / `channel_line_short` で
+    `blind_run_words` を呼ぶのは **`blind` が立っている枝**と **`proves_alive is False` の枝**の
+    2つ だけで、**連なりを切る枝（`flat_alive`）は 1字も言いません。**
+    ＝ 切れたことが印字に出ないので、**§7 は「1周」を次の回も、その次の回も写し続けます。**
+
+    **族**: `blind_run_words` の註が数えた 教訓の形 7つ目（`ceiling_rate` 11:2x・
+    `fable_rolled` 20:5x・16:0x の `false_run`）の **4例目**で、**向きだけが逆**です ——
+    前の 3つ は「連なりが**立った**最初の周を言わなかった」、こちらは
+    「連なりが**切れた**周を言わなかった」。**連なりを数える口を足す回は、
+    増える枝と切れる枝の両方に印字を置くこと**（増える側だけだと、写した側が古いまま残ります）。
+
+    `flat_alive` の枝では **2つ とも必ず 0** です（`grew > 0` かつ `blind < grew` ＝ eq が切れ、
+    `proves_alive is True` ＝ false が切れる）。だから数を並べるだけで、verdict は足しません。
+
+    **覆る条件**: (1) この枝で `run` か `false_run` が 0 でない回が出たら、`blind_run` の
+    切り方（`_count` の `break`）と `flat_video_gain` の枝が食い違っています ＝ そちらを直すこと
+    （この関数は**そのとき何も言いません** —— 空文字を返すので、線は静かに短くなります）。
+    (2) `zero_run` を読む枝が要る回が来たら、ここにも足すこと（いまは門 7周 で当てる枝が無い）。
+    """
+    b = blind_run(rows, limit)
+    if not b["laps"]:
+        return ""
+    if b["run"] or b["false_run"]:
+        return ""                                  # 切れていない ＝ この枝の前提が崩れている（覆る条件 (1)）
+    if short:
+        return (f"（**連なりは 2つ とも切れました**: `blind == grew` {b['run']}/{b['need']}周・"
+                f"`proves_alive is False` {b['false_run']}/{b['false_need']}周・`trend.blind_run`）")
+    return (f" **この周は 2つ の連なりを切ります**: `blind == grew`（伸びた本が 1本 も"
+            f"確かめられない周）**{b['run']}/{b['need']}周**・`proves_alive is False`"
+            f"（測れて、伸びた本が 0本 だった周）**{b['false_run']}/{b['false_need']}周**"
+            "（`trend.blind_run`）——**§7 に写した連なりは、この行で 0 に戻すこと。**")
+
+
 def _flat_laps(ps: list[dict]) -> int:
     """**総再生が動かないまま、いま何周 続いているか**（いちばん新しい周を 1 と数える）。
 
@@ -5184,7 +5222,9 @@ def channel_line(rows: list[dict]) -> str:
             flat += (f"**そして この平らの中で、本は {g['flat_vid_confirmed']:+d}回 伸びています**"
                      "（遅れでは説明が付かない分・`trend.flat_video_gain`）＝ "
                      "**チャンネルは止まっていません。平らなのは `viewCount` の読みのほうです** ——"
-                     "**この平らを『本の 0回』の説明に使わないこと**（§7 (m)）。")
+                     "**この平らを『本の 0回』の説明に使わないこと**（§7 (m)）。"
+                     # **連なりを切る枝も、切ったことを言うこと**（`blind_cut_words` の註・17:0x）
+                     + blind_cut_words(rows))
         elif g["flat_vid_confirmed"] == 0 and g["flat_blind"]:
             # **測れなかった回に「伸び 0」と言わないこと**（`flat_video_gain` の註・19:5x）
             flat += (f"**この平らの中で伸びた本は {g['flat_grew']}本 ですが、そのうち "
@@ -5389,7 +5429,9 @@ def channel_line_short(rows: list[dict]) -> str:
                    f"{g['flat_vid_confirmed']:+d}回 伸びています ＝ "
                    "**チャンネルは止まっていません。平らなのは `viewCount` の読みのほう**"
                    "（`trend.flat_video_gain`）＝ "
-                   "**この平らを『本の 0回』の説明に使わないこと**")
+                   "**この平らを『本の 0回』の説明に使わないこと**"
+                   # **短い行も同じ口から言うこと**（`channel_line_short` の覆る条件 (2)）
+                   + blind_cut_words(rows, short=True))
     elif g["flat_laps"] >= CHANNEL_FLAT_LAPS and g["flat_readable"]:
         verdict = (f"**総再生は {g['flat_laps']}周（{g['flat_h']:.1f}時間）続けて同じ読み ＝ "
                    f"門（{CHANNEL_FLAT_LAPS}周）が引かれました** ＝ 本の題や形を疑う前に、"

@@ -14,14 +14,62 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 LOG = Path(__file__).resolve().parent.parent / "data" / "views.jsonl"
 
+#: **本物の当て先**（`LOG` を差し替えた検査と見分けるために、別名で持つ）。
+_LOG_REAL = LOG
+
+
+def _log_blocked() -> bool:
+    """**検査からは、本物の `data/views.jsonl` に書かない・API も撃たない**
+    （2026-09-13 17:0x JST・optimizer・Opus が踏んで足した。
+    `run_marker._marks_blocked()` / `next_round.log_wake()` と**同じ理由・同じ形**）。
+
+    **実測（この回に踏んだ）**: `python -m pytest tests/test_status_blind_path.py` を撃つだけで、
+    本物の `data/views.jsonl` に **526行**（2026-09-13T07:55:30Z と 07:55:37Z に **263行 ずつ**）
+    入り、`videos.list` を **12単位 × 2回** 使いました。
+
+    **経路**（`status.py` の中を通る ＝ `snapshot.py` を名指しで撃った回は 1度もありません）:
+    `test_main_は例外を握って手元の節を出す` と `test_日枠が落ちた回でも_Analytics_の節を出す` は
+    `status._service` を動画の無い偽の口へ差し替え、`status.main()` を**例外の枝へ落として**
+    「手元の節を出すこと」を見ています。ところが `status.main()` のその枝は
+    **`import snapshot as _snap; _snap.main()`**（2026-08-31 に足した「θ の計器だけ取りに行く」）を撃つので、
+    **落とした先で本物の API と本物の控えに届いていました。**
+    ＝ **検査が差し替えたのは「落ちる所」で、「落ちた先」ではありません。**
+
+    **値段は 2つ**（§8 06:5x の 4例目は副作用だけ・こちらは**両方**）:
+    1. **`videos.list` 12単位／1件**。日枠 10,000単位/日 は 16:00 JST に戻るので、
+       枯れた窓に当たると本が出せません。
+    2. **`data/views.jsonl` は「凍結した下敷き」**（`scripts/zero_start.py` の前提・
+       検査 `tests/test_zero_start.py::test_実物の下敷き_旧データは凍結なので数は動かない`）。
+       行が入ると **§1 の下敷きが黙って動きます** —— この回の実測で
+       B群の最大が **275 → 382回**・初点の並びも変わり、**その検査が赤になりました**
+       （＝ 親が毎周 撃つ `scripts/checks.py` が赤で戻り、次の回が別の欠陥を探しに行きます）。
+
+    **守りは「呼ぶ側」ではなく「書く側」に置くこと**（§8 09/09 09:5x の決め）——
+    呼ぶ側（`status.main()` の枝・各検査の `monkeypatch`）で 1つずつ塞ぐ形は、
+    枝が増えるたびに漏れます。**書く直前に「いま向いている先が本物か」を見る。**
+
+    **差し替えた検査は書いてよい**（`LOG` が tmp を向いていれば通す ——
+    そこを止めると、この控えを読む検査そのものが書けなくなる）。
+
+    **覆る条件**: (1) `status.py` の「θ の計器だけ取りに行く」枝が消えたら、
+    この門は `record()` 側だけで足ります（`main()` 側は外してよい）。
+    (2) 検査以外の所から `snapshot.main()` を撃つ手順が METHOD に書かれたら、
+    そのときは `PYTEST_CURRENT_TEST` ではなく**呼ぶ側の名**で見分けること。
+    (3) 旧道具の `status.py` を撃つ口が repo から全部 消えたら、この門は外してよい。
+    """
+    return bool(os.environ.get("PYTEST_CURRENT_TEST")) and LOG == _LOG_REAL
+
 
 def record(videos: list[dict]) -> int:
     """公開済み動画の現在値を追記する。追記した本数を返す。"""
+    if _log_blocked():
+        return 0                                   # **検査からは書かない**（`_log_blocked` の註）
     LOG.parent.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
     rows = []
@@ -123,6 +171,12 @@ def _ids_from_ledger() -> list[str]:
 def main() -> int:
     import sys
     from pathlib import Path as _P
+
+    # **値段の側も、書く側で止める**（`_log_blocked` の註・覆る条件 (1)）——
+    # `record()` だけを塞ぐと、行は入らないのに `videos.list` 12単位 は毎回 出ていきます。
+    if _log_blocked():
+        print("[snapshot] 検査からは撃ちません（`snapshot._log_blocked`）")
+        return 0
 
     sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
     from googleapiclient.discovery import build
