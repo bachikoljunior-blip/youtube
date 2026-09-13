@@ -132366,7 +132366,7 @@ METHOD §18 の「いまの状態」には **read 5回・critique 5回**・**hea
 ### 検査
 
 `python scripts/checks.py`: studio **1,012件 緑**（この回の +9 ＝ `loop_open`。もう 1件 は merge で入った
-`hourly` の `rev7_source`）／親の手続き **719件 緑**（skip 11）。
+`hourly` の `rev7_source`）／親の手続き **725件 緑**（skip 11。+6 は `hourly` の `owner_ask`）。
 **赤 0件。**
 
 **§16・§17 の本文・09/14 の台本（`-bSkulqONhI`）・`studio/` のうち `hourly` が同じ周に触れた所は
