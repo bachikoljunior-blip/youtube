@@ -1809,6 +1809,16 @@ def _round_series(field: str, n: int) -> list[tuple[str, object]]:
 #: **下がっているのに、読む側には平らに見えます**。`margin_step()` の註。
 MARGIN_DIGITS = 3
 
+#: **1周ぶんの動きが「桁の下」＝ 0.000 と出た周が、何周 続いたら覆るか**
+#: （`margin_step()` の覆る条件 (1)・門は **1か所**）。
+#: 2026-09-13 22:5x・optimizer・Opus に足しました —— **それまで、この連を数える口が
+#: どこにもありませんでした。** (1) は 09/11 08:4x から「3周 続けて 0.000 なら」と
+#: 書いていましたが、印字は**直近2点の 1つ**しか出さず、§7「いまの数」は**毎周 上書き**で
+#: 1点 しか運びません ＝ **原理的に引けない覆る条件**でした
+#: （`quota.agree_run`／`trend.rev7_run`／`views_streak` と同じ族 ——
+#:  **連は道具が数える。手で送らない**）。
+STEP_ZERO_RUN_NEED = 3
+
 
 def margin_step(xs: list[tuple[str, float]] | None = None) -> dict | None:
     """**余裕の列の「1周ぶんの動き」と、門までの残り周**（2026-09-11 08:4x・optimizer・Opus）。
@@ -1853,9 +1863,50 @@ def margin_step(xs: list[tuple[str, float]] | None = None) -> dict | None:
     そこから外挿した上端は「永遠に切らない」になるので、上端は出しません
     （`open_top` ＝ 「早くて あと N周・上端は無し」と言う）。
 
-    **覆る条件**: (1) 実測の 1周 が **3周 続けて 0.000**（＝ 桁の下）なら、
+    **【2026-09-13 22:5x・optimizer・Opus】(1) は引かれていました。処方のほうが外れています。**
+
+    **まず、この連を数える口がどこにもありませんでした。** (1) は 09/11 08:4x から
+    「3周 続けて 0.000 なら」と書いていますが、印字は**直近2点の 1つ**しか出さず、
+    §7「いまの数」は**毎周 上書き**で 1点 しか運びません
+    ＝ **読む側が憶えていないかぎり、原理的に引けない覆る条件**でした
+    （`quota.agree_run`／`trend.rev7_run`／`views_streak` と同じ族 ——
+     **連は道具が数える。手で送らない**）。`STEP_ZERO_RUN_NEED` と
+    `zero_run` / `zero_run_max` を足し、`margin_line` が毎周 印字します。
+
+    **数えたら、いちばん長い連は 3周**（門ちょうど）で、**すでに 2回 満たしています**
+    （09/12 21:12〜23:01・09/13 02:42〜04:32。列 **82点**・動き 80つ）。
+
+    **けれど (1) の言う理由（「下がりは `per_lap` の引き直しだけで動いている」）は、
+    撃ったら違いました。** 列の 1周ぶんの動きは、**その周の刻でほぼ決まります** ——
+    余裕 ＝ 天井 ÷ 要る速さ で、要る速さ ＝ 残り% ÷ 残り時間。
+    **床どおりの周（55分）は、1周ぶんの消費と 1周ぶんの経過が打ち消し合って 0.000**、
+    **刻の伸びた周だけが下がります。** 実測（`need` の比だけで動きを予測した・誤差 中央 0.001）:
+
+        刻 54〜56分 の周 12回      動き **0.000〜-0.002**（＝ 桁の下か、その隣）
+        刻 70.2分（09/13 16:47）   動き **-0.009**   予測 -0.009
+        刻 93.4分（09/13 21:59）   動き **-0.023**   予測 -0.023   ← **振れ幅の速い端**
+
+    **＝ 0.000 の連は「計器が死んでいる」印ではなく、「親が床を守った」印です。**
+    **そして振れ幅の速い端（`step_lo`）は 1周ぶんの速さではなく、
+    いちばん刻の伸びた周そのもの** ＝ **「門まで 早くて あと N周」は
+    「その刻がずっと続いたら」という条件つき**です（`_lap_steps` の ×2 の門は
+    93.4/54.9 ＝ **1.70倍** なので落としません。**落とすのではなく、刻を言うこと** ——
+    落とすと「その周が続く目」を見なくなり、向きが甘い側へ倒れます）。
+
+    **＝ (1) の処方（この関数ごと外す）は当たりません。** 外すと振れ幅（09/11 09:1x に
+    (1) より**後**から足した、点で読まないための口）ごと消えます。
+    **(1) は「連を数えて、速い端の刻を言う」へ書き直しました**（下の (1-新)）。
+
+    **覆る条件**: ~~(1) 実測の 1周 が **3周 続けて 0.000**（＝ 桁の下）なら、
     下がりは残り時間ではなく `per_lap` の引き直しだけで動いている ＝
-    この関数ごと外し、門は `--pace` の 1点で読むこと。
+    この関数ごと外し、門は `--pace` の 1点で読むこと。~~
+    **【引かれ、22:5x に書き直した】**
+    **(1-新) 刻が床どおり（中央の 1.2倍 未満）の周で 0.000 以外の動きが
+    `STEP_ZERO_RUN_NEED` 周 続けて出たら**、下がりは刻では説明が付かない
+    ＝ そのとき初めて `per_lap` や遅れの引き直しを疑い、(1) の外す側を読み直すこと
+    （**いまは 0周**。上の 12回 は全部 -0.002 までで、`need` の比で説明が付いています）。
+    **`zero_run` が伸びること自体は、もう覆る条件ではありません** ——
+    それは親が床を守っている印で、`margin_line` はそう印字します。
     (2) `laps_to_gate` が **2度 続けて外れたら**（言った周を過ぎても切らない）、
     直近2点ではなく列の傾き（最小二乗）へ移すこと。
     **09:1x に足した振れ幅は、この (2) の代わりではありません** ——
@@ -1876,18 +1927,37 @@ def margin_step(xs: list[tuple[str, float]] | None = None) -> dict | None:
         if p and n and n > p:
             gaps.append((n - p).total_seconds() / 60)
     gap_min = median(gaps) if gaps else None
-    steps, skipped = _lap_steps(xs, gap_min)
+    pairs, skipped = _lap_steps_with_gaps(xs, gap_min)
+    steps = [st for st, _ in pairs]
     laps = eta = None
     if step < 0 and v1 > CEILING_MARGIN_GATE:
         laps = int(math.ceil((v1 - CEILING_MARGIN_GATE) / (-step)))
         eta = laps * gap_min if gap_min else None
+    # **「桁の下（0.000）が何周 続いたか」**（覆る条件 (1) の分子・門は `STEP_ZERO_RUN_NEED`）。
+    # **いま の連は列の末から**、**いちばん長い連は列の全部から**数えます
+    # —— (1) は「3周 続けて」なので、**過去に満たした窓が在れば、それも引かれた印**です。
+    d = MARGIN_DIGITS
+    zero_run = 0
+    for st in reversed(steps):
+        if round(st, d) != 0.0:
+            break
+        zero_run += 1
+    zero_run_max = run = 0
+    for st in steps:
+        run = run + 1 if round(st, d) == 0.0 else 0
+        zero_run_max = max(zero_run_max, run)
     out = {"step": step, "laps_to_gate": laps, "gap_min": gap_min, "eta_min": eta,
            "last": v1, "at": a1, "steps": steps, "skipped": skipped,
-           "step_lo": None, "step_hi": None, "laps_few": None, "laps_many": None,
+           "zero_run": zero_run, "zero_run_max": zero_run_max,
+           "zero_drawn": zero_run_max >= STEP_ZERO_RUN_NEED,
+           "step_lo": None, "step_hi": None, "step_lo_gap": None,
+           "laps_few": None, "laps_many": None,
            "eta_few": None, "eta_many": None, "open_top": False}
     if len(steps) < 2:
         return out                                   # 振れ幅は 2つ の動きから
     out["step_lo"], out["step_hi"] = min(steps), max(steps)
+    # **その速い端が、どの刻の周から出たか**（2026-09-13 22:5x）。
+    out["step_lo_gap"] = next((g for st, g in pairs if st == out["step_lo"]), None)
     down = [s for s in steps if s < 0]
     if not down or v1 <= CEILING_MARGIN_GATE:
         return out
@@ -1918,16 +1988,32 @@ def _lap_steps(xs: list[tuple[str, float]],
     ＝ この門は「起きない事を見張っている」側ではなく、**床を変えた周に効きます**
     （覆る条件 (3) の機械の側）。
     """
-    steps: list[float] = []
+    pairs, skipped = _lap_steps_with_gaps(xs, gap_min)
+    return [st for st, _ in pairs], skipped
+
+
+def _lap_steps_with_gaps(xs: list[tuple[str, float]],
+                         gap_min: float | None) -> tuple[list[tuple[float, float | None]], int]:
+    """`_lap_steps` と同じ絞りで、**動きと、その周の刻（分）を対で**返す。
+
+    2026-09-13 22:5x・optimizer・Opus。**足したのは数ではなく、数の出どころ**です ——
+    振れ幅の速い端（`step_lo`）は「1周ぶんの速さ」として読まれ、
+    そこから「門まで **早くて あと N周**」が出ますが、**実測すると
+    その端は「刻の長かった周」そのもの**でした（derivation は `margin_step` の註）。
+    **どの刻の周から出た端かを言わないと、読む側は「その刻が続く前提」を見られません。**
+    """
+    pairs: list[tuple[float, float | None]] = []
     skipped = 0
     for (p_at, p_v), (n_at, n_v) in zip(xs, xs[1:]):
         p, n = _parse_iso(p_at), _parse_iso(n_at)
-        if gap_min and p and n and n > p:
-            if (n - p).total_seconds() / 60 > gap_min * 2:
+        gap = None
+        if p and n and n > p:
+            gap = (n - p).total_seconds() / 60
+            if gap_min and gap > gap_min * 2:
                 skipped += 1
                 continue
-        steps.append(n_v - p_v)
-    return steps, skipped
+        pairs.append((n_v - p_v, gap))
+    return pairs, skipped
 
 
 def sweep_verdict(margin: float | None, per_lap: float | None) -> dict:
@@ -2286,6 +2372,55 @@ def agree_line(n: int = 40) -> str:
             "（`quota.agree_run`。**手で数えないこと**）")
 
 
+def step_zero_run(xs: list[tuple[str, float]] | None = None) -> dict:
+    """**桁の下（0.000）の動きが、いま何周 続いているか／いちばん長い連は何周か。**
+
+    2026-09-13 22:5x・optimizer・Opus。`margin_step` の覆る条件 (1-新) の分子です。
+
+    **窓は列の全部**（`margin_line` の 8周 ではありません）—— 連は**過去に満たした窓**でも
+    引かれるので、印字の窓で数えると「いま見えている 8周」だけの話になります。
+    実測（この回・列 **82点**・動き 80つ・刻が空いた対 1つ は落とした）:
+    いま **1周**／いちばん長い連 **3周**（門ちょうど）＝
+    **09/12 21:12〜23:01 と 09/13 02:42〜04:32 の 2回だけ**（`round(step, 3) == 0` で数えた）。
+
+    **引かれても、それは「計器が止まった」ではありません** —— `margin_step` の註 22:5x。
+    """
+    xs = margin_series(STEP_SERIES_ALL) if xs is None else xs
+    st = margin_step(xs)
+    if st is None:
+        return {"run": 0, "run_max": 0, "drawn": False, "points": len(xs or [])}
+    return {"run": st["zero_run"], "run_max": st["zero_run_max"],
+            "drawn": st["zero_drawn"], "points": len(xs)}
+
+
+#: `margin_series` の「全部」を取るときの n（連は印字の窓では数えない・22:5x）。
+STEP_SERIES_ALL = 100000
+
+#: **振れ幅の速い端が「床どおりの周」と言えるか**の境目（中央の何倍まで）。
+#: 2026-09-13 22:5x。実測は `margin_step` の註（床どおり 54〜56分 は 0.000〜-0.002・
+#: 1.28倍 で -0.009・1.70倍 で -0.023）。**落とす門ではありません** ——
+#: `_lap_steps` の ×2 は落とす側で、こちらは**言う**側です。
+STEP_GAP_NORMAL = 1.2
+
+
+def _step_lo_words(st: dict) -> str:
+    """**「早くて あと N周」の端が、どの刻の周から出たか**を1行に足す（22:5x）。
+
+    **この註釈が無いと、読む側はその N を「いまの速さ」として読みます** ——
+    実物の端は、刻の伸びた周そのものでした（`margin_step` の註の実測）。
+    """
+    lo, gap, med = st.get("step_lo"), st.get("step_lo_gap"), st.get("gap_min")
+    if lo is None or gap is None or not med:
+        return ""
+    ratio = gap / med
+    if ratio < STEP_GAP_NORMAL:
+        return (f"  ＊速い端は 刻 {gap:.0f}分（中央の {ratio:.2f}倍 ＝ **床どおりの周**）"
+                " ＝ **刻では説明が付きません**（`margin_step` の覆る条件 (1-新) を見ること）")
+    return (f"  ＊速い端は **刻 {gap:.0f}分 の周**（中央 {med:.0f}分 の **{ratio:.2f}倍**）"
+            " ＝ **その N は「その刻がずっと続いたら」の数**です"
+            "（床どおりの周の動きは 0.000 前後・`margin_step` の註 22:5x）")
+
+
 def margin_line(n: int = 8, per_lap: float | None = None) -> str:
     """`margin_series` を1行にする（`--pace` が印字する。**手で並べないこと**）。
 
@@ -2313,17 +2448,28 @@ def margin_line(n: int = 8, per_lap: float | None = None) -> str:
                       + "。**この 1点で速さを読まないこと**）")
         elif len(xs) >= 2:
             words += "（**振れ幅はまだ読めません** ＝ 動きが 1つ）"
+        # **0.000 の連**（覆る条件 (1-新) の分子・門は `STEP_ZERO_RUN_NEED`・22:5x）。
+        # **手で送らないこと** —— §7「いまの数」は毎周 上書きで 1点 しか運びません。
+        # **窓は列の全部**（印字の n 周 ではない ＝ 過去に満たした窓も引かれる）。
+        zr = step_zero_run()
+        words += (f"・**桁の下（0.000）の連 {zr['run']}周**"
+                  f"（いちばん長い連 {zr['run_max']}周／門 {STEP_ZERO_RUN_NEED}周・"
+                  f"列 {zr['points']}点）"
+                  " ＝ **これは「止まった」ではなく「親が床を守った」印です**"
+                  "（床どおりの周は 1周ぶんの消費と経過が打ち消し合う・`margin_step` の註 22:5x）")
         if st["laps_few"] is not None:
             if st["open_top"]:
                 eta = f"・約 {st['eta_few']:.0f}分 後から" if st["eta_few"] else ""
                 words += (f" ＝ 門まで **早くて あと {st['laps_few']}周**{eta}"
-                          "（**上端は無し** ＝ 上がった周が在る）")
+                          "（**上端は無し** ＝ 上がった周が在る）"
+                          + _step_lo_words(st))
             else:
                 eta = (f"・約 {st['eta_few']:.0f}〜{st['eta_many']:.0f}分 後"
                        if st["eta_few"] and st["eta_many"] else "")
-                words += (f" ＝ 門まで **あと {st['laps_few']}〜{st['laps_many']}周**{eta}"
-                          if st["laps_many"] != st["laps_few"]
-                          else f" ＝ 門まで **あと {st['laps_few']}周**{eta}")
+                words += ((f" ＝ 門まで **あと {st['laps_few']}〜{st['laps_many']}周**{eta}"
+                           if st["laps_many"] != st["laps_few"]
+                           else f" ＝ 門まで **あと {st['laps_few']}周**{eta}")
+                          + _step_lo_words(st))
         elif st["laps_to_gate"] is not None:
             eta = f"・約 {st['eta_min']:.0f}分 後" if st["eta_min"] else ""
             words += f" ＝ 門まで **あと {st['laps_to_gate']}周**{eta}"
