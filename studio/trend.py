@@ -3259,13 +3259,30 @@ def over_lag(rows: list[dict]) -> dict:
     **測っている物差しを、測っている最中に取り替えることになります。**
     だから別の event 名で残し、**読むだけ**にしてあります。
 
-    **覆る条件**: (1) `late`（追いつかないまま measure が `OVER_CATCH_ROUNDS` 回 過ぎた印）が
-    1件でも出たら、`over_ledger` の (1) が引かれた ＝ そのときは高い読みが**どの順番の読みか**を数えること。
+    **`late` は「台帳が動いたのに届かない」印だけ**（2026-09-14 08:2x JST・optimizer・Opus）。
+    **なぜ**: 09/14 05:2x に `late` が初めて 1件 立ち（`4l3DDCLIRxg` 齢43.5h 生813 対 台帳807）、
+    07:5x の周が「`measures_since` は**時間で積もる**ので、本が平らなあいだ、どの印も
+    いつか必ず `late` になる」と数にしました（§5 教訓の形 12つ目 ——
+    **分母が積もるだけで下回る門は、本の側が何も変わらなくても引かれる**）。
+    **次の周（この回）に台帳が 807 → 819 へ動き、その印は `catch_rounds` 4回・166分 で拾われました**
+    ＝ **あの 1件 は最初から `late` ではありませんでした**（JOURNAL 09/14 07:5x の申し送りの当のもの）。
+    → `late` の分子は **印のあと台帳が 1度でも `views_ledger` より上へ動いた印**だけにし、
+    動いていない印は `pending`（**まだ言えない**）へ回します
+    （`late_gain` の「伸びている本に『5% 未満』は返さない」・`flats` の「まだ言えない」と同じ形）。
+    **`pending` は 0件 に落ちる数ではありません** —— 平らな本の印はここに溜まります。
+    **溜まった件数を「別の口が在る」と読まないこと。**
+
+    **覆る条件**: (1) `late`（台帳が動いたのに、追いつかないまま measure が `OVER_CATCH_ROUNDS` 回
+    過ぎた印）が 1件でも出たら、`over_ledger` の (1) が引かれた ＝ そのときは高い読みが
+    **どの順番の読みか**を数えること。
     (2) 印 1件あたりの追いつきが 1回（＝ 次の measure）で 5件 続いたら、遅れは 1周 以内 ＝
     §7 (a) の「平らが読みの側か」は 1周 前の行を見るだけで足り、この口は数えるのをやめてよい。
     (3) 印が 1周 に 1件 以上 出る周が 3周 続いたら `over_ledger` の (3) ＝ `settle_stats` の `reads` を上げる側へ。
     (4) `views_over` に `views_ledger` が入っているのは、印の時点の台帳の最大を**後から数え直さない**ため
     （`recounts` が峰を落とすと、後から数え直した最大は印の時点と違う値になります）。
+    (5) `pending`（台帳が動かないまま門を過ぎた印）が **同じ本で 5件** 溜まったら、
+    その本は `flats` の「戻らない平ら」の側 ＝ そのときは この口ではなく `flats` の境目で見ること
+    （**この口は「読みの遅れ」を測る物差しで、「本が止まったか」を測る物差しではありません**）。
     """
     marks = [r for r in rows if r.get("event") == "views_over" and r.get("at")]
     ms: list[dict] = []
@@ -3279,20 +3296,26 @@ def over_lag(rows: list[dict]) -> dict:
         later.sort(key=_at)
         hit = next((i for i, r in enumerate(later)
                     if isinstance(target, int) and r["views"] >= target), None)
+        led = m.get("views_ledger")
+        # **印のあと、台帳が 1度でも動いたか**（`late` の「まだ言えない」を分ける述語・下の (5)）。
+        moved = any(r["views"] > led for r in later) if isinstance(led, int) else True
         ms.append({
             "at": m["at"], "id": vid, "views_live": target,
-            "views_ledger": m.get("views_ledger"), "over": m.get("over"),
+            "views_ledger": led, "over": m.get("over"),
             "age_h": m.get("age_h"),
             "catch_rounds": None if hit is None else hit + 1,
             "catch_min": None if hit is None else
             (_at(later[hit]) - t).total_seconds() / 60.0,
             "measures_since": len(later),
+            "ledger_moved": moved,
         })
     caught = [m for m in ms if m["catch_rounds"] is not None]
-    late = [m for m in ms
-            if m["catch_rounds"] is None and m["measures_since"] >= OVER_CATCH_ROUNDS]
+    over_gate = [m for m in ms
+                 if m["catch_rounds"] is None and m["measures_since"] >= OVER_CATCH_ROUNDS]
+    late = [m for m in over_gate if m["ledger_moved"]]
+    pending = [m for m in over_gate if not m["ledger_moved"]]
     return {"marks": ms, "n": len(ms), "caught": caught, "late": late,
-            "gate_rounds": OVER_CATCH_ROUNDS}
+            "pending": pending, "gate_rounds": OVER_CATCH_ROUNDS}
 
 
 def over_lag_line(rows: list[dict]) -> str:
@@ -3311,7 +3334,11 @@ def over_lag_line(rows: list[dict]) -> str:
         body += (f"（measure **{min(cs):.0f}〜{max(cs):.0f}回**・"
                  f"**{min(mins):.0f}〜{max(mins):.0f}分**）")
     body += (f"・**{o['gate_rounds']}回 過ぎても届かない {len(o['late'])}件**"
-             f"（1件でも出たら `cli.over_ledger` の覆る条件 (1) ＝ 高い側は複製ではなく別の口）。")
+             f"（1件でも出たら `cli.over_ledger` の覆る条件 (1) ＝ 高い側は複製ではなく別の口）"
+             f"・**まだ言えない {len(o['pending'])}件**"
+             f"（門は過ぎたが、印のあと台帳が 1度も動いていない ＝ "
+             f"**追いつけないのではなく、追いつく先が動いていない**。"
+             f"**この件数を『別の口が在る』と読まないこと**・`over_lag` の覆る条件 (5)）。")
     if o["late"]:
         body += "  届かない印: " + "・".join(
             f"{m['id']} 齢{m['age_h']}h 生{m['views_live']} 対 台帳{m['views_ledger']}"

@@ -50,12 +50,38 @@ def test_低い読みで拾ったことにしない():
 
 
 def test_3回過ぎて届かなければ覆る条件1が引かれる():
-    rows = ROWS[:2] + [_m(f"2026-09-10T1{h}:40:00+09:00", "A", 613) for h in (3, 4, 5)]
+    """**台帳が動いたのに届かない**側だけが `late`（2026-09-14 08:2x に分けた）。"""
+    rows = ROWS[:2] + [_m(f"2026-09-10T1{h}:40:00+09:00", "A", v)
+                       for h, v in ((3, 619), (4, 625), (5, 631))]
     o = trend.over_lag(rows)
     assert len(o["late"]) == 1
+    assert o["pending"] == []
     line = trend.over_lag_line(rows)
     assert "覆る条件 (1)" in line
     assert "生671 対 台帳613" in line
+
+
+def test_台帳が動いていない印はlateではなくまだ言えない():
+    """**`measures_since` は時間で積もる** ＝ 本が平らなあいだ、どの印もいつか門を過ぎる。
+    2026-09-14 05:2x に立った 1件（`4l3DDCLIRxg` 生813 対 台帳807）は、
+    **次の周に台帳が 819 へ動いて 4回目・166分 で拾われました** ＝ 最初から `late` ではない。
+    """
+    rows = ROWS[:2] + [_m(f"2026-09-10T1{h}:40:00+09:00", "A", 613) for h in (3, 4, 5)]
+    o = trend.over_lag(rows)
+    assert o["late"] == []
+    assert len(o["pending"]) == 1
+    line = trend.over_lag_line(rows)
+    assert "まだ言えない 1件" in line
+    assert "届かない 0件" in line
+
+
+def test_平らのあとに台帳が追いついたら拾った側に入る():
+    """この回に実際に起きた形（807 で 3回 平ら → 819）。"""
+    rows = ROWS[:2] + [_m(f"2026-09-10T1{h}:40:00+09:00", "A", 613) for h in (3, 4, 5)] + [
+        _m("2026-09-10T16:40:00+09:00", "A", 700)]
+    o = trend.over_lag(rows)
+    assert o["late"] == [] and o["pending"] == []
+    assert o["marks"][0]["catch_rounds"] == 4
 
 
 def test_別の本のmeasureでは追いつかない():
@@ -88,7 +114,7 @@ def test_陽性対照_印を捨てる形に戻すと落ちる():
 
 
 def test_陽性対照_門を1回にすると届かない側が早く鳴る():
-    rows = ROWS[:2] + [_m("2026-09-10T13:40:00+09:00", "A", 613)]
+    rows = ROWS[:2] + [_m("2026-09-10T13:40:00+09:00", "A", 619)]
     assert trend.over_lag(rows)["late"] == []
     old = trend.OVER_CATCH_ROUNDS
     try:
@@ -96,6 +122,18 @@ def test_陽性対照_門を1回にすると届かない側が早く鳴る():
         assert len(trend.over_lag(rows)["late"]) == 1
     finally:
         trend.OVER_CATCH_ROUNDS = old
+
+
+def test_陽性対照_台帳の動きを見ない形に戻すと平らな印がlateに化ける():
+    """**この検査が無いと、`ledger_moved` を捨てても残りは緑でした**
+    （§5 の教訓の形 3つ目「陽性対照は落ちるまで撃つ」）。"""
+    rows = ROWS[:2] + [_m(f"2026-09-10T1{h}:40:00+09:00", "A", 613) for h in (3, 4, 5)]
+    o = trend.over_lag(rows)
+    assert o["marks"][0]["ledger_moved"] is False
+    broken = [dict(m, ledger_moved=True) for m in o["marks"]]
+    assert [m for m in broken
+            if m["catch_rounds"] is None
+            and m["measures_since"] >= trend.OVER_CATCH_ROUNDS]
 
 
 def test_status_の印は台帳に1行_残る(monkeypatch):
