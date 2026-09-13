@@ -5434,3 +5434,6 @@
 {"publish_at": "2026-09-14T10:00:00+09:00", "title": "国民年金をはらえないとき 全額免除なら年金は2分の1入る 未納は0 #Short", "at": "2026-09-14T06:23:30+09:00", "id": "-bSkulqONhI", "event": "pending"}
 {"subs": 28, "views": 88344, "videos": 272, "at": "2026-09-14T07:17:11+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-14T07:17:12+09:00", "id": "-bSkulqONhI", "event": "ready_checked"}
+{"subs": 28, "views": 88344, "videos": 272, "at": "2026-09-14T07:38:15+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-14T07:38:16+09:00", "id": "-bSkulqONhI", "event": "ready_checked"}
+{"views_live": 814, "views_ledger": 807, "over": 7, "age_h": 45.6, "src": "status", "at": "2026-09-14T07:38:16+09:00", "id": "4l3DDCLIRxg", "event": "views_over"}
