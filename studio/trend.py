@@ -786,13 +786,35 @@ def flats(rows: list[dict]) -> dict:
     (3) 件数（`stayed`）は**落ち着いた本の数とほぼ同じに増える**ので、**3件 を判定に使わないこと**
     （08:4x の「3件」は、そう読むと安すぎ、`ages[j]` の門を付けると来なさすぎでした）。
 
+    **1回も再生が付いていない本は、この数から外します**（2026-09-13 18:0x・optimizer・Opus）。
+    **理由は「0回 だから」ではなく、この本が `resumed` の側へ 1件も入れないから**です:
+    `resumed` は `env[-1] > env[i]` で、包絡が最後まで 0 の本は `env[i]` も `env[-1]` も 0
+    ＝ **どの平らも必ず `stayed` にしか落ちません**。片側にしか入らない本を混ぜると、
+    **境目の上端（`shortest_stayed_h`）だけが毎周 下へ引かれ、下端（`longest_resumed_h`）は動きません**
+    ＝ 「まだ測れていない幅」が、測っていないのに狭まります。実測 2026-09-13 17:4x:
+    `2YZ_4FXC-XI`（齢 0.3→79.7h・**ずっと 0回**）が上端を持っており、外すと **79.4 → 143.1時間**。
+    ＝ **「79.4時間 平らなら止まった」の唯一の根拠が、1度も配られなかった本でした。**
+    同じ絞りは `hold`（分母が作れない）・`first_view` / `durations`（尺で割る）が先に当てています
+    ——**向きが片側だけの数を証拠に使わない**は §7 (m) の `flat_video_gain` と同じ形です。
+
+    **覆る条件**（2026-09-13 18:0x）:
+    (4) **0回 の本が「伸び始めてから平らになった」回**（＝ `env[-1] > 0`）は、その時点で自動的に
+    この絞りを抜けます（外しているのは**ずっと 0回**の本だけ）。手で戻さないこと。
+    (5) **外した本が 2本 を越えたら**、`stayed` ではなく**その本たち自身**が問いです
+    （配りが来ない本が続く ＝ §7 (l)(l-2) の側）。数は `zero_view` が毎周 印字します。
+
     """
     mine = ours(rows)
     runs: list[dict] = []
+    zero_view: list[str] = []
     for vid, pts in series(rows).items():
         if vid not in mine or len(pts) < 3:
             continue
         env = envelope(pts)
+        # **ずっと 0回 の本は外す**（上の註 —— `resumed` に構造として入れない ＝ 片側だけの証拠）。
+        if not env or env[-1] == 0:
+            zero_view.append(vid)
+            continue
         ages = [float(p["age_h"]) for p in pts]
         i = 0
         while i < len(env) - 1:
@@ -816,7 +838,8 @@ def flats(rows: list[dict]) -> dict:
     shortest_stay = min((r["len_h"] for r in stayed), default=0.0)
     return {"resumed": len(resumed), "stayed": stayed, "open": len(open_runs),
             "thresh_h": thresh, "longest_resumed_h": longest_back,
-            "shortest_stayed_h": shortest_stay, "runs": runs}
+            "shortest_stayed_h": shortest_stay, "runs": runs,
+            "zero_view": sorted(zero_view)}
 
 
 def last_rise_gap_h(pts: list[dict], env: list[int]) -> float:
@@ -2360,6 +2383,10 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
               f"あいだは、まだ測れていません（差 {fl['shortest_stayed_h'] - fl['longest_resumed_h']:.1f}時間）。"
               if fl["stayed"] else "より短い平らを「止まった」と読まないこと。")
            if fl["resumed"] else "")
+        + (f"**ずっと 0回 の本 {len(fl['zero_view'])}本 は、この数から外してあります**"
+           f"（{'・'.join(fl['zero_view'])}）—— **`resumed` に構造として入れないので、"
+           f"混ぜると上端だけが下がります**（`flats` の 18:0x の註・覆る条件 (4)(5)）。"
+           if fl["zero_view"] else "")
         + "齢の浅い1点で本を比べないこと。")
     if DEAD_START <= now.hour < DEAD_END:
         # **この一文は、数に追随させること**（2026-09-09 02:5x に直した）。
