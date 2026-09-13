@@ -215,3 +215,76 @@ def test_読みの族の言葉は全部_受け取り帳に在る() -> None:
     have = {r.get("id") for r in ow.owner_rows()}
     missing = [i for i in ow.YOMI_IDS if i not in have]
     assert missing == [], f"受け取り帳に無い id: {missing}"
+
+
+def test_2つ目の門は決めより前の本を数えない(tmp_path: Path) -> None:
+    """§2 の 声 の覆る条件 (2) の分子は「**書き換えて出した本**」だけ（`REWRITE_DECIDED_AT`）。"""
+    b = list(ow.YOMI_IDS)[1]
+    rows = [_row("2026-09-06T13:41:00+09:00", list(ow.YOMI_IDS)[0]),
+            _row("2026-09-11T12:38:00+09:00", b)]
+    # 指摘のあとに 3本 —— **ただし 1本 は (1) を決めた刻より前**（同じ日の午前）
+    led = _ledger_books(tmp_path / "led", [
+        _sched("early", "2026-09-11T12:50+09:00"),   # 指摘の後・決めの前
+        _sched("b1", "2026-09-12T10:00+09:00"),
+        _sched("b2", "2026-09-13T10:00+09:00"),
+    ])
+    y = ow.run(days_back=999, path=_ledger(tmp_path, rows), ledger=led)["yomi"]
+    assert y["run"] == 3, "§3 の 9 の側は指摘のあとの本を全部 数える"
+    assert y["complaint_run"] == 2, "§2 の側は決めより後の本だけ"
+    assert y["complaint_ready"] is False
+    # 陽性対照: 絞りを外すと 3本 になり、門に届いてしまう
+    saved = ow.REWRITE_DECIDED_AT
+    try:
+        ow.REWRITE_DECIDED_AT = saved.replace(year=2000)
+        y2 = ow.run(days_back=999, path=_ledger(tmp_path, rows), ledger=led)["yomi"]
+        assert y2["complaint_run"] == 3 and y2["complaint_ready"] is True
+    finally:
+        ow.REWRITE_DECIDED_AT = saved
+
+
+def test_2つ目の門に届いたら印字が次の指摘で引かれると言う(tmp_path: Path) -> None:
+    """届いた回そのものでは引かれない —— 引かれるのは「届いているときに次の指摘が来た回」。"""
+    b = list(ow.YOMI_IDS)[1]
+    rows = [_row("2026-09-11T12:38:00+09:00", b)]
+    # **刻で並べる**（日で並べると門が 1 増えた日に「まだ公開していない本」になる ＝ 教訓 6つ目）
+    made = [_sched(f"b{i}", f"2026-09-11T{14 + i:02d}:00+09:00")
+            for i in range(ow.YOMI_COMPLAINT_GATE_BOOKS)]
+    res = ow.run(days_back=999, path=_ledger(tmp_path, rows),
+                 ledger=_ledger_books(tmp_path / "led", made))
+    y = res["yomi"]
+    assert y["complaint_run"] == ow.YOMI_COMPLAINT_GATE_BOOKS and y["complaint_ready"] is True
+    out = ow.yomi_line(res)
+    assert "門に届いています" in out and "次の「読みが変」が来た回に引かれます" in out
+    # 陽性対照: 1本 減らすと「まだ届いていません」に戻る
+    res2 = ow.run(days_back=999, path=_ledger(tmp_path, rows),
+                  ledger=_ledger_books(tmp_path / "short", made[:-1]))
+    assert res2["yomi"]["complaint_ready"] is False
+    assert "まだ届いていません" in ow.yomi_line(res2)
+
+
+def test_2つの門を両方_印字する() -> None:
+    """片方だけの verdict を読んで「まだ引けません」と書かないための行（§5 教訓の形 7つ目）。"""
+    out = ow.line()
+    assert "同じ連に門が 2つ 掛かっています" in out
+    assert f"門 {ow.YOMI_COMPLAINT_GATE_BOOKS}本" in out
+    assert f"門 {ow.YOMI_GATE_BOOKS}本" in out
+
+
+def test_切れた連は決めより後のものだけ数える(tmp_path: Path) -> None:
+    """(y-2) の分子 —— 09/11 の決めより前に切れた連は数えない。"""
+    a, b = list(ow.YOMI_IDS)[0], list(ow.YOMI_IDS)[1]
+    rows = [_row("2026-09-06T13:41:00+09:00", a), _row("2026-09-11T12:38:00+09:00", b)]
+    led = _ledger_books(tmp_path / "led", [
+        _sched(f"b{i}", f"2026-09-{7 + i:02d}T10:00+09:00") for i in range(4)
+    ])
+    y = ow.run(days_back=999, path=_ledger(tmp_path, rows), ledger=led)["yomi"]
+    assert len(y["prev_runs"]) == 1, "切れた連そのものは在る"
+    assert y["broken_after"] == [], "決めより前に切れた連は (y-2) の分子ではない"
+    # 陽性対照: 決めの刻を戻すと、その連は分子に入る
+    saved = ow.REWRITE_DECIDED_AT
+    try:
+        ow.REWRITE_DECIDED_AT = saved.replace(year=2000)
+        y2 = ow.run(days_back=999, path=_ledger(tmp_path, rows), ledger=led)["yomi"]
+        assert len(y2["broken_after"]) == 1
+    finally:
+        ow.REWRITE_DECIDED_AT = saved

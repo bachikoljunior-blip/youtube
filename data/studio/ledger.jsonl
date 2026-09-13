@@ -5081,3 +5081,13 @@
 {"subs": 28, "views": 88254, "videos": 272, "at": "2026-09-13T14:44:12+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-13T14:44:13+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
 {"takeaway": "国民年金の免除を申請することで、未納の場合と比べて老後に大きな年金額の差が出るため、制度を活用することが重要である。", "unclear": ["「決まりでは」が指している具体的なルール・法律が何なのか", "「全額免除の月は、全額はらった月の半分」という計算ロジックの詳しい根拠", "「保険料の分だけ免除されて、税金の分は残る」という仕組みの具体的な説明"], "sig": "2:4c7f0c08e2f2", "lang": "ja", "dropped": [], "assumed": ["国民年金とは何か（制度の目的、全体像）", "65歳が年金受給開始年齢であること", "「申請」の具体的なプロセスや手続き", "「ねんきん定期便」が具体的に何で、どこから入手できるのか", "「自営業」と他の職業で年金制度がなぜ異なるのか", "国民年金の財源が税金と保険料で構成されていることの背景"], "at": "2026-09-13T14:46:10+09:00", "id": "2026-09-14-menjo-2bunno1", "event": "cold_read"}
+{"subs": 28, "views": 88254, "videos": 272, "at": "2026-09-13T15:39:38+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-13T15:39:38+09:00", "id": "2YZ_4FXC-XI", "event": "zero_probe"}
+{"views": 44, "likes": 0, "comments": 0, "age_h": 5.7, "title": "付加年金 月400円たすと1か月ごとに毎年200円ふえる 2年ではらった金額とお", "n_values": 2, "views_min": 20, "at": "2026-09-13T15:40:58+09:00", "id": "Edmce94ZVKs", "event": "measured"}
+{"views": 787, "likes": 4, "comments": 0, "age_h": 29.7, "title": "退職金の税金 30年はたらけば1500万円までゼロ 退職所得控除 #Shorts", "n_values": 1, "at": "2026-09-13T15:40:58+09:00", "id": "4l3DDCLIRxg", "event": "measured"}
+{"views": 989, "likes": 1, "comments": 0, "age_h": 53.7, "title": "65歳から70歳まではたらくと年金が年10万円ふえる 在職定時改定 #Short", "n_values": 2, "views_min": 986, "at": "2026-09-13T15:40:58+09:00", "id": "mja40GJ-GHU", "event": "measured"}
+{"views": 0, "likes": 0, "comments": 0, "age_h": 77.7, "title": "夫が亡くなると妻の年金はいくら減るか 遺族厚生年金は4分の3 #Shorts", "n_values": 1, "at": "2026-09-13T15:40:58+09:00", "id": "2YZ_4FXC-XI", "event": "measured"}
+{"views": 965, "likes": 5, "comments": 0, "age_h": 101.7, "title": "配偶者が年下だと年金が年42万3700円ふえる 加給年金 #Shorts", "n_values": 1, "at": "2026-09-13T15:40:58+09:00", "id": "gv1u7n_pCAQ", "event": "measured"}
+{"views": 715, "likes": 4, "comments": 4, "age_h": 125.7, "title": "年金を60歳からもらうと24%減る 80歳10か月より長生きなら損 #Short", "n_values": 1, "at": "2026-09-13T15:40:58+09:00", "id": "lQHX9LJ80Sg", "event": "measured"}
+{"views": 66, "likes": 0, "comments": 0, "age_h": 149.7, "title": "年金を70歳まで遅らせると 得になるのは81歳11か月から #Shorts", "n_values": 1, "at": "2026-09-13T15:40:58+09:00", "id": "nQbVxuWpWw8", "event": "measured"}
+{"views": 74, "likes": 0, "comments": 0, "age_h": 150.7, "title": "【育休181日目】手取り比22.0614pt低下 #Shorts", "n_values": 1, "at": "2026-09-13T15:40:58+09:00", "id": "PhQ2KvuQASQ", "event": "measured"}
