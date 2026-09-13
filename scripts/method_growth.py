@@ -94,6 +94,53 @@ def measure(text: str) -> dict:
     return _count(seg)
 
 
+#: 「毎回 読む」側の**節の見出し**（`## 0.` 〜 `## 6.`・`## 8.`）。**番号で挟みます** ——
+#: 節の題は書き換えられますが、番号は §7 を割らない限り動きません（`main_spans` の覆る条件 (2)）。
+MAIN_HEAD = re.compile(r"^## (\d+)\. ")
+
+
+def main_spans(lines: list[str]) -> list[tuple[str, int, int]]:
+    """**「毎回 読む」側（§0〜§6・§8）を、節ごとに挟む**（2026-09-13 12:0x・optimizer・Opus）。
+
+    **なぜ足したか**: `measure` は `SECTIONS` の 2区間を**まとめてしか**数えておらず、
+    合計の門（`verdict`）が引かれた回に印字する字が
+
+        **吸った節を名指しして、§5／§6 の形（決めは本文・derivation は外）を当てること**
+
+    でした。**その「名指し」をする口が、どこにもありませんでした** ——
+    §3 の覆る条件 (2) が「`method_growth.py --split` は §0〜§6・§8 を**まとめてしか見ていない**」と
+    2026-09-12 17:4x に書いており、**その穴のまま 09/13 11:5x に門が引かれています**
+    （+383 / +312字/周）。`views_streak`・`late_run`・`shape_run`・`turf_run` と同じ族の **11例目**
+    （＝ 覆る条件は在るのに、それを数える口が無い）。
+
+    **§7 側（`section7_spans`）・本の節（`book_sections`）は最初から塊ごと・節ごと**なので、
+    **合計でしか読めないのは、この側だけ**でした。そろえます。
+
+    **覆る条件**: (1) 節を 1つ 増やす／減らす判断が出たら、点は 1点目から取り直し
+    （`SECTIONS` を変えたときと同じ ＝ 冒頭の註の覆る条件 (1)）。
+    (2) §7 を別ファイルへ割るなどで番号が動いたら、名（`§N`）は窓の両端で別の節を指します
+    —— そのときは番号ではなく**題**で挟むこと。
+    (3) 節の中がさらに割れて（§5 の「持ち場の表」だけが伸びる など）、名指しが節の粒では
+    足りなくなったら、`_now_cut` と同じ形で**節の中を割る**こと（塊の側が先に踏んだ穴）。
+    """
+    out: list[tuple[str, int, int]] = []
+    for head, tail in SECTIONS:
+        a, b = _section_bounds(lines, head), _section_bounds(lines, tail)
+        heads = [i for i in range(a, b) if MAIN_HEAD.match(lines[i])]
+        if not heads:
+            raise ValueError(f"{head} 〜 {tail} に `## N.` の見出しが在りません —— 挟みが外れています（註の覆る条件 (2)）")
+        for i, h in enumerate(heads):
+            end = heads[i + 1] if i + 1 < len(heads) else b
+            out.append((f"§{MAIN_HEAD.match(lines[h]).group(1)}", h, end))
+    return out
+
+
+def measure_main_split(text: str) -> dict[str, dict]:
+    """「毎回 読む」側を**節ごと**に数える。**合計は `measure` と同じ**（検査で押さえてある）。"""
+    lines = text.split("\n")
+    return {n: _count(lines[a:b]) for n, a, b in main_spans(lines)}
+
+
 def section7_spans(lines: list[str]) -> list[tuple[int, int]]:
     """**毎周 読むのに、上の物差しが 1字も見ていない 3つの塊**の行の範囲（**4つ に割って返す**）。
 
@@ -306,6 +353,13 @@ def points(laps: int = 6, n: int = 3, after: datetime | None = None) -> list[dic
         if a is None or b is None:
             continue
         ma, mb = measure(a), measure(b)
+        # **節ごと**（§0〜§6・§8）。**合計の門が名指しできるように**（`main_spans`・11例目）。
+        try:
+            ma_s, mb_s = measure_main_split(a), measure_main_split(b)
+            main_split = {nm: (mb_s[nm]["body_chars"] - ma_s[nm]["body_chars"]) / laps
+                          for nm in mb_s if nm in ma_s}
+        except (KeyError, ValueError):
+            main_split = None
         # §7 の毎周 読む側は**別に**数えます（同じ数に足さない ＝ 12:1x の 3点 を壊さないため）。
         try:
             s7a, s7b = measure7(a), measure7(b)
@@ -327,6 +381,7 @@ def points(laps: int = 6, n: int = 3, after: datetime | None = None) -> list[dic
         except (KeyError, ValueError):
             books = None
         out.append({
+            "main_split": main_split,
             "books": books,
             "from": head, "to": tail, "laps": laps,
             "d_lines": mb["body_lines"] - ma["body_lines"],
@@ -420,11 +475,53 @@ def verdict(ps: list[dict]) -> list[str]:
     return out
 
 
+def main_split_drawn(ps: list[dict]) -> list[str]:
+    """**節ごとの門**（1周 +300字・直近 2窓 とも越えたら）—— §0〜§6・§8 の側。
+
+    `split_drawn`（§7 の塊）・`book_report`（本の節）と**同じ門・同じ数え方**です。
+    合計だけを見る側は**節どうしの打ち消しに対して盲**（`split_drawn` の註と同じ理由）で、
+    こちらは 2026-09-13 12:0x まで、その合計しか持っていませんでした。
+
+    **覆る条件**: (1) 合計の門と節の門が **3窓 続けて同じ答え**しか返さなければ、
+    節の側は畳んでよい（＝ 打ち消しは起きていない ＝ `split_drawn` の覆る条件 (2) と同じ形）。
+    (2) 名指しされた節が**節の粒では大きすぎる**（畳む先が節の中の 1塊 に決まらない）回が
+    2回 続いたら、`main_spans` の覆る条件 (3) の側（節の中を割る）へ。
+    """
+    ok = [p for p in ps if p.get("main_split")]
+    tail2 = ok[-2:]
+    if len(tail2) < 2:
+        return []
+    drawn = []
+    for nm in tail2[-1]["main_split"]:
+        vals = [p["main_split"].get(nm) for p in tail2]
+        if all(v is not None and v > CHAR_GATE for v in vals):
+            drawn.append(f"{nm}（{vals[0]:+.0f} / {vals[1]:+.0f}）")
+    return drawn
+
+
 def split_report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
     """**どの塊がその窓を吸ったか**（`--split`）。門が引かれた回に撃つこと。"""
     rs = [r for r in rounds() if after is None or r >= after]
     edges = rs[len(rs) - 1 - laps * n:: laps] if len(rs) > laps * n else rs[::laps]
-    out = ["塊ごとの伸び（本文の字・日付つきの節は入れない）"]
+    out = ["節ごとの伸び（§0〜§6・§8・本文の字。**引用は入れない** ＝ 守れるのは本文の側だけ・§5）"]
+    for head, tail in zip(edges, edges[1:]):
+        a, b = blob_at(head), blob_at(tail)
+        if a is None or b is None:
+            continue
+        try:
+            ma, mb = measure_main_split(a), measure_main_split(b)
+        except (KeyError, ValueError) as e:
+            out.append(f"  {head.astimezone(JST):%m/%d %H:%M} → 挟みが外れています: {e}")
+            continue
+        out.append(f"  {head.astimezone(JST):%m/%d %H:%M} → {tail.astimezone(JST):%m/%d %H:%M} JST")
+        for name in mb:
+            if name not in ma:
+                out.append(f"    {name:6s} **この窓の頭には無い節**（＝ 伸びではなく、書き下ろし {mb[name]['body_chars']:,}字）")
+                continue
+            d = mb[name]["body_chars"] - ma[name]["body_chars"]
+            out.append(f"    {name:6s} {ma[name]['body_chars']:6,d} → {mb[name]['body_chars']:6,d}"
+                       f"  ＝ {d:+6,d}字（1周 **{d / laps:+.0f}**）")
+    out.append("塊ごとの伸び（本文の字・日付つきの節は入れない）")
     for head, tail in zip(edges, edges[1:]):
         a, b = blob_at(head), blob_at(tail)
         if a is None or b is None:
@@ -513,6 +610,18 @@ def report(laps: int = 6, n: int = 3, after: datetime | None = None) -> str:
                    f"（引用は**飛ばしてよい側** ＝ 守れるのはここだけ・§5。"
                    f"**この行だけは作業ツリー** ＝ 押していない直しも入る・`worktree_text` の註）")
     out += ["  " + v for v in verdict(ps)]
+    # **節ごとの門**（§0〜§6・§8。合計は節どうしの打ち消しに対して盲・`main_split_drawn` の註）。
+    msd = main_split_drawn(ps)
+    okm = [p for p in ps if p.get("main_split")]
+    if msd:
+        mline = ("**引かれました** —— " + "・".join(msd) +
+                 "。**`--split` で節ごとの並びを見てから、§5／§6 の形を当てること**"
+                 "（決めは本文・derivation は JOURNAL）")
+    elif len(okm[-2:]) < 2:
+        mline = too_few_windows(len(okm[-2:]))
+    else:
+        mline = "引かれません（直近 2窓 とも越えた節は 0 つ）"
+    out.append(f"  節ごとの門 1周 +{CHAR_GATE}字: " + mline)
     s7 = [p for p in ps if p["s7_per_lap"] is not None]
     if s7:
         out.append("**毎周 読むのに、上の物差しが見ていない 4塊**（冒頭「この文書の読み方」＋"

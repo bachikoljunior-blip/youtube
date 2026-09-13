@@ -75,6 +75,12 @@ PARENT_GLOBS = (
     # いちばん多い壊れ方 ＝ 言っている所と、している所が別）。derivation は JOURNAL 09/13 11:0x。
     "test_checks_script*.py",
     "test_turf_run*.py",
+    # 2026-09-13 12:0x に足した（optimizer・Opus）。**同じ形の 3件目** ——
+    # `method_growth` は `turf_run` と同じ「親の周の側の物差し」で、**2026-09-10 12:1x に
+    # 置かれてから 1度も束に入っていませんでした**（`studio` を import しないので `studio` の束にも
+    # 入らない）。**2体 が毎周 読む METHOD の門を持つ道具の見張りが、撃たれていなかった側。**
+    # derivation は JOURNAL 09/13 12:0x。
+    "test_method_growth*.py",
 )
 
 #: 旧 `src/` の赤（§8・2026-09-09 08:5x から前のまま）。**どちらの束にも入れないこと**
