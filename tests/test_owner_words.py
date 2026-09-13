@@ -301,7 +301,7 @@ def test_別の所で札が付いた言葉は_どちらの族の未分類にも�
     filed = sorted(ow.FILED_IDS)
     assert filed, "`FILED_IDS` が空なら、この検査は空を見ている"
     rows = [_row("2026-09-13T12:00:00+09:00", "2e87f87e"),
-            *[_row(f"2026-09-13T2{i}:00:00+09:00", rid) for i, rid in enumerate(filed)]]
+            *[_row(f"2026-09-13T20:{i:02d}:00+09:00", rid) for i, rid in enumerate(filed)]]
     res = ow.run(days_back=999, path=_ledger(tmp_path, rows))
     assert res["unclassified"] == []
     assert res["yomi_unclassified"] == []
@@ -311,7 +311,7 @@ def test_札の無い扱いに戻すと両方の族に並ぶ_陽性対照(tmp_pa
     """規則（`known` に `FILED_IDS` を入れる）を外したら落ちること。"""
     filed = sorted(ow.FILED_IDS)
     rows = [_row("2026-09-13T12:00:00+09:00", "2e87f87e"),
-            *[_row(f"2026-09-13T2{i}:00:00+09:00", rid) for i, rid in enumerate(filed)]]
+            *[_row(f"2026-09-13T20:{i:02d}:00+09:00", rid) for i, rid in enumerate(filed)]]
     saved = ow.FILED_IDS
     try:
         ow.FILED_IDS = {}
@@ -342,3 +342,45 @@ def test_札の付いた言葉は全部_受け取り帳に在る() -> None:
     have = {r.get("id") for r in ow.owner_rows()}
     missing = [i for i in ow.FILED_IDS if i not in have]
     assert missing == [], f"受け取り帳に無い id: {missing}"
+
+
+def _rounds(n: int, base: str = "2026-09-14T00:00:00+09:00") -> list[dict]:
+    """周の台帳を n周 ぶん作る（1周 ＝ 2体 ＝ 同じ `round` の 2行）。"""
+    from datetime import datetime, timedelta
+
+    t0 = datetime.fromisoformat(base)
+    out = []
+    for i in range(n):
+        at = (t0 + timedelta(minutes=60 * (i + 1))).isoformat()
+        out += [{"at": at, "role": "hourly", "round": at},
+                {"at": at, "role": "optimizer", "round": at}]
+    return out
+
+
+def test_札の無い言葉の持ち場は周で決まる() -> None:
+    """**きょうの状態は書かない**（§5 教訓の形 6つ目）—— 門の定数から引く。"""
+    base = "2026-09-14T00:00:00+09:00"
+    below = ow.turf_line(base, _rounds(ow.TURF_GATE_LAPS - 1, base))
+    at_gate = ow.turf_line(base, _rounds(ow.TURF_GATE_LAPS, base))
+    assert "`hourly` の持ち場" in below
+    assert "`optimizer` が引き取ってよい" in at_gate
+    assert "申し送りに「取った」と書いてから" in at_gate
+
+
+def test_門は1周ではない() -> None:
+    """**陽性対照** —— 門を 1周 に落とすと、7回目の二重（09/14 07:2x）がまた通ります。
+
+    実物: オーナーの言葉は 06:56／06:57 に届き、次の周（07:1x）の窓では
+    `hourly` の押しがまだ在りませんでした（押しは 07:4x）＝ **1周 では足りない**。
+    """
+    assert ow.TURF_GATE_LAPS >= 2, "1周 だと、周の 3分後 に来る相手の押しを待てない（§5）"
+    base = "2026-09-14T00:00:00+09:00"
+    assert "`hourly` の持ち場" in ow.turf_line(base, _rounds(1, base))
+
+
+def test_周の台帳は素で読む() -> None:
+    """`owner_rows` は `source == "owner"` で絞るので、周の台帳を渡すと 0件（この回に踏んだ）。"""
+    rounds = _rounds(3)
+    assert ow.laps_since("2026-09-14T00:00:00+09:00", rounds) == 3
+    # 陽性対照: `owner_rows` の絞りを通すと 0件 になる（だから `round_rows` が要る）
+    assert [r for r in rounds if r.get("source") == "owner"] == []

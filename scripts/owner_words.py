@@ -196,13 +196,11 @@ FILED_IDS: dict[str, str] = {
                  " ＝ **許しは出た・口はまだ開いていない**（`channels.list(mine=true)` の items 1件）"
                  "・残りは `second_channel_token`（`YT_REFRESH_TOKEN` の取り直し）"),
     "3c564336": ("2026-09-14 クラウド環境にあるっつってんだろ"
-                 " → 札: 台帳 `data/owner_ask.jsonl` の `second_channel_token` の `verdict`"
-                 "（09/14 07:2x・optimizer が読んだ）"
-                 " ＝ **返事は来たが、撃ったらこの環境に口は無い**"
-                 "（YT を名に持つ環境変数 3つ・`channels.list(mine=true)` の items 1件）"
-                 "・訊きは `second_channel_env` へ置き直した"),
+                 " → 札: `docs/GOAL.md` の達成期限の節 (4-b)（09/14 07:4x・`hourly` の判定）"
+                 "・台帳 `data/owner_ask.jsonl` の `second_channel_token` ＝ **返事ずみ**"
+                 " ＝ **手渡しはしない・口は環境変数の側**（`docs/KICKOFF.md` 1）"),
     "0caa916e": ("2026-09-14 一括つってんだろ"
-                 " → 札: 同上（`3c564336` と同じ 1つ の答え）"),
+                 " → 札: 同上（`3c564336` と同じ決めの言い直し ＝ **2度 言われました**）"),
 }
 
 #: **受け取り帳で `source: "owner"` と記録されているが、オーナーの言葉ではない行**（id → 一言）。
@@ -397,6 +395,74 @@ def unclassified(rows: list[dict], ids: dict[str, str] | None = None) -> list[di
     return out if last is None else [r for r in out if r["at"] > last]
 
 
+#: **札の無いオーナーの言葉が、まだ `hourly` の物である周の数**（門）。
+#: **2 なのは、周の窓の構造そのものです**（2026-09-14 07:5x・optimizer・Opus。**この回に踏んだ**）:
+#: `docs/METHOD.md` §5「オーナーの言葉が周の途中で届いたとき、どちらが取るか」の覆る条件は
+#: 「`hourly` が取りこぼした周が出たら（**次の周の窓に、その言葉の commit が無い**）、`optimizer` が引き取る」
+#: ですが、**その窓は周のはじめに撃つもの**で、§5 自身が「相手のその回の最初の押しは**周の 3分後**」
+#: 「開始時の窓には相手のその回の押しが構造的に出ない」と書いています
+#: ＝ **前の周に届いた言葉は、次の周の開始時の窓では必ず「取りこぼし」に見えます。**
+#: 実測 2026-09-14: オーナーの言葉は 06:56／06:57（＝ 06:2x の周の最中）に届き、
+#: 07:1x の周の optimizer が 07:2x の窓で「commit が無い」と読んで取り、
+#: **同じ周の `hourly` が 07:4x に同じ言葉を取りました**（**7回目の二重**・
+#: `data/owner_ask.jsonl` の `second_channel_env` は取り下げ・derivation は JOURNAL 07:5x）。
+#: ＝ **1周 では足りません。言葉が「丸ごと 1周 を札なしで越えた」ことが要ります。**
+#:
+#: **数え方**: その言葉の刻より後に記録された周（`data/rounds.jsonl`・**役では数えない**）が
+#: `TURF_GATE_LAPS` 以上 あって、まだ札が無ければ `optimizer` が引き取ってよい。
+#:
+#: **覆る条件**:
+#:  (t-1) この門が 2周 でも二重が起きたら、足りないのは周の数ではなく**取り分の切り方**
+#:        （§5 の「オーナーの言葉が…どちらが取るか」の表）＝ そのとき表のほうを直すこと。
+#:  (t-2) `hourly` が 2周 越えても取らなかった言葉が **2件** 出たら、門は 1周 へ下げてよい
+#:        （＝ 取りこぼしのほうが二重より高く付いている）。
+#:  (t-3) 親が 1周に 1体 しか立てない形になったら、`scripts/owner_ask.py` の「2体 で 1周」と
+#:        一緒にここも直すこと。
+TURF_GATE_LAPS = 2
+
+#: 周の台帳（`scripts/owner_ask.py` と同じ物を、同じ数え方で読む）。
+ROUNDS = ROOT / "data" / "rounds.jsonl"
+
+
+def round_rows(path: Path | None = None) -> list[dict]:
+    """周の台帳を素で読む（**`owner_rows` を使わないこと** —— あちらは `source == "owner"` で
+    絞るので、周の台帳を渡すと **0件** を返します。2026-09-14 07:5x にその形で1度 踏んだ）。"""
+    p = path or ROUNDS
+    if not p.is_file():
+        return []
+    out = []
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            out.append(json.loads(ln))
+        except ValueError:
+            continue
+    return out
+
+
+def laps_since(at: str, rounds: list[dict] | None = None) -> int:
+    """その刻より後に記録された周の数（重複なし・**役では数えない** ＝ 2体 で 1周）。"""
+    if rounds is None:
+        rounds = round_rows()
+    t = datetime.fromisoformat(at).astimezone(JST)
+    keys = {r.get("round") or r.get("at") for r in rounds if r.get("round") or r.get("at")}
+    return sum(1 for k in keys
+               if datetime.fromisoformat(k).astimezone(JST) > t)
+
+
+def turf_line(at: str, rounds: list[dict] | None = None) -> str:
+    """その言葉を**いまどちらの役が取ってよいか**を 1行 で言う（`TURF_GATE_LAPS` の註）。"""
+    n = laps_since(at, rounds)
+    if n >= TURF_GATE_LAPS:
+        return (f"**{n}周 札なし（門 {TURF_GATE_LAPS}周）＝ `optimizer` が引き取ってよい** —— "
+                "そのときは**申し送りに「取った」と書いてから**触ること（METHOD §5）")
+    return (f"**{n}周 札なし（門 {TURF_GATE_LAPS}周）＝ まだ `hourly` の持ち場です** —— "
+            "**開始時の窓に相手の押しが無いのは、取りこぼしの印ではありません**"
+            "（相手の押しは周の 3分後・§5）")
+
+
 def run(days_back: int = 21, path: Path | None = None, ledger: Path | None = None) -> dict:
     rows = owner_rows(path)
     cut = (datetime.now(JST) - timedelta(days=days_back)).isoformat()
@@ -429,7 +495,9 @@ def line(res: dict | None = None) -> str:
     tail = []
     if res["unclassified"]:
         tail.append("  **まだ札の無い、より新しいオーナーの言葉**（族に入るなら `CLARITY_IDS` に足すこと）:")
-        tail += [f"    {r['at'][:16]} `{r.get('id')}` {r.get('text','')[:60]}" for r in res["unclassified"]]
+        for r in res["unclassified"]:
+            tail.append(f"    {r['at'][:16]} `{r.get('id')}` {r.get('text','')[:60]}")
+            tail.append("      " + turf_line(r.get("at", "")))
     else:
         tail.append("  まだ札の無い、より新しいオーナーの言葉: **0件**")
     if res.get("filed"):
