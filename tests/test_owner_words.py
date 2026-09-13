@@ -288,3 +288,57 @@ def test_切れた連は決めより後のものだけ数える(tmp_path: Path) 
         assert len(y2["broken_after"]) == 1
     finally:
         ow.REWRITE_DECIDED_AT = saved
+
+
+# ---- 別の所で札が付いた言葉（`FILED_IDS`・2026-09-14 03:4x に足した）----
+
+
+def test_別の所で札が付いた言葉は_どちらの族の未分類にも出ない(tmp_path: Path) -> None:
+    """`FILED_IDS` の言葉を、清潔さと読みの **両方**が毎周 並べ直さないこと。
+
+    **陽性対照**は下（`known` から `FILED_IDS` を外すと 2つ とも並ぶ）。
+    """
+    filed = sorted(ow.FILED_IDS)
+    assert filed, "`FILED_IDS` が空なら、この検査は空を見ている"
+    rows = [_row("2026-09-13T12:00:00+09:00", "2e87f87e"),
+            *[_row(f"2026-09-13T2{i}:00:00+09:00", rid) for i, rid in enumerate(filed)]]
+    res = ow.run(days_back=999, path=_ledger(tmp_path, rows))
+    assert res["unclassified"] == []
+    assert res["yomi_unclassified"] == []
+
+
+def test_札の無い扱いに戻すと両方の族に並ぶ_陽性対照(tmp_path: Path) -> None:
+    """規則（`known` に `FILED_IDS` を入れる）を外したら落ちること。"""
+    filed = sorted(ow.FILED_IDS)
+    rows = [_row("2026-09-13T12:00:00+09:00", "2e87f87e"),
+            *[_row(f"2026-09-13T2{i}:00:00+09:00", rid) for i, rid in enumerate(filed)]]
+    saved = ow.FILED_IDS
+    try:
+        ow.FILED_IDS = {}
+        res = ow.run(days_back=999, path=_ledger(tmp_path, rows))
+        assert [r["id"] for r in res["unclassified"]] == filed
+        assert [r["id"] for r in res["yomi_unclassified"]] == filed
+    finally:
+        ow.FILED_IDS = saved
+
+
+def test_札の在り処が毎周_印字される() -> None:
+    """(f-3) 在り処の無い `FILED_IDS` は `OTHER_IDS` と同じ物 —— 印字で在り処まで言うこと。"""
+    out = ow.line()
+    assert "別の所で札が付いた言葉" in out
+    for rid, note in ow.FILED_IDS.items():
+        assert rid in out
+        assert "札:" in note, f"{rid} に在り処が書かれていない（(f-3)）"
+
+
+def test_札の一覧どうしは重ならない() -> None:
+    """§5 教訓の形 9つ目 —— 片方がもう片方を含んでいたら、一覧は 1つ でよい。"""
+    assert set(ow.FILED_IDS) & set(ow.OTHER_IDS) == set()
+    assert set(ow.FILED_IDS) & set(ow.CLARITY_IDS) == set()
+    assert set(ow.FILED_IDS) & set(ow.YOMI_IDS) == set()
+
+
+def test_札の付いた言葉は全部_受け取り帳に在る() -> None:
+    have = {r.get("id") for r in ow.owner_rows()}
+    missing = [i for i in ow.FILED_IDS if i not in have]
+    assert missing == [], f"受け取り帳に無い id: {missing}"

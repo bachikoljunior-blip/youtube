@@ -160,6 +160,34 @@ OTHER_IDS: dict[str, str] = {
     "06fec2ad": "2026-09-11 ずっと使えるように調整すんの？",
 }
 
+#: **別の所で札が付いたオーナーの言葉**（id → 一言 ＋ **札の在り処**）。
+#: `OTHER_IDS`（どちらの族でもない ＝ 黙って落とす）と違い、**ここは毎周 1行 で在り処を言います**
+#: —— 次の回が「この言葉はどこで決まったのか」を repo から探し直さなくてよいように。
+#:
+#: **なぜ足したか**（2026-09-14 03:4x JST・optimizer・Opus。03:2x の `hourly` の申し送り）:
+#: `6a67e8e7`・`95e92b1e`（達成期限3ヶ月）は `docs/GOAL.md` の達成期限の節・`trend.REV_DEADLINE`・
+#: 09/13 21:0x の判定 という札を持っていますが、`CLARITY_IDS` にも `YOMI_IDS` にも入らないので、
+#: **清潔さの族と読みの族の 両方**が「まだ札の無い言葉」として毎周 並べていました
+#: ＝ **毎周 2体 が同じ 2件 を読み直して、毎周 同じ「どちらの族でもない」に着く**
+#: （§5 教訓の形 7つ目 —— 註と印字が食い違えば、読まれるのは印字のほう）。
+#: **`OTHER_IDS` へ入れるだけでは足りません** —— それは黙って落とすだけで、
+#: **在り処がどこにも印字されないまま**になります（§7「いまの数」がその代わりを持っていた）。
+#:
+#: **覆る条件**:
+#:  (f-1) ここに入れた言葉が **2件 続けて**「実は族の言葉だった」と分かったら、
+#:        分けるのは一覧ではなく**族の切り方**（上の 覆る条件 (2)）。
+#:  (f-2) この一覧が **5件** を越えたら、印字は 1行（件数と在り処の名）だけにして、
+#:        中身は在り処の側に読みに行かせること（毎周 読む字を増やさない）。
+#:  (f-3) 在り処に挙げた節が消えたら、その id は `OTHER_IDS` へ落とすこと
+#:        （**在り処の無い `FILED_IDS` は `OTHER_IDS` と同じ物**）。
+FILED_IDS: dict[str, str] = {
+    "6a67e8e7": ("2026-09-13 YouTube月収20万の達成期限3ヶ月にして"
+                 " → 札: `docs/GOAL.md` の達成期限の節（09/13 21:0x・`hourly` の判定）"
+                 "・`trend.REV_DEADLINE` / `rev_deadline`"),
+    "95e92b1e": ("2026-09-13 達成期限3ヶ月だよ。それが目標"
+                 " → 札: 同上（`6a67e8e7` と同じ決めの言い直し）"),
+}
+
 #: **受け取り帳で `source: "owner"` と記録されているが、オーナーの言葉ではない行**（id → 一言）。
 #: 親やサブが「次の回へ」と積んだ申し送りが、同じ欄に入っています（受け取り帳を書くのは親）。
 #: **これを落とさないと、分母（オーナーが言った日）が申し送りの日ぶん膨らみ、
@@ -338,12 +366,12 @@ def streak(rows: list[dict]) -> dict:
 def unclassified(rows: list[dict], ids: dict[str, str] | None = None) -> list[dict]:
     """いちばん新しいその族の言葉より後の、**どの札も付いていない**オーナーの言葉。
 
-    札は 3つ（`CLARITY_IDS`・`YOMI_IDS`・`OTHER_IDS`）で、**1つの言葉に 2つ 付くことがあります**
+    札は 4つ（`CLARITY_IDS`・`YOMI_IDS`・`OTHER_IDS`・`FILED_IDS`）で、**1つの言葉に 2つ 付くことがあります**
     （`3f4ef885` は 分かりにくさ と 読み の両方）。ここで落とすのは「どこにも札が無い」ものだけ
     —— そうしないと、族が 2つ になった時点で、片方の族の言葉が もう片方で毎周 並びます。
     """
     ids = CLARITY_IDS if ids is None else ids
-    known = set(CLARITY_IDS) | set(YOMI_IDS) | set(OTHER_IDS)
+    known = set(CLARITY_IDS) | set(YOMI_IDS) | set(OTHER_IDS) | set(FILED_IDS)
     last = None
     for r in rows:
         if r.get("id") in ids:
@@ -359,6 +387,7 @@ def run(days_back: int = 21, path: Path | None = None, ledger: Path | None = Non
     res: dict = {"rows": rows, "recent": recent, "unclassified": unclassified(rows),
                  "yomi": yomi_streak(rows, books(ledger)),
                  "yomi_unclassified": unclassified(rows, YOMI_IDS),
+                 "filed": [r for r in rows if r.get("id") in FILED_IDS],
                  **streak(rows)}
     res["quiet_h"] = (
         (datetime.now(JST) - datetime.fromisoformat(rows[-1]["at"]).astimezone(JST)).total_seconds() / 3600
@@ -386,6 +415,12 @@ def line(res: dict | None = None) -> str:
         tail += [f"    {r['at'][:16]} `{r.get('id')}` {r.get('text','')[:60]}" for r in res["unclassified"]]
     else:
         tail.append("  まだ札の無い、より新しいオーナーの言葉: **0件**")
+    if res.get("filed"):
+        tail.append(
+            f"  **別の所で札が付いた言葉: {len(res['filed'])}件**"
+            "（どちらの族の分子でもありません ＝ **毎周 読み直さないこと**・`FILED_IDS`）:"
+        )
+        tail += [f"    `{r.get('id')}` {FILED_IDS[r['id']]}" for r in res["filed"]]
     if res["quiet_h"] is not None:
         tail.append(f"  いちばん新しいオーナーの言葉から **{res['quiet_h']:.1f}時間**"
                     "（**沈黙は「分かりやすかった」ではありません** ＝ 連は動きません）")
