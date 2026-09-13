@@ -195,6 +195,14 @@ FILED_IDS: dict[str, str] = {
                  " → 札: 同上（達成期限の節 (4-a)）・台帳の `second_channel`"
                  " ＝ **許しは出た・口はまだ開いていない**（`channels.list(mine=true)` の items 1件）"
                  "・残りは `second_channel_token`（`YT_REFRESH_TOKEN` の取り直し）"),
+    "3c564336": ("2026-09-14 クラウド環境にあるっつってんだろ"
+                 " → 札: 台帳 `data/owner_ask.jsonl` の `second_channel_token` の `verdict`"
+                 "（09/14 07:2x・optimizer が読んだ）"
+                 " ＝ **返事は来たが、撃ったらこの環境に口は無い**"
+                 "（YT を名に持つ環境変数 3つ・`channels.list(mine=true)` の items 1件）"
+                 "・訊きは `second_channel_env` へ置き直した"),
+    "0caa916e": ("2026-09-14 一括つってんだろ"
+                 " → 札: 同上（`3c564336` と同じ 1つ の答え）"),
 }
 
 #: **受け取り帳で `source: "owner"` と記録されているが、オーナーの言葉ではない行**（id → 一言）。
