@@ -93,3 +93,30 @@ def test_cliに口が在る():
     import studio.cli as cli
     assert hasattr(cli, "cmd_crosscheck")
     assert "crosscheck" in cli.__doc__, "docstring の一覧に無い道具は撃たれない"
+
+
+def test_two_senses_の口が在る(monkeypatch):
+    """**4つ目の kind**（2026-09-14 05:5x・optimizer・Opus。実測 1件 ＝ 09/15 の本の コマ4）。
+
+    声が「所得」を 1つ の語にまとめ、説明欄・notes だけが「所得」と「課税される所得金額」を
+    言い分けていた。**`missing_cond` では出ません**（声は条件を落としておらず、語をまとめている）——
+    実際 crosscheck は この本を 2回 撃って 2回とも別のコマの `missing_cond` を挙げ、コマ4 を挙げなかった。
+    **覆る条件 3つ は `critic.crosscheck` の註**（3本 続けて 0件 なら外す・2回 続けて
+    `missing_cond` と同じ所を指したら畳む・声を言い分けて §3 の 2 に当たったら例の数を直す）。
+    """
+    seen = _prompt(monkeypatch, lambda: critic.crosscheck(_s()))
+    p = seen["prompt"]
+    assert "two_senses" in p, "kind の名が本文に無ければ、模型はその種別を返せない"
+    assert "言い分けている語" in p, "何を探すかが無ければ、名前だけでは当たらない"
+    assert "contradiction|sharper|missing_cond|two_senses" in p, "返りの形（kind の一覧）に入っていない"
+
+
+def test_two_senses_は_missing_condと別の問いだと言っている(monkeypatch):
+    """2つ を同じ問いにすると、直す側がどちらに従うか決められない（`crosscheck` の 4つ目の kind の註）。"""
+    seen = _prompt(monkeypatch, lambda: critic.crosscheck(_s()))
+    p = seen["prompt"]
+    i_missing = p.index("missing_cond  …")
+    i_two = p.index("two_senses    …")
+    assert i_missing < i_two, "並びが崩れると、あとから足した kind が見出しの外に落ちる"
+    assert "落として" in p[i_missing:i_two], "missing_cond の側の述語（落とす）が消えている"
+    assert "同じ語 1つ" in p[i_two:], "two_senses の側の述語（まとめる）が無い"
