@@ -2353,6 +2353,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  —— **同じ族の 6例目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・
     #  `views_streak`）。**単位は「引き」＝ 周ではありません**（`trend.rev7_run` の註）。
     out.append(rev7_line(rows))
+    out.append(rev_deadline_line(rows))
     #  そのすぐ隣に「上がった分の中身」を出す（`rev7_line` の「引かれました」は連だけを見るので、
     #  この行が無いと分子の中身を見ないまま §1 を開けます・`trend.rev7_source_line` の註）。
     out.append(rev7_source_line(rows))
@@ -2526,6 +2527,106 @@ REV7_SOURCE_GATE = 3
 #: 基準2（ショート 直近90日 1,000万回）。**公表ページの写し**（§7 の収益の節・覆る条件 (10)）。
 REV_GOAL_VIEWS = 10_000_000
 REV_GOAL_DAYS = 90
+#: 基準2 のもう一方（登録 1,000人）。**公表ページの写し**（同・覆る条件 (10)）。
+REV_GOAL_SUBS = 1_000
+#: **オーナーが置いた達成期限**（2026-09-13 20:0x JST・原文
+#: 「YouTube月収20万の達成期限3ヶ月にして。他は元々そうだけど自由にしていいからね」・受け取り帳 `6a67e8e7`）。
+#: **3ヶ月 は言われた刻（2026-09-13）から数えます。**
+#: **オーナーが日を言い直したら、ここだけ直すこと**（門は 1か所）。
+REV_DEADLINE = "2026-12-13"
+
+
+def rev_deadline(rows: list[dict]) -> dict:
+    """**オーナーの期限と、いまの数の距離**（台帳だけ・**API 0単位**）。
+
+    **なぜ要るか**（2026-09-13 20:3x JST・optimizer・Opus）: オーナーが 20:0x に期限を置きました。
+    §7 の収益の節は距離（**138倍**）を毎周 印字していますが、**その倍率は「いつまでに」を持ちません**
+    —— 期限が付くと、同じ倍率が**別の意味**になります: 基準2 の窓は **90日** なので、
+    **期限の 90日前から、もうその速さで回っていなければ届きません**。
+    `rev7_line` の倍率は「いつかは届く」の側で、この口は「その日までに」の側です。
+
+    **この数は下端です**（`floor` が真）。「月収20万」は**門を通ったあとの収益**なので、
+    門はこの期限より**前**に通っている必要があり、そのぶん窓は手前で閉じ、
+    **既に過ぎた日（実測 800回/日 前後）が窓に入ります** ＝ 要る倍率はこれより**大きくなります**。
+    **審査の日数は、こちらでは 1度も測っていません** ＝ ここには入れません（前提を数に混ぜない）。
+
+    返り: `{"deadline", "days_left", "start", "past_days", "got", "ahead_days",
+            "need_per_day", "now_per_day", "times", "subs", "subs_need",
+            "subs_per_day", "subs_need_per_day", "subs_times", "subs_days", "floor"}`。
+
+    **覆る条件**: (1) オーナーが期限を言い直したら `REV_DEADLINE` を直すこと（**門は 1か所**）。
+    (2) 窓に実測の日が入り始めたら（`past_days` が 0 でなくなったら）、`need_per_day` は
+        「残りの日で埋める数」になります ＝ そのときは `got` も一緒に読むこと。
+    (3) 審査の日数を**測れたら**、窓の閉じる日をその日数だけ手前へ寄せて数え直すこと
+        ＝ そのとき `floor` は偽になります。
+    (4) 基準2 の数（`REV_GOAL_VIEWS` / `REV_GOAL_SUBS`）が公表ページで変わったら、
+        **引く前に同じページへ当て直すこと**（収益の節の 覆る条件 (10)）。
+    """
+    end = dt.date.fromisoformat(REV_DEADLINE)
+    today = now_jst().date()
+    start = end - dt.timedelta(days=REV_GOAL_DAYS - 1)
+    have = {r["id"]: int(r.get("views") or 0)
+            for r in rows if r.get("event") == "analytics_day" and r.get("id")}
+    past = {d: v for d, v in have.items() if start <= dt.date.fromisoformat(d) <= end}
+    got = sum(past.values())
+    ahead = REV_GOAL_DAYS - len(past)
+    draws = rev7_draws(rows)
+    now = draws[-1]["avg"] if draws else None
+    need = (REV_GOAL_VIEWS - got) / ahead if ahead > 0 else None
+    # **台帳に `channel` の行が無い回は、登録の側を全部 None で返します**
+    # （`channel_growth` は `subs` / `d_subs` を None で返す ＝ 0 と読まない・
+    #  「見ていない」と「0人」を同じ形にしない。`views_of` の族と同じ）。
+    g = channel_growth(rows)
+    subs, d_subs = g.get("subs"), g.get("d_subs")
+    span_d = (g.get("span_h") or 0) / 24
+    subs_per_day = (d_subs / span_d) if (span_d and d_subs is not None) else None
+    subs_need = max(REV_GOAL_SUBS - subs, 0) if subs is not None else None
+    days_left = (end - today).days
+    per = subs_need is not None and days_left > 0
+    return {"deadline": end, "days_left": days_left,
+            "start": start, "past_days": len(past), "got": got, "ahead_days": ahead,
+            "need_per_day": need, "now_per_day": now,
+            "times": (need / now) if (need and now) else None,
+            "subs": subs, "subs_need": subs_need,
+            "subs_per_day": subs_per_day,
+            "subs_need_per_day": (subs_need / days_left) if per else None,
+            "subs_times": (subs_need / days_left / subs_per_day)
+                          if (per and subs_per_day) else None,
+            "subs_days": (subs_need / subs_per_day)
+                         if (subs_need is not None and subs_per_day) else None,
+            "floor": True}
+
+
+def rev_deadline_line(rows: list[dict]) -> str:
+    """`rev_deadline` を1行にする（`trend` が毎周 印字する ＝ **§7 へ写さないこと**）。"""
+    r = rev_deadline(rows)
+    if r["days_left"] <= 0:
+        return (f"**オーナーの期限 {r['deadline']} は過ぎました**（`trend.rev_deadline`）—— "
+                "**判定は `hourly` とオーナー**（§5）。")
+    out = (f"**オーナーの期限までの距離**（期限 **{r['deadline']}**・あと **{r['days_left']}日**・"
+           "原文は `CLAUDE.md` 2026-09-13 20:0x・受け取り帳 `6a67e8e7`・"
+           "台帳だけ・**API 0単位**・`trend.rev_deadline`）: "
+           f"基準2 の **{REV_GOAL_DAYS}日 の窓が期限に閉じる**とすると、窓は "
+           f"**{r['start']}〜{r['deadline']}** ＝ **窓は もう開いています。**")
+    if r["past_days"]:
+        out += (f"うち台帳に実測の在る日 **{r['past_days']}日・{r['got']:,}回**・"
+                f"これから **{r['ahead_days']}日**。")
+    else:
+        out += f"うち台帳に実測の在る日 **0日**・これから **{r['ahead_days']}日**。"
+    if r["need_per_day"] and r["now_per_day"]:
+        out += (f"**要る {r['need_per_day']:,.0f}回/日 対 いま {r['now_per_day']:.1f}回/日 "
+                f"＝ {r['times']:.0f}倍**（いまの回数は `rev7_line` と同じ引き）。")
+    if r["subs_per_day"] is not None and r["subs_need"] is not None:
+        out += (f"登録は **いま {r['subs']}人・あと {r['subs_need']:,}人** ＝ "
+                f"**要る {r['subs_need_per_day']:.1f}人/日 対 いま {r['subs_per_day']:.2f}人/日**"
+                + (f" ＝ **{r['subs_times']:.0f}倍**" if r["subs_times"] else "")
+                + (f"（いまの速さでは **{r['subs_days']:,.0f}日**）" if r["subs_days"] else "")
+                + "。")
+    out += ("**この倍率は下端です** —— 「月収20万」は**門を通ったあとの収益**なので、"
+            "門は期限より前に通っている必要があり、窓は手前で閉じて**過ぎた日が入ります**"
+            "（審査の日数は 1度も測っていないので、ここには入れません・覆る条件 (3)）。"
+            "**形を変えるかの判定は `hourly` とオーナー**（§5 ＝ optimizer は数を並べるまで）。")
+    return out
 
 
 def rev7_draws(rows: list[dict]) -> list[dict]:
@@ -3243,6 +3344,9 @@ VIEWS_ABSENT_SINCE = "2026-09-10T14:20:00+09:00"
 # `yt.views_of` が「`viewCount` の欄が無い」と「0回」を分け始めた刻（台帳 `views_absent`）。
 # **これより前の `measured` は、欄が無くても 0回 として書かれています** ＝ 門の分母に入れない。
 
+#: §7 (j) の覆る条件 (2) の門（**本**の数。2026-09-10 21:0x に置かれた「7本」を定数にした）。
+VIEWS_ABSENT_GATE = 7
+
 
 def views_absent(rows: list[dict]) -> dict:
     """**`viewCount` の欄が無い読み**（台帳 `measured` の `views_absent`）を数える。API 0単位。
@@ -3262,31 +3366,65 @@ def views_absent(rows: list[dict]) -> dict:
     「欄が在った」と「この口より前の読み」を行だけでは分けられません ＝ **刻で分けます**
     （`VIEWS_ABSENT_SINCE`）。旧作りの本は外します（§7 の「N本目」はこちらの本の数）。
 
+    **門 7本 の分母は「初測が齢 `FIRST_VIEW_EARLY_H` までの本」だけ**
+    （`since_books_early`・**2026-09-13 20:3x JST・optimizer・Opus が分けた**）:
+    `views_of` が挙げる原因は 3つ で、**そのうち「処理の終わっていない本」は若い読みでしか見えません**。
+    `since_books`（8本）で門を読むと、**初測が齢 28.5〜100.5h の本 4本**——
+    この口が立った刻に既に 1日 以上 経っていた本——が分母に入り、**その 4本 は
+    「処理の終わっていない本」を 1度も見ていない**まま門を押します。
+    ＝ **8本 で「引かれた」と読むと、生きている口を空の数で外す**ことになります。
+    `since_books` は残します（統計を止めた本・埋め込みだけの本 ＝ 齢に依らない 2つ の側の分母）。
+
     **覆る条件**: (1) `n` が **1件でも立ったら**、その本の 0回 を `first_view`・`hold`・§7 (c) の
     数から外すこと（`yt.views_of` の覆る条件 (1) と同じ ＝ ここはその**数える口**）。
-    (2) `since_books` が **7本** を越えて `n` が 0 なら、この口は外してよい。
+    (2) `since_books_early` が **`VIEWS_ABSENT_GATE`本** を越えて `n` が 0 なら、この口は外してよい
+    （**`since_books` のほうでは読まないこと** ＝ 上の分母の註）。
     (3) `views_absent` が False でも書かれるように `cli` を変えたら、`since_books` は
     刻ではなく**欄の有無**で数えること（そのほうが正確 ＝ この定数は消える）。
+    (4) `views_of` から「処理の終わっていない本」が落ちたら（原因が齢に依らない 2つ だけになったら）、
+    門は `since_books` の側へ戻すこと ＝ そのときこの分け方は消える。
     """
     since = dt.datetime.fromisoformat(VIEWS_ABSENT_SINCE)
     marks = [r for r in rows
              if r.get("event") == "measured" and r.get("views_absent")]
     mine = ours(rows)
-    seen = {r["id"] for r in rows
-            if r.get("event") == "measured" and r.get("id") in mine
-            and _at(r) >= since}
+    first: dict[str, float | None] = {}
+    for r in rows:
+        if (r.get("event") == "measured" and r.get("id") in mine
+                and _at(r) >= since and r["id"] not in first):
+            first[r["id"]] = r.get("age_h")
+    early = sorted(k for k, a in first.items()
+                   if a is not None and a <= FIRST_VIEW_EARLY_H)
+    late = sorted(set(first) - set(early))
     return {"n": len(marks), "books": sorted({r["id"] for r in marks}),
-            "since_books": len(seen), "marks": marks}
+            "since_books": len(first), "since_books_early": len(early),
+            "early": early, "late": late,
+            "late_first_age_h": min((first[k] for k in late
+                                     if first[k] is not None), default=None),
+            "drawn": not marks and len(early) > VIEWS_ABSENT_GATE,
+            "marks": marks}
 
 
 def views_absent_line(rows: list[dict]) -> str:
     """`views_absent` を1行にする（`trend` が毎周 印字 ＝ **次の回は覚えていなくてよい**）。"""
     a = views_absent(rows)
     if a["n"] == 0:
+        need = VIEWS_ABSENT_GATE + 1 - a["since_books_early"]
+        verdict = ("**引かれました ＝ この口は外してよい**" if a["drawn"]
+                   else f"**まだ引けません**（あと **{need}本**）")
+        late = ""
+        if a["late"]:
+            age = a["late_first_age_h"]
+            late = (f" **この口が在ってから測った本は {a['since_books']}本 ですが、"
+                    f"うち {len(a['late'])}本 は初測が齢 "
+                    + (f"{age:.1f}h" if age is not None else "?")
+                    + " 以降 ＝ **「処理の終わっていない本」を 1度も見ていません**"
+                      "（`views_of` の 3つ の原因の 1つ）。**この数で門を読まないこと**（覆る条件 (2)(4)）。")
         return ("**`viewCount` の欄が無い読み: 0件**（台帳 `views_absent`・`yt.views_of`）—— "
                 "**1度でも立ったら、その本の台帳の 0回 を「配りが来ていない」と読まないこと**"
-                f"（覆る条件 (1)）。**この口が在ってから測った、こちらの本 {a['since_books']}本**"
-                "（門 **7本** ＝ 7本 過ぎて 1度も立たなければ、この口は外してよい）。")
+                f"（覆る条件 (1)）。**門 {VIEWS_ABSENT_GATE}本 の分母は"
+                f"「齢 {FIRST_VIEW_EARLY_H:.1f}h までに この口の下で初めて測った本」"
+                f"＝ {a['since_books_early']}本** ＝ {verdict}。" + late)
     return (f"**`viewCount` の欄が無い読み: {a['n']}件・{len(a['books'])}本** —— "
             + "・".join(a["books"])
             + " ＝ **その本の台帳の 0回 を「配りが来ていない」と読まないこと**"
