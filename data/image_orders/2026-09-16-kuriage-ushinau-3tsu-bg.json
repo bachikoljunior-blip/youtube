@@ -1,11 +1,11 @@
 {
- "id": "2026-09-16-kuriage-ushinau-3tsu-bg",
- "asked_at": "2026-09-14T23:54:13+09:00",
- "for": "2026-09-16 の本（2026-09-16-kuriage-ushinau-3tsu・形 long）の背景",
- "prompt": "日本の60歳前後の女性が、自宅のダイニングで年金の通知書を手に取り、静かに考えている様子。やわらかい午後の光。写実的な写真風。文字やロゴは入れない。横長。",
- "avoid": "文字・ロゴ・実在の人物・透かし",
- "size": "1920x1080",
- "format": "jpg",
- "out": "assets/images/2026-09-16-kuriage-ushinau-3tsu-bg.jpg",
- "status": "pending"
+  "asked_at": "2026-09-14T23:54:13+09:00",
+  "avoid": "文字・ロゴ・実在の人物・透かし",
+  "for": "2026-09-16 の本（2026-09-16-kuriage-ushinau-3tsu・形 long）の背景",
+  "format": "jpg",
+  "id": "2026-09-16-kuriage-ushinau-3tsu-bg",
+  "out": "assets/images/2026-09-16-kuriage-ushinau-3tsu-bg.jpg",
+  "prompt": "日本の60歳前後の女性が、自宅のダイニングで年金の通知書を手に取り、静かに考えている様子。やわらかい午後の光。写実的な写真風。文字やロゴは入れない。横長。",
+  "size": "1920x1080",
+  "status": "done"
 }
