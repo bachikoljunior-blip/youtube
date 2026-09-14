@@ -107,7 +107,7 @@ def test_印字は本ごとに1行と見出しと締め():
     out = trend.first_view_lines(rows)
     assert len(out) == 1 + 2 + 1
     assert out[0].startswith("**1回目の再生が付いた齢**")
-    assert "判定は `hourly`" in out[-1]
+    assert "判定は立ったサブ（いま 1体）" in out[-1]
 
 
 def test_本が無ければ何も印字しない():

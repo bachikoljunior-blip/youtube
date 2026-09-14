@@ -218,7 +218,7 @@ def test_行に門と残りと1aが出る(tmp_path):
     assert "まだ引けません" in line
     assert "(1-a)" in line and "門 2本" in line
     assert "挟み" in line
-    assert "判定は" not in line or "hourly" in line
+    assert "判定は" not in line or "立ったサブ" in line
 
 
 def test_行は1aが尽きたら待たないと言う(tmp_path):
@@ -233,7 +233,7 @@ def test_行は1aが引かれたら宛先を言う(tmp_path):
     line = trend.shape_line(
         _rows(_n_books(tmp_path, [1, 2, 3, 4, 0, 0, 820])), tmp_path)
     assert "(1-a) が引かれました" in line
-    assert "`hourly`" in line
+    assert "立ったサブ" in line
 
 
 def test_行はまだ待つ本が在るうちは確定と言わない(tmp_path):
@@ -249,7 +249,7 @@ def test_行は門に届いたら判定の宛先を言う(tmp_path):
         _rows(_n_books(tmp_path, [0, 66, 140, 600, 943, 970, 800])), tmp_path)
     assert "門に届きました" in line
     assert "帯の上" in line
-    assert "`hourly`" in line
+    assert "立ったサブ" in line
 
 
 def test_trendの並びに出る():

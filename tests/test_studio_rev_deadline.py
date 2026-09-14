@@ -88,7 +88,7 @@ def test_下端だと毎周言う(刻):
     刻("2026-09-13T20:36:00")
     line = trend.rev_deadline_line(_rows())
     assert trend.rev_deadline(_rows())["floor"] is True
-    assert "下端" in line and "判定は `hourly` とオーナー" in line
+    assert "下端" in line and "判定は立ったサブ（いま 1体）とオーナー" in line
     assert "倍**" in line
 
 
@@ -167,13 +167,20 @@ def test_要る登録率は扉で桁が変わる(刻):
     assert r["sub_rate_now"] is not None and r["sub_rate_need_b"] > r["sub_rate_now"]
 
 
-def test_長尺が0本であることを毎周言う(刻):
+def test_ショートの再生はこの扉に数えないと毎周言う(刻):
     """**扉(b) の 0.83倍 を「もう届いている」と読ませないこと** —— ショートの再生は
-    この扉に 1秒も数えられません（`docs/GOAL.md` (4-g)）。"""
+    この扉に 1秒も数えられません（`docs/GOAL.md` (4-g)）。
+
+    **2026-09-14 21:4x に「いまの長尺は 0本」を落としました**（optimizer・Opus）——
+    実物の台帳には旧作りの長尺が **5本**（4〜28回・視聴 0.3時間）在り、
+    **この行は数を持たないのに「0本」と書いていました**（`sub_rate_line` の
+    「尺で分けた側」が本物の数を持つ側 ＝ **2つ の口が同じ数を持たない**）。
+    """
     刻("2026-09-14T21:00:00")
     line = trend.rev_deadline_line(_rows())
-    assert "いまの長尺は 0本" in line and "0秒" in line
-    assert "尺の入れ替え" in line
+    assert "1秒も数えられません" in line and "尺の入れ替え" in line
+    assert "0本" not in line, "数を持たない口が数を書かないこと"
+    assert "`sub_rate_line`" in line, "数を持つ口を名指しすること"
 
 
 def test_判断は立った_optimizer_が下すと毎周言う(刻):

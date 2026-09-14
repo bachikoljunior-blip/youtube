@@ -199,7 +199,7 @@ def test_カーブの行は新旧を10パーセントの刻で分ける():
     line = trend.curve_line(rows)
     assert "新しい作り 2本 **10% で 0.71〜0.81**" in line
     assert "旧作り 2本 **10% で 1.06〜1.21**" in line
-    assert "判定は `hourly`" in line
+    assert "判定は立ったサブ（いま 1体）" in line
 
 
 def test_空のカーブは名指しで数える():

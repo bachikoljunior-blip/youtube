@@ -89,11 +89,11 @@ def test_側は別に数える(tmp_path):
 
 
 def test_片側だけが門に届く(tmp_path):
-    """門に届いた側だけを名指しし、**縮める判定は `hourly`** と言うこと（§5）。"""
+    """門に届いた側だけを名指しし、**縮める判定は立ったサブ（いま 1体）** と言うこと（§5）。"""
     p = _write(tmp_path, SEC4, _book(14, "出た", "0"), _book(15, "出た", "0"),
                _book(16, "出た", "0"))
     s = trend.outside_line(p)
-    assert "改正 の側は門に届きました" in s and "判定は `hourly`" in s
+    assert "改正 の側は門に届きました" in s and "判定は立ったサブ（いま 1体）" in s
     assert "公表ページ 0 が 0本" in s
 
 

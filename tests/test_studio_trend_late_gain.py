@@ -96,7 +96,7 @@ def test_門の判定が印字される():
     line = tr.late_gain_line(tr.hold(rows))
     assert "5% 未満が新しいほうから続いているのは 1本" in line
     assert "門 3本 ＝ **引かれません**" in line
-    assert "判定は `hourly`" in line
+    assert "判定は立ったサブ（いま 1体）" in line
 
 
 def test_本物の台帳で行が出る():
