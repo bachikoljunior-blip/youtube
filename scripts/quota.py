@@ -1267,8 +1267,8 @@ FABLE_RESERVE_PCT = 90.0
 #   (4) オーナーが数を言い直したとき。
 # --------------------------------------------------------------------------
 ROLE_TIER: dict[str, str] = {
-    "hourly": "leverage",     # 次に出る1本の台本を持つ（METHOD §5）→ Fable を 100% の1体手前まで
-    "optimizer": "other",     # measure・道具・親の手続き・公開前の build/hear → Opus（他モデルの半分）
+    "hourly": "retired",      # 09/14 20:22 オーナー「サブ立てるのは最適化の役だけ」＝ 立てない（名は台帳の読みのために残す）
+    "optimizer": "leverage",  # 09/14 20:22 オーナー「サブ立てるのは最適化の役だけ・Fable5.1 の ultracode」→ Fable
     "owner-full": "routine",  # 記録 ＋ 1周（定型側）
     "owner-record": "light",  # 単純な記録だけ → sonnet（Fable の残りに関係なく）
 }
@@ -1561,6 +1561,10 @@ def role_model(model: str, why: str, est_pct: float | None, role: str | None,
     `None` なら配りの線は当てません（役の段と予備の線だけ ＝ 前の形）。
     """
     tier = ROLE_TIER.get(role or "", None)
+    if tier == "retired":
+        # 09/14 20:22 オーナー「サブ立てるのは今最適化の役やってるやつの分だけにして」＝ この役は立てない。
+        # 名は台帳（`data/model_choice.jsonl`・`rounds.jsonl`）の読みのために残す。撃たれたら Opus（Fable を減らさない）。
+        return OTHER_MODEL, f"役 `{role}` は立てない役（オーナー 09/14 20:22）→ Opus"
     if tier == "light":
         return LIGHT_MODEL, f"役 `{role}` は単純な記録 → 軽い模型（オーナー 09/03 07:3x）"
     if tier == "other":
@@ -1634,7 +1638,7 @@ def record_model_choice(role: str, model: str, why: str,
                         if p.get("reach_carry") is not None else None),
         "short_agree": short_verdict(p.get("reach_floor"), p.get("reach_carry"))["agree"],
         "expected_goal_effect": (
-            "次に出る1本の台本を持つ（題材・台本・直し ＝ 効き目の当のもの・高）" if tier == "leverage"
+            "1周に立つ唯一のサブ（台本・道具・親の手続き ＝ 全部・高。オーナー 09/14 20:22）" if tier == "leverage"
             else "measure・道具・親の手続き・公開前の build/hear（Opus で足りる所・他モデルの半分）" if tier == "other"
             else "1件 出す（実測 fix 71%・moves 0 95%・低）"),
         "why": why,

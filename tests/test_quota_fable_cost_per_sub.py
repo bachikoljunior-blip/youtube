@@ -119,11 +119,11 @@ def test_100パーセントを越える形では立てないこと(tmp_path, mon
         "source": "measured", "from_at": t0, "to_at": t0 + timedelta(hours=7),
         "from_pct": 70.0, "to_pct": 80.0, "rate": 1.0})     # 1.0%/体
     # 99.5% ＋ 1体 1.0% ＝ 100.5% ≧ 100 → Opus
-    m, why = quota.role_model("fable", "枠の門は通った", 99.5, "hourly")
+    m, why = quota.role_model("fable", "枠の門は通った", 99.5, "optimizer")
     assert m == "opus", f"越える形なのに {m} を返した（{why}）"
     assert "1体ぶん" in why, "理由に 1体ぶんの数が出ていない"
     # 98.0% ＋ 1.0% ＝ 99.0% ＜ 100 → まだ Fable（**早く切り替えすぎない**）
-    m2, _ = quota.role_model("fable", "枠の門は通った", 98.0, "hourly")
+    m2, _ = quota.role_model("fable", "枠の門は通った", 98.0, "optimizer")
     assert m2 == "fable", f"まだ越えないのに {m2} へ倒した"
 
 

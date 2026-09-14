@@ -32,20 +32,22 @@ def test_routine_role_keeps_fable_below_reserve(monkeypatch):
     assert quota.sub_model(role="owner-full")[0] == "fable"
 
 
-def test_hourly_holds_the_script_so_it_is_fable_until_full(monkeypatch):
+def test_optimizer_holds_everything_so_it_is_fable_until_full(monkeypatch):
+    """09/14 20:22 オーナー「サブ立てるのは最適化の役だけ・Fable5.1 の ultracode」＝ optimizer が leverage。"""
     monkeypatch.setattr(quota, "fable_cost_per_sub", lambda now=None: None)
     monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(97.0))
-    m, why = quota.sub_model(role="hourly")
+    m, why = quota.sub_model(role="optimizer")
     assert m == "fable" and "高レバレッジ" in why
     monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(100.0))
-    assert quota.sub_model(role="hourly")[0] == "opus"
+    assert quota.sub_model(role="optimizer")[0] == "opus"
 
 
-def test_optimizer_is_opus_regardless_of_fable_gauge(monkeypatch):
+def test_hourly_is_retired_so_it_is_opus_regardless_of_fable_gauge(monkeypatch):
+    """立てない役（`retired`）が撃たれても Fable を減らさない。"""
     for est in (10.0, 60.0, 97.0):
         monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(est))
-        m, why = quota.sub_model(role="optimizer")
-        assert m == quota.OTHER_MODEL == "opus" and "他モデル" in why
+        m, why = quota.sub_model(role="hourly")
+        assert m == quota.OTHER_MODEL == "opus" and "立てない役" in why
 
 
 def test_no_role_is_gate_only(monkeypatch):
@@ -59,8 +61,8 @@ def test_owner_wrapper_gives_same_answers(monkeypatch):
     monkeypatch.setattr(owner.quota, "fable_gauge",
                         lambda: {"pct": 41.0, "at": at, "resets": None})
     monkeypatch.setattr(owner.quota, "fable_estimate", lambda now=None, **kw: _fe(41.0))
-    assert owner.corrected_sub_model(role="hourly")[0] == "fable"
-    assert owner.corrected_sub_model(role="optimizer")[0] == "opus"
+    assert owner.corrected_sub_model(role="hourly")[0] == "opus"      # retired
+    assert owner.corrected_sub_model(role="optimizer")[0] == "fable"   # leverage（09/14 20:22）
     assert owner.corrected_sub_model(role="owner-full")[0] == "fable"
     assert owner.corrected_sub_model()[0] == "fable"
 
@@ -69,10 +71,10 @@ def test_record_model_choice_has_gate_fields(tmp_path, monkeypatch):
     monkeypatch.setattr(quota, "MODEL_CHOICE_FILE", tmp_path / "mc.jsonl")
     monkeypatch.setattr(quota, "fable_estimate", lambda now=None, **kw: _fe(92.0))
     monkeypatch.setattr(quota, "pace", lambda now=None: {"used_now": 54.5})
-    row = quota.record_model_choice("optimizer", "opus", "why")
+    row = quota.record_model_choice("optimizer", "fable", "why")
     for k in ("work_kind", "model", "all_models_week_pct", "fable_only_pct",
               "expected_goal_effect", "why"):
         assert k in row
-    assert row["work_kind"] == "optimizer:other" and "他モデル" in row["expected_goal_effect"]
+    assert row["work_kind"] == "optimizer:leverage" and "唯一のサブ" in row["expected_goal_effect"]
     assert row["all_models_week_pct"] == 54.5 and row["fable_only_pct"] == 92.0
     assert (tmp_path / "mc.jsonl").read_text(encoding="utf-8").count("\n") == 1

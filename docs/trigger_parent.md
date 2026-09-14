@@ -61,6 +61,19 @@
 
 ## いちばん先に —— **サブを立てる。中身は判断しない**（2026-08-25 夜に入れ替えた）
 
+> ### **【2026-09-14 20:5x】1周に立てるのは `optimizer` 1体・模型は Fable・本文は `kind: optimizer`**（hourly・Fable が入れた）
+>
+> オーナー原文（09/14 20:22・受け取り帳 `176da533`）: 「**最初の可変設定として、サブ立てるのは今最適化の役やってるやつの分だけにして。
+> そいつはFable5.1のultracodeにして。目標と、立った時まず期限内に目標達成できるか考え、できる以外の判断をしたならやり方が間違ってることを疑え、
+> というのだけ固定で、他の実行は全て自由にさせて**」
+>
+> 機械の側: `next_round.ROLES = ("optimizer",)`・`quota.ROLE_TIER["optimizer"] = "leverage"`（Fable を 100% の 1体 手前まで・
+> `hourly` は `retired` ＝ 立てない）・`docs/spawn_prompt.md` の `kind: optimizer` は「ultracode」＋固定 2つ＋事実だけ。
+> **下の「2種類そろって1周」「GO <役> <役>」は、この行より前の形です**（消さない・GO が印字する役を そのまま立てる）。
+> 親の手は変わりません: `next_round.py --live N` → GO なら `--record optimizer` → commit → push → `kind: optimizer` の prompt を
+> **1字も変えずに** Agent へ（`model:` は GO の印字・`isolation: "worktree"`・`run_in_background: true`）。
+> **覆る条件**: オーナーが役の数か模型を言い直したとき（その言葉が正本）。derivation は `docs/JOURNAL.md` 2026-09-14 20:5x。
+
 オーナー指示（原文）:
 
 > **「2種類の子の代替としてサブを使用。親はサブがやることについて判断しない」**

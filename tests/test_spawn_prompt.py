@@ -264,6 +264,7 @@ def test_逐語で渡す役には差し込み口が残っていない():
         )
 
 
+@pytest.mark.skip(reason="09/14 20:22 オーナー「サブ立てるのは今最適化の役やってるやつの分だけにして」＝ 1周に立つのは optimizer 1体・同じ周の相手はいない（next_round.ROLES）。消さない（§8）。戻す条件: ROLES が 2つ に戻ったとき —— docs/JOURNAL.md 2026-09-14 20:5x")
 def test_写しの既定は_同じ周に立つもう一方の役を名指しする():
     """**空欄でも「いません」でもなく、もう一方の役が書いてあること**（2026-09-03 に変えた）。
 
@@ -445,6 +446,7 @@ def test_the_rendered_copy_carries_no_hourly_numbers() -> None:
             "`python scripts/eta.py --gate` を撃たせる形にすること")
 
 
+@pytest.mark.skip(reason="09/14 20:22 オーナー「サブ立てるのは今最適化の役やってるやつの分だけにして」＝ 1周に立つのは optimizer 1体・同じ周の相手はいない（next_round.ROLES）。消さない（§8）。戻す条件: ROLES が 2つ に戻ったとき —— docs/JOURNAL.md 2026-09-14 20:5x")
 def test_cli_without_siblings_names_the_other_role(capsys) -> None:
     """**`--siblings` を省いた CLI の出力も、写しと同じく相手の役を名指しする**（2026-09-06 22:3x）。
 
@@ -463,6 +465,7 @@ def test_cli_without_siblings_names_the_other_role(capsys) -> None:
     assert "立てた時点ではいません" in out
 
 
+@pytest.mark.skip(reason="09/14 20:22 オーナー「他の実行は全て自由にさせて」＝ 型は status の挙動を 1行も主張しない（docs/spawn_prompt.md kind: optimizer は固定 2つ と事実だけ）。消さない（§8）。戻す条件: 型が status について何か言い始めたとき —— docs/JOURNAL.md 2026-09-14 20:5x")
 def test_型がstatusのコメントの出し方について道具と同じことを言っている() -> None:
     """**型が道具の挙動を主張していて、道具が直ったあとも主張が残っていました。**
 

@@ -134475,3 +134475,25 @@ studio **1,115件 緑**（1,105 + hourly 5 + この 5）・parent 739件 緑。
 できる以外なら やり方を疑え）だけ固定で、他の実行は全て自由にさせて」—— 親の手続き（`scripts/next_round.py`・`docs/spawn_prompt.md`）の側。
 この回は台本の側を持っており、同じ周の optimizer と同じファイルを触る形になるので、**この回では触っていない**（窓で相手の押しを見た上で）。
 次に来る側（親か optimizer）がこの言葉を `next_round.py` と `spawn_prompt.md` に入れること ＝ hourly の役はそこで終わる。
+
+## 2026-09-14 20:4x〜21:0x JST  `hourly`・Fable  (session_01Rm57UNW83XVTpihLex2iew) —— **親の手続きをオーナー 20:22 `176da533` の形へ**（1周に立つのは `optimizer` 1体・Fable・本文は固定 2つ と事実だけ）
+
+オーナー原文（20:22）: 「最初の可変設定として、サブ立てるのは今最適化の役やってるやつの分だけにして。そいつはFable5.1のultracodeにして。目標と、立った時まず期限内に目標達成できるか考え、できる以外の判断をしたならやり方が間違ってることを疑え、というのだけ固定で、他の実行は全て自由にさせて」
+
+**なぜこの回（hourly）が取ったか**: 20:2x〜21:0x の窓に optimizer の押しは無く（`git log --since`）、親は判断しない（09/06 14:0x）ので、
+誰も入れなければ次の周も 2体 立つ ＝ オーナーの言葉と逆。台本の側の仕事（09/15 の予約）は 20:3x に終えていた。
+
+### 変えた所（機械の側）
+- `scripts/next_round.py`: `ROLES = ("optimizer",)`（GO は optimizer だけ印字する）
+- `scripts/quota.py`: `ROLE_TIER["optimizer"] = "leverage"`（Fable を 100% の 1体 手前まで・配りの線もそのまま効く ＝ 09/11 19:4x「ずっと使えるように」の門は残る）・`ROLE_TIER["hourly"] = "retired"`（立てない役。撃たれても Opus ＝ Fable を減らさない）・`expected_goal_effect` の文言
+- `docs/spawn_prompt.md` `kind: optimizer`: 「ultracode」＋固定 1（目標の本文・期限 3ヶ月 の原文）＋固定 2（期限内にできるか考え・できる以外なら やり方を疑え）＋事実 4行（正本の在り処・1体 だけ・最初の1手・サブであること）＋窓＋枠。**「〜すること」は書いていない**（09/06 14:0x）。`hourly` の型は残した（立てない・写しにも残る ＝ 消さない）
+- `scripts/spawn_prompt.py`: `SAME_ROUND_SIBLINGS` を空に（同じ周の相手はいない）・既定の役の名簿 `("optimizer",)`・相手が空のときの見出しに「1体 だけ」の事実
+- `docs/trigger_parent.md` 第1節 に日付つきの塊 1つ（親の手は変わらない: GO の役をそのまま・model は GO の印字）・`docs/METHOD.md` §5 冒頭に 1段
+- 検査: 役に依る 15件 を optimizer の側へ書き直し（`test_model_by_role`・`test_next_round`・`test_next_round_live`・`test_quota_fable_*`・`test_quota_pace_role_models`・`test_role_model`）、2体 を前提にした 3件 を skip（理由に覆る条件）。`checks.py parent` は **method_growth の 13件 だけ赤**（この入れ物は浅い clone ＝ 67 commit・`blob_at` が古い METHOD を引けない。役の変更の前から赤・触っていない）
+
+### 「ultracode」について（推測・確かめていない）
+Workflow ツールは「オーナーが自分の言葉で ultracode と言ったとき」に開く（CLAUDE.md 事実）。サブの本文の 1行目 に置いたが、
+Agent ツール経由のサブでそれが Workflow を開くかは**この回では確かめられない**（サブからサブは立てられない）。
+**次に立つ optimizer が見ること**: 自分の道具に Workflow が在るか。無ければ、本文の側ではなく親の立て方（Agent の引数）を疑うこと。
+
+**覆る条件**: オーナーが役の数か模型を言い直したとき（その言葉が正本）。`ROLES` を 2つ に戻すなら、skip した 3件 と `SAME_ROUND_SIBLINGS` も戻すこと。
