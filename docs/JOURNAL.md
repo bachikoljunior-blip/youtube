@@ -134248,3 +134248,67 @@ notes に「直した」まで書いた（(G) の形）。
 
     grep -rn '1080x1920\|1920x1080' studio/     # 寸法
     grep -rn 'ショート\|#Shorts\|60秒\|95秒' studio/   # 尺・棚
+
+
+## 2026-09-14 18:4x〜19:0x JST  `hourly`・Fable  (session_01AHfq4FUVAd5fxDM29yG1Cm) —— **上書きされた token は届き、Google が拒んだ**（GOAL (4-f) 18:5x）
+
+**持ち場（次に出る 1本 ＝ 09/15 `2026-09-15-iryohi-koujo-10man`）**: 台本・絵・輪は 17:2x のまま不変（`loop_sig`・`build_sig` は触っていない）。
+**この回に本文へ手を入れていません。** 入れたのは「出る瞬間」を止めている口の側です。
+
+### 何が起きたか（撃った順・API 0単位）
+
+    18:48  git fetch / merge          Already up to date（親は 18:46 に周を記録して押していた）
+    18:49  python -m studio.cli status  **traceback 40行** —— `google.auth.exceptions.RefreshError:
+                                          invalid_grant: Bad Request`（`yt.channel()` の中の refresh）
+    18:5x  台帳の `channel` の行          17:16 JST まで `UChTXZzwkIJHqyL7L_fEtuqQ`（お金と仕事の教科書）が読めていた
+           data/parent_wakes.jsonl        18:2x「入れ物の立て直しで起きた」・このサブの起動 **18:45**（`CCR_SPAWN_TIMESTAMP_MS`）
+           環境変数の形                   `YT_REFRESH_TOKEN` 103字・空白なし／`YT_CLIENT_ID` 72字／`YT_CLIENT_SECRET` 35字
+                                          （**中身は読んでいません** —— 値を出す・hash する命令は分類器が 2度 止めた。長さだけ）
+
+＝ 09:4x（GOAL (4-f)）の「**次の起動から届く**」は当たり、届いた値が **この `YT_CLIENT_ID`／`YT_CLIENT_SECRET` の口で拒まれた**。
+オーナー 09:3x `efc96bd9`「上書き後のはクッキーストラテジャーというチャンネルの方のトークン」の当のもの。
+
+### 読み（判定はオーナー・こちらは文言を分けただけ）
+
+Google の token の口は `invalid_grant` を 2つ の文言で返す:
+
+    `Bad Request`                          refresh token が **その client_id/secret の物ではない**（別の OAuth クライアント／
+                                           別の GCP プロジェクトで取った）か、値の形が崩れている
+    `Token has been expired or revoked.`   同じクライアントの token が失効（取り消し・テスト中アプリの 7日）
+
+今回は前者。値の形は崩れていない（103字 ＝ 普通の長さ）ので、**残るのは「クッキーストラテジャーの token を、別のクライアントで取った」**。
+＝ その token を生かすには、それを取ったクライアントの id/secret も一緒に要る。**そして、いまの口には お金と仕事の教科書 の token がもう無い。**
+
+### (4-f-2) の門が、書いた形と別の形で引かれた
+
+09:4x は「出た周の口が『お金と仕事の教科書』を**見せなくなっていたら**」と書いた ＝ **別のチャンネルが見える**形を想定していた。
+実物は**何も見えない**（口が拒まれる）。`channel_switch_line`（09:4x に入れた名指し）は `yt.channel()` の返りを比べるので、
+**返りが無い周は 1度も鳴らない** ＝ 09:4x の機械は、この形を構造的に見ません。
+→ `yt.svc()` に口を**先に 1回 開ける**手を入れた: refresh は最初の API 呼びが必ず撃つ物なので、ここで撃っても回数は増えない（token の口は日枠の外）。
+拒まれたら traceback ではなく **3行**（何が拒まれたか・なぜ・置く物 3つ）で `SystemExit`。23か所 の呼び手がそれぞれ 40行 出す形をやめた。
+`yt.token_rejected_words`・検査 `tests/test_studio_token_rejected.py` 5件（陽性対照: try/except を外すと `RefreshError` のまま抜ける・
+`expired or revoked` の枝を外すと失効の検査が落ちる）。**止めるのは `svc()` の 1か所**（呼ぶ側で塞がない ＝ §8 の「守りは書く側に」と同じ向き）。
+
+### 訊き（1度だけ・(4-f-2) の「実測を持った 1度目」）—— `data/owner_ask.jsonl` `second_channel_env_name`
+
+    (1) お金と仕事の教科書 の token を `YT_REFRESH_TOKEN` に戻す   ← 台帳 9本・コメント・**09/15 10:00 の予約**はこの口
+    (2) クッキーストラテジャー の token は `YT_REFRESH_TOKEN_2` に      ← 口が 2つ になれば道具は名で選べる（こちらの手・0単位）
+    (3) それを取ったクライアントが別なら `YT_CLIENT_ID_2`／`YT_CLIENT_SECRET_2` も   ← `Bad Request` はこの組が合っていない印
+
+**2つ目の口を道具に足すのは、名が来てから**（名を先に決めて空の口を作ると、09:4x の「置く名を決めて置いてください」の 3度目になる）。
+
+### 09/15 の本への効き（申し送り・§18「いまの状態」に 1段）
+
+口が戻らなければ **09/15 10:00 の予約は撃てない**（§4 (4) の「20分 以上あとの 00分」も同じ口）。**出さない日を作る分かれ目はこの 1つ**。
+当日の回は `status` の 1行目 で 3つ に分かれる: 3行 が出る（口は戻っていない・待つ）／`channel_switch_line` がクッキーストラテジャー（口は在るが向きが違う・**その口で出さない** (4-f-5)）／
+お金と仕事の教科書（`build` → `schedule --at 10:00`・§18 申し送り (1)）。
+
+### 触らなかったもの・撃たなかったもの
+
+`measure`／`comments`／`trend` の API 側（口が無い）・`build`・`--replace`・台本。`create_trigger` で環境「一括」に立てる手は 09:4x に 2度 止まっており撃っていない。
+optimizer の 12時間 の窓: `studio/cli.py`・`critic.py`・`script.py`・`trend.py`・`docs/METHOD.md` §7 —— この回が触ったのは `studio/yt.py`（窓に無い）と
+§18／§7「いまの数」の 1行 ずつ・GOAL (4-f)・`data/owner_ask.jsonl`。相手のこの周の押しは 18:5x の 2回目 の窓にも 0件。
+
+### 覆る条件（GOAL (4-f-4)〜(4-f-7) と同じ・ここには写さない）
+
+derivation はこの節。決めは `docs/GOAL.md` (4-f) 18:5x。3周 続けて 3行 のままなら (4-f-6)（親の【枠】の段へ・周の速さを落とす側）。
