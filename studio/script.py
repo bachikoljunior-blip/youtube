@@ -66,15 +66,24 @@ LONG_MIN_SECONDS = 240.0             # 4分（(4-g) 1。**ショートには下�
 class Form:
     """形ごとの門。**数を 2度 書かないこと** —— 字数の代理は秒数から引きます。"""
 
-    __slots__ = ("name", "max_seconds", "min_seconds", "segments", "hashtag", "size")
+    __slots__ = ("name", "max_seconds", "min_seconds", "segments", "hashtag", "size", "words")
 
-    def __init__(self, name, max_seconds, min_seconds, segments, hashtag, size):
+    def __init__(self, name, max_seconds, min_seconds, segments, hashtag, size, words):
         self.name = name
         self.max_seconds = max_seconds
         self.min_seconds = min_seconds
         self.segments = segments          # コマ数の (下, 上)
         self.hashtag = hashtag            # title に要る札（"" ＝ 要らない・**長尺は #Shorts を禁じます**）
         self.size = size                  # 画面の (W, H)。`slides` の幾何と同じ数（検査で挟む）
+        # **外の模型に渡す本の形の言い方**（`critic` の 3つ の問いが読む・2026-09-14 17:5x に足した）。
+        # それまで `critic` は "60秒のショート動画"・"60〜90秒 のショート"・"1本のショート動画" を
+        # **字で**持っており、**長尺の台本を渡しても「これは 60〜90秒 のショートです」と言っていました**
+        # ＝ 判じる側が 10分 の本を 90秒 の本として読む（**赤は出ません**）。
+        # `lead` 問いの1行目の名指し／`span` 尺の言い方／`kind` 本の呼び名。
+        # **`short` の字は 1字も変えていません**（検査の陰性対照が literal と挟む）。
+        # **判定の文そのものは足しません** —— 「全部を説明しないこと自体は欠陥ではない」が
+        # 長尺でも正しいかは `hourly` の判定（§5・GOAL (4-g) 1「同じ書き方・同じ critique」）。
+        self.words = words
 
     @property
     def chars_proxy(self) -> int:
@@ -83,8 +92,10 @@ class Form:
         return int(MAX_TOTAL_CHARS * self.max_seconds / SHORT_MAX_SECONDS)
 
 
-SHORT = Form("short", SHORT_MAX_SECONDS, 0.0, (5, 16), "#Shorts", (1080, 1920))
-LONG = Form("long", LONG_MAX_SECONDS, LONG_MIN_SECONDS, (20, 90), "", (1920, 1080))
+SHORT = Form("short", SHORT_MAX_SECONDS, 0.0, (5, 16), "#Shorts", (1080, 1920),
+             {"lead": "60秒のショート動画", "span": "60〜90秒", "kind": "ショート"})
+LONG = Form("long", LONG_MAX_SECONDS, LONG_MIN_SECONDS, (20, 90), "", (1920, 1080),
+            {"lead": "4〜10分の解説動画", "span": "4〜10分", "kind": "長尺"})
 FORMS = {f.name: f for f in (SHORT, LONG)}
 
 
