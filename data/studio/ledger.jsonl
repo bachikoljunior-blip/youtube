@@ -5588,3 +5588,7 @@
 {"views": 2, "likes": 0, "comments": 0, "age_h": 106.1, "title": "夫が亡くなると妻の年金はいくら減るか 遺族厚生年金は4分の3 #Shorts", "n_values": 1, "at": "2026-09-14T20:07:42+09:00", "id": "2YZ_4FXC-XI", "event": "measured"}
 {"views": 966, "likes": 5, "comments": 0, "age_h": 130.1, "title": "配偶者が年下だと年金が年42万3700円ふえる 加給年金 #Shorts", "n_values": 1, "at": "2026-09-14T20:07:42+09:00", "id": "gv1u7n_pCAQ", "event": "measured"}
 {"views": 719, "likes": 4, "comments": 4, "age_h": 154.1, "title": "年金を60歳からもらうと24%減る 80歳10か月より長生きなら損 #Short", "n_values": 1, "at": "2026-09-14T20:07:42+09:00", "id": "lQHX9LJ80Sg", "event": "measured"}
+{"subs": 28, "views": 88568, "videos": 273, "at": "2026-09-14T20:21:46+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"seconds": 90.3, "image": true, "chars": 494, "scenes": [7.0, 12.4, 6.3, 9.5, 3.4, 7.0, 7.2, 8.0, 7.6, 4.5, 5.8, 9.0, 2.9], "sig": "1:d14bf17f6dbe", "at": "2026-09-14T20:27:05+09:00", "id": "2026-09-15-iryohi-koujo-10man", "event": "built"}
+{"video_id": "Pq8PgYUuX8s", "publish_at": "2026-09-15T10:00+09:00", "replaced": null, "title": "医療費が1年で10万円をこえたら 30万円はらい5万円もどった人は税金が2万2500円安くなる #Shorts", "at": "2026-09-14T20:27:44+09:00", "id": "2026-09-15-iryohi-koujo-10man", "event": "scheduled"}
+{"video_id": "Pq8PgYUuX8s", "fields": "tags", "left": null, "units": 101, "note": "1回目の update_meta は insert 直後に 403 forbidden（一過性）・約2分後の 2回目で入った（hourly 20:3x）", "at": "2026-09-14T20:29:19+09:00", "id": "2026-09-15-iryohi-koujo-10man", "event": "meta_repaired"}
