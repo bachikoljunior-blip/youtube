@@ -368,6 +368,45 @@ derivation は `docs/JOURNAL.md` 2026-09-14 09:4x。
  (4-g-5) 2つ目のチャンネルの口が先に届いたら、**1 の 3本 はそちらで出してよい**（絞られた口を避けられる ＝ (4-g-1) を先に消せる）。
 derivation は `docs/JOURNAL.md` 2026-09-14 13:4x。
 
+### (4-h) 口が死にました（2026-09-14 19:2x・optimizer・Opus）—— **上書きで届いた `YT_REFRESH_TOKEN` を Google が拒みます**
+
+**(4-f) の「届くのは次の起動から」は届きました。届いた値が拒まれています。**
+
+    17:16 JST まで   同じ変数名で `channel` / `measured` が通っていた（台帳・「お金と仕事の教科書」）
+    18:2x           親のコンテナが立ち直った（`data/parent_wakes.jsonl`）
+    18:45 起動のサブ  `invalid_grant: Bad Request` —— **`status` / `measure` / `schedule` /
+                    `comments` / `analytics` / `reporting` が全部 撃てません**
+    同じ周に撃った対照  **Google TTS の鍵は 200 で通ります** ＝ 網でも串でもなく、**この口だけ**が死んでいます
+
+**`invalid_grant` の 2つ の文言のうち `Bad Request` の側**です ＝ 失効（`Token has been expired or revoked.`）ではなく
+**その token が いまの `YT_CLIENT_ID` / `YT_CLIENT_SECRET` の物ではない側**（別の OAuth クライアントで取った token）。
+読み分けは `yt.token_rejected_words`・残る口 2つ（`analytics` / `reporting` は自分の `svc()` を持つ）は `cli.main()` の門。
+
+**値段**: **09/15 10:00 の予約ができません** ＝ **1日1本 がそこで切れます**（台本 §18 は 494字 で閉じており、
+`build`（TTS）まではこの口の外なので回せます —— **出せないだけ**です）。台帳の 9本 も、きょうの数字も読めません。
+
+> **オーナーへ（4つ目）: `YT_REFRESH_TOKEN` を 1つ 直してください。** どれか 1つ で戻ります:
+> **(1)** 「お金と仕事の教科書」の token を `YT_REFRESH_TOKEN` に戻す（台帳の 9本 と 09/15 の本はこの口）。
+> **(2)** クッキーストラテジャーの token は**別の名 `YT_REFRESH_TOKEN_2`** に置く
+> （それを取ったクライアントが別なら `YT_CLIENT_ID_2` / `YT_CLIENT_SECRET_2` も）。
+> **(3)** いまの `YT_CLIENT_ID` / `YT_CLIENT_SECRET` で取り直す（`docs/SETUP.md` STEP 4・ブラウザだけ・5分）。
+> **置き替えたら、親のコンテナを 1度 立て直してください** —— 走っているセッションには届きません（09/14 の実測）。
+
+**訊きは `data/owner_ask.jsonl` の `yt_token_dead`**（`python scripts/owner_ask.py` が毎周 印字する ＝ ここへ周の数を写さない）。
+**これで訊きは 4件目 ＝ (4-c)（3件 になったら `docs/FOR_OWNER.md` へ移す）は引かれています** ——
+ただし**返事待ちは 1件**で、残る 3件 は返事ずみです。**移すのは「返事待ちが 3件 並んだ」回**
+＝ `owner_ask.py` の覆る条件 (2) の分母を、この回に「返事待ち」の側で読みました（`scripts/owner_ask.py` の註）。
+
+**覆る条件**:
+ (4-h-1) 口が戻ったら、**戻った周が `measure` を撃って `channel` の行を見ること** ——
+        `cli.channel_switch_line` が「チャンネルが変わりました」と言ったら、そこから先の台帳は別の口の物です（(4-f-2)）。
+ (4-h-2) **3周 返事が無かったら**（`owner_ask.py` の門）、`build` まで回した 09/15 の本を持ったまま待つ側ではなく、
+        **出せない日が何日 続いたかをこの節に 1行 で数えること**（期限 2026-12-13 の分母は日数です）。
+ (4-h-3) オーナーが「2つ目のチャンネルで出せ」と言ったら、その言葉が正本（口の名も含めて ＝ (4-f-3)）。
+ (4-h-4) `invalid_grant` 以外（`invalid_client`）が出たら、拒んでいるのは token ではなく `YT_CLIENT_SECRET` の側
+        ＝ そのときは上の (1)(2)(3) ではなく、secret の側を訊くこと。
+derivation は `docs/JOURNAL.md` 2026-09-14 19:2x。
+
 ## 何かを決める前に、毎回この5つに答えること
 
 **覚えているだけでは足りません。実際に適用したか、毎回確かめてください。**

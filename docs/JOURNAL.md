@@ -134248,3 +134248,69 @@ notes に「直した」まで書いた（(G) の形）。
 
     grep -rn '1080x1920\|1920x1080' studio/     # 寸法
     grep -rn 'ショート\|#Shorts\|60秒\|95秒' studio/   # 尺・棚
+## 2026-09-14 18:5x〜19:2x JST — optimizer（Opus）: **口（`YT_REFRESH_TOKEN`）が死にました** —— 8回目の二重・残る口 2つ・訊き 1件
+
+session: https://claude.ai/code/session_01AHfq4FUVAd5fxDM29yG1Cm
+
+### 1. 何が起きたか（数）
+
+この周の 2手目 `python -m studio.cli status` が **`RefreshError: ('invalid_grant: Bad Request', ...)` のトレースバック**で落ちました。
+
+    17:15:54 / 17:16:25 JST  台帳に `channel`（UChTXZ…・登録 28・総再生 88,568）と `measured` 9本
+                             ＝ **同じ変数名で通っていた**
+    18:2x                   親のコンテナが立ち直った（`data/parent_wakes.jsonl` 07b5a768）
+    18:45:11                このサブが起動（`CCR_SPAWN_TIMESTAMP_MS`）→ **拒まれる**
+    19:0x の対照            Google TTS に `ja-JP-Neural2-D` を 1回 撃って **200**
+                            ＝ 網でも串（proxy）でもなく、**この口だけ**が死んでいます
+    形の側                  `YT_REFRESH_TOKEN` は 103字・`1//` で始まり・空白 0・`[A-Za-z0-9_./-]` だけ
+                            `YT_CLIENT_ID` は `.apps.googleusercontent.com`・`YT_CLIENT_SECRET` は `GOCSPX`
+                            ＝ **形は崩れていません**（値は 1字も印字していません）
+
+**＝ (4-f) の「届くのは次の起動から」は届きました。届いた値が拒まれています**
+（オーナー 09:3x `efc96bd9`「上書き後のはクッキーストラテジャーというチャンネルの方のトークン」）。
+`invalid_grant` の 2つ の文言のうち **`Bad Request` の側**（失効なら `Token has been expired or revoked.`）
+＝ **その token は いまの `YT_CLIENT_ID` の物ではない**側です。
+
+### 2. 8回目の二重（§5 の取り分）—— **窓が拾いました**
+
+**同じ周の `hourly` が 18:5x に `studio/yt.py` で同じ欠陥を直していました**（`26d998f6`・`yt.token_rejected_words`）。
+こちらは 19:0x に `studio/cli.py` で `auth_line` を書いており、**文言の読み分けが 2つ**になりました。
+**開始時の窓（18:5x）には出ておらず、書き始める直前の 2回目の窓（19:0x）で見えました** ——
+§5 の「窓は 2回 撃つ」が、**この回に実物で効いた 1例目**です（前の 7回 は 2回とも空でした）。
+
+**畳み方**: **文言は `hourly` の `yt.token_rejected_words` が正本**（`svc()` で止めるほうが上流 ＝ 23か所 の呼び手を 1か所 で塞ぐ）。
+こちらは読み分けを捨て、`cli.token_rejected`（引くだけ）＋ `main()` の門 に畳みました。
+**捨てていない側**（この回の値打ち）: **`studio/analytics.py` と `studio/reporting.py` は自分の `svc()` で `Credentials` を組み、
+`yt.svc()` を通りません** —— 撃って確かめました（2つ とも `SystemExit` ではなく **生の `RefreshError`**）。
+＝ 18:5x の直しのあとも `cli analytics` / `cli reporting` は 40行 の traceback で落ちる側でした。
+**`yt.py` には口を足していません**（そこはこの周の `hourly` の持ち場 ＝ §5 11:0x の取り分）。
+
+検査 `tests/test_studio_auth_line.py` **5件**・**陽性対照 3つ を撃って落とした**（`raise` を外す／`token_rejected` を常に真／`print` を消す）。
+studio **1,115件 緑**（1,105 + hourly 5 + この 5）・parent 739件 緑。
+
+### 3. 値段 —— **09/15 10:00 の予約ができません**
+
+`status` / `measure` / `schedule` / `comments` / `analytics` / `reporting` が全部 この口です。
+**台本（§18・494字・輪 15周 閉じ）は在り、`build`（TTS）はこの口の外なので回せます** ＝ **出せないだけ**です。
+**1日1本 は 09/15 に切れます**（口が戻らなければ）。この回の `measure` も撃てていないので、
+§7「いまの数」の再生・いいね・チャンネルは **17:2x の測りのまま**です（`trend` は台帳だけなので読めました ＝ 覆る条件は 0件 引かれていません）。
+
+### 4. 訊き（`docs/GOAL.md` (4-h)・`data/owner_ask.jsonl` の `yt_token_dead`）
+
+**(4-f-2) の「実測を持った 1度目」がこれです。** 置く物は 3つ のうちどれか 1つ:
+(1) 元の token を `YT_REFRESH_TOKEN` に戻す・(2) 新しいほうを `YT_REFRESH_TOKEN_2` に置く
+（クライアントが別なら `YT_CLIENT_ID_2` / `YT_CLIENT_SECRET_2` も）・(3) いまの id/secret で取り直す（`docs/SETUP.md` STEP 4）。
+**替えたら親のコンテナを 1度 立て直すこと** —— 走っているセッションには届かない（この日の実測 ＝ 17:16 の周はまだ古い値で通っていた）。
+
+### 型
+
+**「届いた」と「使える」は別の門です。** (4-f) は *届く* かだけを見張る印字（`channel_switch_line`）を置き、
+**届いた値が拒まれる道に印字がありませんでした** ——`channel_switch_line` は `yt.channel()` が**返った後**に呼ばれるので、
+**口が開かない周には 1度も走りません**。
+＝ **「替わったら名指しする」印字を置く回は、「替わって開かなくなったら」の側も同じ回に置くこと**（§5 教訓の形 7つ目の、口の版）。
+
+### 触ったもの
+
+`studio/cli.py`（`token_rejected` ＋ `main()` の門）・`tests/test_studio_auth_line.py`・
+`docs/GOAL.md`（(4-h) ＋ 覆る条件 4つ）・`data/owner_ask.jsonl`（`yt_token_dead`）・`docs/METHOD.md` §7「いまの数」。
+**台本・build・予約は不変**（触れる口がありません）。
