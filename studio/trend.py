@@ -2442,6 +2442,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     out.append(rev7_line(rows))
     out.append(rev_deadline_line(rows))
     out.append(sub_rate_line(rows))
+    out.append(cta_line(rows))
     #  そのすぐ隣に「上がった分の中身」を出す（`rev7_line` の「引かれました」は連だけを見るので、
     #  この行が無いと分子の中身を見ないまま §1 を開けます・`trend.rev7_source_line` の註）。
     out.append(rev7_source_line(rows))
@@ -2948,6 +2949,96 @@ def sub_rate_cohorts(rows: list[dict]) -> dict:
             # `avg_percent` が 0 の本は尺が出ないので、**数えられた本だけ**が分母です。
             "long_n": sum(1 for vid, sec in curve_seconds(rows).items()
                           if vid in latest and sec > SHORTS_MAX_SECONDS)}
+
+
+CTA_MIN_VIEWS = SUB_RATE_MIN_VIEWS
+
+
+def cta_cohorts(rows: list[dict], scripts=None) -> dict:
+    """**出口の一手（登録の言葉）が在る本と、無い本で登録率を分ける**（台帳＋台本だけ・**API 0単位**）。
+
+    2026-09-15 02:xx（optimizer・Fable）に足した。**なぜ**: 同じ回に撃った 3つ の数が、
+    縛っている腕（登録）を 1か所 に寄せました ——
+      (1) `analytics.traffic('2026-09-01','2026-09-14')`: 7,036再生 のうち **YT_CHANNEL は 6**（0.085%）
+      (2) `analytics.curve` の最後の目盛り: **15〜43%**（4本）＝ 1日 約225人 が最後まで見ている
+      (3) 台本 12本・公開ずみ 253本 に「登録」の語が **0件**
+    ＝ **最後まで見た人は居るのに、一手を 1度も出していなかった。** 要る変換は
+    10.9人/日 ÷ 225人/日 ＝ **4.8%**（`rev_deadline` の `subs_need_per_day` から引く）。
+
+    **これは A/B です** —— `has_cta` の在る本と無い本を同じ列で比べます。
+    在る側が 3本 たまるまで、この行は「まだ数えられません」と言います（`CTA_RUN_NEED`）。
+
+    返り: `{"with", "without", "need", "ready"}`。側は `{"n", "views", "subs", "rate"}`。
+
+    **覆る条件**:
+     (1) 在る側が **7本**（`shape_run` と同じ門）で、無い側の率の **2倍** に届かないなら、
+         一手の**文言**ではなく置き場（最後のコマ）か、配りの側（`docs/GOAL.md` (4-g-1)）。
+     (2) 在る側の**最後まで見た割合**（`curve`）が、無い側の中央を **5ポイント** 下回ったら、
+         一手が尺を食っている ＝ 置き場を前へ動かすか、`sub` だけにすること。
+     (3) オーナーが文言・置き場に言葉を出したら、その言葉が正本。
+    """
+    from .script import SCRIPTS, Script, has_cta
+    from pathlib import Path as _P
+    base = _P(scripts) if scripts is not None else SCRIPTS
+    vids = _script_video_ids(rows)
+    latest: dict[str, dict] = {}
+    for r in sorted((r for r in rows if r.get("event") == "analytics_video"),
+                    key=lambda r: r["at"]):
+        latest[r["id"]] = r
+    sides: dict[bool, list[dict]] = {True: [], False: []}
+    for p in sorted(base.glob("*.json")):
+        vid = vids.get(p.stem)
+        if not vid or vid not in latest:
+            continue
+        # **`load()` を使わないこと** —— あちらは `script.SCRIPTS` を見るので、
+        # `scripts=` を渡した検査が黙って 0本 を返します（この口を足した回に踏んだ）。
+        try:
+            sc = Script.model_validate_json(p.read_text())
+        except Exception:
+            continue
+        if not sc.segments:
+            continue
+        r = latest[vid]
+        if (r.get("views") or 0) < CTA_MIN_VIEWS:
+            continue
+        sides[has_cta(sc.segments[-1])].append(r)
+
+    def _side(got: list[dict]) -> dict:
+        v = sum(int(x.get("views") or 0) for x in got)
+        sb = sum(int(x.get("subs_gained") or 0) for x in got)
+        return {"n": len(got), "views": v, "subs": sb, "rate": (sb / v) if v else None}
+
+    w, wo = _side(sides[True]), _side(sides[False])
+    d = rev_deadline(rows)
+    return {"with": w, "without": wo, "need": d.get("sub_rate_need_b"),
+            "need_per_day": d.get("subs_need_per_day"),
+            "ready": w["n"] >= CTA_RUN_NEED}
+
+
+CTA_RUN_NEED = 3
+
+
+def cta_line(rows: list[dict], scripts=None) -> str:
+    """`cta_cohorts` を1行に（`trend` が毎周 印字する ＝ **METHOD へ写さないこと**）。"""
+    c = cta_cohorts(rows, scripts)
+    w, wo = c["with"], c["without"]
+    out = ("**出口の一手（登録の言葉）の A/B**（`trend.cta_cohorts`・台帳＋台本・**API 0単位**）: "
+           f"在る **{w['n']}本**・再生 {w['views']:,}・登録 +{w['subs']}"
+           + (f" ＝ **{w['rate'] * 100:.3f}%**" if w["rate"] is not None else " ＝ 率は測れません")
+           + f"／無い **{wo['n']}本**・再生 {wo['views']:,}・登録 +{wo['subs']}"
+           + (f" ＝ **{wo['rate'] * 100:.3f}%**" if wo["rate"] is not None else " ＝ 率は測れません")
+           + ". ")
+    if not c["ready"]:
+        out += (f"**在る側が {CTA_RUN_NEED}本 たまるまで、この行から向きを読まないこと**"
+                f"（いま {w['n']}本）。")
+    elif w["rate"] is not None and wo["rate"]:
+        out += f"**倍率 {w['rate'] / wo['rate']:.1f}倍**（覆る条件 (1) は 2倍・7本）。"
+    if c["need"]:
+        out += (f"**扉(b) が要る率 {c['need'] * 100:.2f}%**"
+                + (f"・要る登録 {c['need_per_day']:.1f}人/日" if c.get("need_per_day") else "")
+                + "。**一手は 2026-09-15 に初めて入りました**（それまで 253本 とも 0件 ＝ "
+                  "`script.CTA_FROM` の註・`docs/JOURNAL.md` 2026-09-15 02:xx）。")
+    return out
 
 
 def sub_rate_line(rows: list[dict]) -> str:

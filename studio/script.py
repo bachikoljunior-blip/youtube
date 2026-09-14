@@ -623,6 +623,11 @@ class Script(BaseModel):
                 out.append(f"yomi の語「{k}」に仮名が混ざっている（TTS が拒むので送られない ＝ 固定されていない）。本文をひらがなに")
         if not self.takeaway:
             out.append("takeaway が空")
+        # **出口の一手**（上の CTA_FROM の註）。公開ずみの本は遡って赤くしない。
+        if self.date >= CTA_FROM and self.segments and not has_cta(self.segments[-1]):
+            out.append("最後のコマに登録の一手が無い（`say` か `sub` に「登録」＝ "
+                       "`script.default_cta()` が型。**文言は書き手が決める** ＝ "
+                       "縛っているのは再生ではなく登録・`docs/GOAL.md` (4-g)）")
         return out
 
     def warnings(self) -> list[str]:
@@ -665,6 +670,45 @@ class Script(BaseModel):
         # **notes の引き写しが古い**（`stale_note_quotes` の註）。止めない
         out += stale_note_quotes(self.notes, [x.say for x in self.segments])
         return out
+
+
+# ---- 出口の一手（CTA）。**2026-09-15 02:xx・optimizer・Fable が足した** -----------------------
+# **なぜ**（この回に撃った数。推測ではありません）:
+#   `analytics.traffic('2026-09-01','2026-09-14')` = SHORTS 6,406 / YT_SEARCH 301 / SUBSCRIBER 219 /
+#   **YT_CHANNEL 6**（7,036再生 のうち **0.085%** しかチャンネルのページへ来ていない）。
+#   `analytics.curve` の最後の目盛り（= 最後まで見た割合）は 15〜43%（4本）＝ **1日 約225人 が最後まで見ている**。
+#   それでも登録は **0.039%**（`trend.sub_rate_cohorts`）で、扉(b) が要るのは **1.62%**。
+#   そして **12本 の台本すべて、253本 の公開ずみすべてに「登録」の語が 1度も出ていませんでした**
+#   （この回に grep した ＝ 0件）。**＝ 縛っている腕（登録）に、機械が 1つも口を持っていなかった。**
+#   要る変換は 10.9人/日 ÷ 225人/日 ＝ **最後まで見た人の 4.8%**。42倍 の奇跡ではなく、
+#   **1度も引いていない腕**です（`docs/GOAL.md` (4-g)・`docs/JOURNAL.md` 2026-09-15 02:xx）。
+#
+# **門の形**: 最後のコマの `say` か `sub` に「登録」が在ること。**文言は書き手が決めます**
+# （型を1つに固めると、それ自体が「汎用テンプレート」の側 ＝ `CLAUDE.md` の根幹）。
+# **日付で切っています** —— 公開ずみの本は もう直せないので、遡って赤くしない。
+CTA_FROM = "2026-09-15"
+CTA_RE = re.compile(r"登録")
+
+
+def has_cta(seg) -> bool:
+    """最後のコマが、登録の一手を持っているか（`say` か `sub`）。"""
+    return bool(CTA_RE.search(seg.say) or CTA_RE.search(seg.sub))
+
+
+def default_cta(next_topic: str = "") -> "Segment":
+    """書き出しの型（**そのまま使わなくてよい**。`say` は 70字 まで）。
+
+    理由づけを先に置き、頼みを後ろに置く形 —— 「毎日1本ずつ出している」は事実
+    （`data/uploaded.jsonl` 09/06〜09/15 は毎日）。**事実でなくなったら、この文を変えること。**
+    """
+    nxt = f"あすは{next_topic}です。" if next_topic else ""
+    return Segment(
+        say=f"年金と税金の、こういう計算を毎日1本ずつ出しています。{nxt}あすの分は、登録しておくととどきます。",
+        show="毎日1本\n年金と税金の計算",
+        sub="あすの分は登録しておくととどきます",
+        tag="",
+        board=[],
+    )
 
 
 def long_sentences(say: str) -> list[str]:

@@ -5685,3 +5685,11 @@
 {"views_live": 960, "views_ledger": 957, "over": 3, "age_h": 15.1, "src": "status", "at": "2026-09-15T01:08:01+09:00", "id": "-bSkulqONhI", "event": "views_over"}
 {"views_live": 146, "views_ledger": 139, "over": 7, "age_h": 39.1, "src": "status", "at": "2026-09-15T01:08:01+09:00", "id": "Edmce94ZVKs", "event": "views_over"}
 {"views_live": 825, "views_ledger": 822, "over": 3, "age_h": 63.1, "src": "status", "at": "2026-09-15T01:08:01+09:00", "id": "4l3DDCLIRxg", "event": "views_over"}
+{"subs": 28, "views": 88568, "videos": 273, "at": "2026-09-15T01:51:57+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-15T01:51:57+09:00", "id": "Pq8PgYUuX8s", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-15T01:51:57+09:00", "id": "lRGRWS0qOV8", "event": "ready_checked"}
+{"views_live": 960, "views_ledger": 957, "over": 3, "age_h": 15.9, "src": "status", "at": "2026-09-15T01:51:57+09:00", "id": "-bSkulqONhI", "event": "views_over"}
+{"views_live": 146, "views_ledger": 139, "over": 7, "age_h": 39.9, "src": "status", "at": "2026-09-15T01:51:57+09:00", "id": "Edmce94ZVKs", "event": "views_over"}
+{"views_live": 825, "views_ledger": 822, "over": 3, "age_h": 63.9, "src": "status", "at": "2026-09-15T01:51:57+09:00", "id": "4l3DDCLIRxg", "event": "views_over"}
+{"views_live": 1035, "views_ledger": 1034, "over": 1, "age_h": 87.9, "src": "status", "at": "2026-09-15T01:51:57+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
+{"seconds": 90.4, "image": true, "chars": 494, "scenes": [7.0, 12.4, 5.8, 8.9, 3.4, 7.0, 7.2, 8.0, 7.6, 4.5, 5.8, 6.8, 6.2], "sig": "1:c7f31dad2ddf", "at": "2026-09-15T02:00:21+09:00", "id": "2026-09-15-iryohi-koujo-10man", "event": "built"}
