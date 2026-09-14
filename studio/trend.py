@@ -19,12 +19,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import re
 import statistics
 import json
 from pathlib import Path
 
-from .common import JST, ROOT, ledger_rows, now_jst
+from .common import DATA, JST, ROOT, ledger_rows, now_jst
 
 #: **「判定は立ったサブ（いま 1体）」と印字している 38行 は、2026-09-14 21:3x まで
 #: 「判定は `hourly`」でした**（optimizer・Opus が一斉に置き換えた）。オーナー 20:22 `176da533`
@@ -2443,6 +2444,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     out.append(rev_deadline_line(rows))
     out.append(sub_rate_line(rows))
     out.append(cta_line(rows))
+    # **場合分けの計画の、いま生きている枝**（GOAL (4-i)・オーナー 09/15 06:26 `75061584`）。
+    #  門は `plan_branch` の 1か所 —— GOAL の字は写しで、数はここが持つ。
+    out.append(plan_branch_line(rows, now=now))
     #  そのすぐ隣に「上がった分の中身」を出す（`rev7_line` の「引かれました」は連だけを見るので、
     #  この行が無いと分子の中身を見ないまま §1 を開けます・`trend.rev7_source_line` の註）。
     out.append(rev7_source_line(rows))
@@ -7192,3 +7196,156 @@ def report_vs_ledger_line(rows: list[dict], rep_rows: list[dict] | None = None) 
     else:
         chl = "  **(m) を外から当てる重なりが在りません**（`report_vs_ledger` の `channel`）"
     return "\n".join(x for x in (head, body, sixline, chl, dueline) if x)
+
+
+# ---------------------------------------------------------------------------
+# 場合分けの計画（GOAL (4-i)）—— **長尺 3本 の判定のあと、どの枝に居るか**を機械が言う
+# ---------------------------------------------------------------------------
+
+#: GOAL (4-g-1) の門: 長尺 3本 の 48h の中位が、この口の長尺の上端（旧作り 134本 の実測 1〜25回）を越えるか。
+#: **門は 1か所** —— GOAL (4-g)(4-i) の「25回」「100時間」「3本」はこの 3つ の写しです。
+LONG_GATE_48H_VIEWS = 25
+#: GOAL (4-g-2) の門: 3本 のうち 1本 でも視聴時間 100時間（4,000時間 の 1/40）に届くか。
+LONG_GATE_HOURS_PER_VIDEO = 100.0
+#: 判定に要る本数（GOAL (4-g) 1）。
+LONG_JUDGE_N = 3
+#: 2つ目のチャンネル（クッキーストラテジャー）の口の名（GOAL (4-f) (2)・`studio/yt.py` 冒頭）。
+SECOND_CHANNEL_ENV = "YT_REFRESH_TOKEN_2"
+#: 審査に見ておく日数（**前提・未測** —— `rev_deadline` の覆る条件 (3)。測れたら置き換える）。
+REVIEW_MARGIN_DAYS = 30
+SCRIPTS_DIR = DATA / "scripts"
+
+
+def long_videos(rows: list[dict], scripts_dir: Path | None = None) -> list[dict]:
+    """**長尺（台本 `form: long`）で、いま生きている video_id**（台本 id ごとに最後の `scheduled` 行）。
+
+    尺（`durations`）ではなく台本の `form` で引くのは、判定の対象が「新しい作りの長尺 3本」
+    （GOAL (4-g) 1）であって、旧作りの 26分 の本（`fMlY_uzHOMw`）ではないから。
+    `--replace` で差し替えた本は、同じ台本 id の後の行が勝つ（前の video_id は private ＝ 数えない）。
+    """
+    latest: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") == "scheduled" and r.get("id") and r.get("video_id"):
+            latest[r["id"]] = r
+    out = []
+    for sid, r in latest.items():
+        path = (scripts_dir or SCRIPTS_DIR) / f"{sid}.json"
+        if not path.exists():
+            continue
+        try:
+            form = json.loads(path.read_text(encoding="utf-8")).get("form")
+        except ValueError:
+            continue
+        if form == "long":
+            out.append({"id": sid, "video_id": r["video_id"], "publish_at": r.get("publish_at") or ""})
+    return sorted(out, key=lambda x: x["publish_at"])
+
+
+def plan_branch(rows: list[dict], now: dt.datetime | None = None,
+                scripts_dir: Path | None = None, env: dict | None = None) -> dict:
+    """**場合分けの計画の、いま生きている枝**（台帳＋台本＋環境変数の名だけ・**API 0単位**）。
+
+    2026-09-15 06:5x・optimizer・Fable。オーナー 06:26 `75061584`
+    「すぐ結果出ないんだったらその後のプランを場合分けしてプランすることを批判的にみてもそれがいいと思うんだったらそうして」。
+    判定の刻（09/17〜09/19 19:00）に立つ回が、**枝を導き直さずに手を打てる**ように、
+    枝の選びを機械に置く。**枝ごとの手は GOAL (4-i)**（ここは選ぶだけ・手は書かない）。
+
+    枝:
+      ``pre``  判定前（48h に届いた長尺が `LONG_JUDGE_N` 本 未満）
+      ``B``    (4-g-1) 落ち: 48h の中位（**上端**で読む ＝ 落ちを早く鳴らさない）が門以下 → **配りの側**
+      ``A``    (4-g-1) 通り・(4-g-2) 通り → **扉(b) を進める**
+      ``C``    (4-g-1) 通り・(4-g-2) 落ち → **中身（視聴時間）の側**
+      ``A?``   (4-g-1) 通り・視聴時間は analytics がまだ（3日 遅れ）→ A として動き、C は届いたら
+    ``second_channel`` は口（環境変数）が在るかだけ（在っても撃っていない）。
+
+    **覆る条件**: (1) GOAL (4-g-3)（オーナーが尺・形式・本数に言葉を出したら、その言葉が正本）。
+    (2) 門の数を動かすときは、この module の定数 3つ だけ（GOAL の字は写し）。
+    (3) 48h の挟みが閉じていない本（`exact` 偽）が中位を決めているときは、
+        `lo` でも同じ枝になるかを `stable` が言う ＝ 偽なら次の周まで枝を確定しない。
+    """
+    env = os.environ if env is None else env
+    longs = long_videos(rows, scripts_dir)
+    ser = series(rows)
+    hours: dict[str, float] = {}
+    for r in rows:
+        if r.get("event") == "analytics_video" and r.get("id"):
+            hours[r["id"]] = float(r.get("minutes") or 0) / 60
+    per = []
+    for v in longs:
+        pts = ser.get(v["video_id"], [])
+        va = views_at_age(pts, envelope(pts), FEATURE_AGE) if pts else {
+            "reached": False, "lo": None, "hi": None, "exact": False}
+        per.append({**v, **va, "hours": hours.get(v["video_id"])})
+    reached = [p for p in per if p["reached"]]
+    n_reached = len(reached)
+    judged = n_reached >= LONG_JUDGE_N
+    med_hi = med_lo = None
+    if reached:
+        hi = sorted(p["hi"] for p in reached)
+        lo = sorted((p["lo"] if p["lo"] is not None else p["hi"]) for p in reached)
+        med_hi, med_lo = hi[len(hi) // 2], lo[len(lo) // 2]
+    g1 = (med_hi > LONG_GATE_48H_VIEWS) if judged else None
+    stable = (g1 == (med_lo > LONG_GATE_48H_VIEWS)) if judged else None
+    measured_hours = [p["hours"] for p in per if p["hours"] is not None]
+    max_hours = max(measured_hours) if measured_hours else None
+    g2 = (max_hours >= LONG_GATE_HOURS_PER_VIDEO) if measured_hours else None
+    if not judged:
+        branch = "pre"
+    elif not g1:
+        branch = "B"
+    elif g2 is None:
+        branch = "A?"
+    else:
+        branch = "A" if g2 else "C"
+    d = rev_deadline(rows)
+    days_to_gate = max((d["days_left"] or 0) - REVIEW_MARGIN_DAYS, 0)
+    subs_need = d.get("subs_need")
+    return {"branch": branch, "n_long": len(longs), "n_reached": n_reached, "per": per,
+            "med48_hi": med_hi, "med48_lo": med_lo, "g1": g1, "g2": g2, "stable": stable,
+            "max_hours": max_hours,
+            "second_channel": bool(env.get(SECOND_CHANNEL_ENV)),
+            "days_left": d["days_left"], "days_to_gate": days_to_gate,
+            "subs_need": subs_need,
+            "subs_need_per_day_to_gate": (subs_need / days_to_gate)
+                                         if (subs_need is not None and days_to_gate) else None,
+            "sub_rate_need_b": d.get("sub_rate_need_b")}
+
+
+def plan_branch_line(rows: list[dict], now: dt.datetime | None = None,
+                     scripts_dir: Path | None = None, env: dict | None = None) -> str:
+    """`plan_branch` を 1行 にする（`trend` が毎周 印字 ＝ GOAL (4-i) へ数を写さないこと）。"""
+    b = plan_branch(rows, now=now, scripts_dir=scripts_dir, env=env)
+    ch2 = "在る" if b["second_channel"] else "無い"
+    head = (f"**場合分けの枝**（GOAL (4-i)・`trend.plan_branch`・API 0単位）: **{b['branch']}**"
+            f" —— 長尺 {b['n_long']}本 のうち 48h に届いた {b['n_reached']}本"
+            f"（判定は {LONG_JUDGE_N}本）・2つ目の口（`{SECOND_CHANNEL_ENV}`）は **{ch2}**。")
+    bits = []
+    for p in b["per"]:
+        if p["reached"]:
+            v = f"{p['hi']}回" if p["exact"] else f"{p['lo']}〜{p['hi']}回"
+        else:
+            v = f"まだ（下端 {p['lo']}回）" if p["lo"] is not None else "まだ（点なし）"
+        h = f"・{p['hours']:.1f}時間" if p["hours"] is not None else "・時間は未"
+        bits.append(f"`{p['video_id']}` 48h {v}{h}")
+    if bits:
+        head += " " + "／".join(bits) + "。"
+    if b["branch"] == "pre":
+        return head + ("**判定前 ＝ 枝は選ばない。** いまの手は (4-i) の「判定前に用意する物」"
+                       "（どの枝でも要る物だけ）。")
+    g1 = f"48h の中位 **{b['med48_hi']}回**（下端で {b['med48_lo']}回）対 門 {LONG_GATE_48H_VIEWS}回"
+    g2 = (f"視聴時間の最大 **{b['max_hours']:.1f}時間** 対 門 {LONG_GATE_HOURS_PER_VIDEO:.0f}時間"
+          if b["max_hours"] is not None else "視聴時間は analytics 待ち（3日 遅れ）")
+    out = head + f"(4-g-1) {g1} ＝ **{'通り' if b['g1'] else '落ち'}**・(4-g-2) {g2}"
+    if b["g2"] is not None:
+        out += f" ＝ **{'通り' if b['g2'] else '落ち'}**"
+    out += "。"
+    if b["stable"] is False:
+        out += ("**挟みが枝をまたいでいます**（下端で読むと別の枝）＝ この周は枝を確定せず、次の点を待つこと。")
+    if b["subs_need_per_day_to_gate"]:
+        out += (f"門まで **{b['days_to_gate']}日**（期限 {b['days_left']}日 − 審査に見る {REVIEW_MARGIN_DAYS}日・前提）"
+                f"に登録 **{b['subs_need']:,}人** ＝ **{b['subs_need_per_day_to_gate']:.1f}人/日**"
+                + (f"・扉(b) の登録率 {b['sub_rate_need_b'] * 100:.2f}% なら 1日 "
+                   f"**{b['subs_need_per_day_to_gate'] / b['sub_rate_need_b']:,.0f}回** の長尺の再生。"
+                   if b["sub_rate_need_b"] else "。"))
+    out += "**手は GOAL (4-i) のその枝の行**（ここは選ぶだけ）。"
+    return out
