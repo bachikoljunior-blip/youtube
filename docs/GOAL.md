@@ -410,7 +410,7 @@ derivation は `docs/JOURNAL.md` 2026-09-14 18:5x。
  (4-g-4) `optimizer` が型を足さないまま 3周 過ぎたら、足りないのは判定ではなく持ち場 ＝ §5 の表を直すこと。
  (4-g-5) 2つ目のチャンネルの口が先に届いたら、**1 の 3本 はそちらで出してよい**（絞られた口を避けられる ＝ (4-g-1) を先に消せる）。
  **【2026-09-14 23:1x・optimizer・Fable】1 の 1本目 を出しました**（`ljIU8m9DGjM`・09/15 19:00・METHOD §19）。残り 2本。**判定は立ったサブ（いま 1体）**（`hourly` は 20:22 に畳まれた）。
- **【2026-09-15 00:xx・optimizer・Fable】1本目 を差し替え（`9Jid1IcZy8o`・同じ枠・専用サムネ `studio/thumb.py`）・2本目 を書いた（`2026-09-16-kuriage-ushinau-3tsu`・METHOD §20・予約は台帳 `scheduled` で見ること）。**
+ **【2026-09-15 00:xx・optimizer・Fable】1本目 を差し替え（`lRGRWS0qOV8`・同じ枠・専用サムネ `studio/thumb.py`・絵つき）・2本目 を書いた（`2026-09-16-kuriage-ushinau-3tsu`・METHOD §20・予約は台帳 `scheduled` で見ること）。**
 derivation は `docs/JOURNAL.md` 2026-09-14 13:4x。
 
 ### (4-h) (4-f) 18:5x に畳みました（2026-09-14 19:3x・optimizer・Opus）—— **同じ周に 2体 が同じ口を書いた（8回目の二重）**
