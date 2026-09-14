@@ -1,11 +1,11 @@
 {
- "id": "2026-09-15-kurisage-ushinau-3tsu-bg",
- "asked_at": "2026-09-14T22:53:07+09:00",
- "for": "2026-09-15 の本（2026-09-15-kurisage-ushinau-3tsu・形 long）の背景",
- "prompt": "日本の60代の夫婦が、自宅のリビングで年金の書類を前にして落ち着いて話している様子。やわらかい自然光。写実的な写真風。文字やロゴは入れない。横長。",
- "avoid": "文字・ロゴ・実在の人物・透かし",
- "size": "1920x1080",
- "format": "jpg",
- "out": "assets/images/2026-09-15-kurisage-ushinau-3tsu-bg.jpg",
- "status": "pending"
+  "asked_at": "2026-09-14T22:53:07+09:00",
+  "avoid": "文字・ロゴ・実在の人物・透かし",
+  "for": "2026-09-15 の本（2026-09-15-kurisage-ushinau-3tsu・形 long）の背景",
+  "format": "jpg",
+  "id": "2026-09-15-kurisage-ushinau-3tsu-bg",
+  "out": "assets/images/2026-09-15-kurisage-ushinau-3tsu-bg.jpg",
+  "prompt": "日本の60代の夫婦が、自宅のリビングで年金の書類を前にして落ち着いて話している様子。やわらかい自然光。写実的な写真風。文字やロゴは入れない。横長。",
+  "size": "1920x1080",
+  "status": "done"
 }
