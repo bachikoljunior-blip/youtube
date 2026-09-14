@@ -97,5 +97,5 @@ def test_台帳に_analytics_video_が無くても落ちない():
 def test_行は下端だと毎周言う():
     """Analytics は登録をチャンネルのページ側へも付ける ＝ 本ごとの合計は小さく出る。"""
     line = trend.sub_rate_line(_rows())
-    assert "下端" in line and "判定は `hourly` とオーナー" in line
+    assert "下端" in line and "判定は立ったサブ（いま 1体）とオーナー" in line
     assert "率ではなく時間で読むこと" in line, "扉(b) の通貨は時間"

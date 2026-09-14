@@ -103,7 +103,7 @@ def test_旧作りの本は数えない():
     assert [b["id"] for b in s["books"]] == ["A"]
 
 
-def test_門に届いたら判定はhourlyとオーナーと言う():
+def test_門に届いたら判定は立ったサブとオーナーと言う():
     days = ["09-06", "09-07", "09-08", "09-09", "09-10", "09-11", "09-12"]
     rows = []
     for i, d in enumerate(days):
@@ -114,7 +114,7 @@ def test_門に届いたら判定はhourlyとオーナーと言う():
     assert s["short"] == 0
     line = trend.views_streak_line(rows)
     assert "門に届きました" in line
-    assert "`hourly` とオーナー" in line
+    assert "立ったサブ（いま 1体）とオーナー" in line
 
 
 def test_門に届かない回は判定の句を出さない():
