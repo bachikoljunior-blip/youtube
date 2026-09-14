@@ -90,6 +90,7 @@ def test_problems_は本ごとの門で鳴る(monkeypatch):
                       takeaway="t", segments=segs)
     assert not [p for p in s.problems() if "合計" in p]        # 470 < 480（代理）
 
-    monkeypatch.setattr(script, "chars_gate", lambda vid, rows=None: (460, "検査の門"))
+    # `form=` は 2026-09-14 14:2x に足した欄（形ごとの秒数）。この検査は形を見ないので受けて捨てる
+    monkeypatch.setattr(script, "chars_gate", lambda vid, rows=None, form="short": (460, "検査の門"))
     got = [p for p in s.problems() if "合計" in p]
     assert len(got) == 1 and "検査の門" in got[0]

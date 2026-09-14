@@ -2414,6 +2414,10 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  —— **同じ族の 9例目**。2026-09-12 10:1x に手で書かれた「5/7 本・中央値 140回」は、
     #  **24時間 で 6/7 本・338〜377回（帯の中 → 帯の上）へ反転しました**（`trend.shape_run` の註）。
     out.append(shape_line(rows))
+    # コマ1（フック）の型を数える口 —— オーナー 2026-09-14 14:2x `d88d0dcd`「フックが弱い」に
+    #  当てる数が、どの口にも在りませんでした（`curve_aligned` は秒の維持率だけで、
+    #  **コマ1 が何秒で中に何が書いてあるか**は誰も数えていない）。**判定は `hourly` とオーナー**。
+    out.append(hook_line(rows))
     out.append(analytics_line(rows, now=now))
     # §7 の収益の節の 覆る条件 (4)（直近7日の平均が続けて上がったら、分子はチャンネルの回復の側）の連
     #  —— **同じ族の 6例目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・
@@ -4119,6 +4123,123 @@ def feature_line(rows: list[dict], scripts: "Path | None" = None) -> str:
               "点を 1つ 選ぶと判定が動く・`views_at_age` の註）。"
               "**2つ の型は同じ本に乗るので、どちらが効いたかは分けられません**（覆る条件 (4)）。")
 
+
+
+#: コマ1（フック）の型を数える口の門 —— **同じ型が何本 続いたら「型」と呼ぶか**。
+#: `SHAPE_GATE` と同じ 7本（§7 の「形」と同じ単位で読むため）。
+HOOK_GATE = 7
+#: コマ1 の秒数の目安（**門ではありません**）。維持率が最初に読める点（9秒）。
+HOOK_MARK_SEC = 9.0
+
+
+def hook_shape(rows: list[dict], scripts: "Path | None" = None) -> dict:
+    """**コマ1（フック）が何でできているかを数える口**（台本と台帳だけ・**API 0単位**）。
+
+    **なぜ（2026-09-14 14:3x JST・optimizer・Opus）**: オーナー 14:2x `d88d0dcd`
+    「**フックが弱いと思うな。どのテーマに需要があるのかとは別に、興味を引くような内容にしないと**」。
+    この言葉に当てる数が、どの口にも在りませんでした —— `curve_aligned` は維持率を秒で出しますが
+    **コマ1 が何秒で、その中に何が書いてあるか**は誰も数えていません。
+
+    **数えるのは 4つ だけ**（判定はしません）:
+
+    * コマ1 の **秒数**（台帳 `built` の `scenes[0]` ＝ 実測。焼いていない本は字数÷実測 字/秒）
+    * 1文目が **「…へ。」**（＝ 対象の名指し）で終わる本の数
+    * 2文目が **「計算します」「話です」**（＝ 予告）で終わる本の数
+    * コマ1 に **問い**（？）・**数**（0-9）が在る本の数
+
+    **「弱い」とは言いません** —— 強い弱いは `hourly` とオーナーの判定です（§5・§7）。
+    この口が言うのは「**同じ型が何本 続いているか**」だけで、
+    連が `HOOK_GATE` に届いたら、それは**型**であって、その本の書き手の癖ではありません
+    （＝ §3 に足す／外すの話になる ＝ **当て先は §3・判定は `hourly`**）。
+
+    **維持率とは突き合わせません**（この口では）—— `curve_aligned` の点は
+    **新しい作り 2本 しか 9秒 を持っておらず**、n が小さすぎます。
+    突き合わせるのは、`analytics` の遅れ（4日）が新しい本に追いついてからです（覆る条件 (2)）。
+
+    **覆る条件**:
+     (1) 述語（「…へ。」「計算します」）は **いまの 10本 から引いた形**です。次の本がその形を捨てて、
+         それでも連が切れなかったら（＝ 別の言い方の同じ型）、**述語のほうが浅い** ＝ その回が広げること。
+     (2) 新しい作りの本が **9秒 の点を 5本** 持ったら、この口に維持率を足してよい
+         （いま 2本・`curve_aligned(rows, (9.0,))`）。そこまでは「型の数」だけ。
+     (3) `script.MAX_SAY`（70字）が動いたら、コマ1 の秒数の帯も動きます ＝ この註の数を引き直すこと。
+    """
+    from .script import SCRIPTS, built_rate
+    base = Path(scripts) if scripts is not None else SCRIPTS
+    vids = _script_video_ids(rows)
+    mine = ours(rows)
+    scenes: dict[str, float] = {}
+    for r in rows:
+        if r.get("event") == "built" and r.get("id") and r.get("scenes"):
+            try:
+                scenes[str(r["id"])] = float(r["scenes"][0])
+            except (IndexError, TypeError, ValueError):
+                continue
+    books: list[dict] = []
+    for p in sorted(base.glob("*.json")):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        segs = d.get("segments") or []
+        if not segs:
+            continue
+        say = str(segs[0].get("say") or "")
+        sents = [x + "。" for x in say.split("。") if x]
+        first, second = (sents + ["", ""])[:2]
+        sec = scenes.get(p.stem)
+        if sec is None:
+            rate = built_rate(p.stem, rows)
+            sec = len(say) / rate if rate else None
+        vid = vids.get(p.stem)
+        books.append({
+            "sid": p.stem, "id": vid, "day": p.stem[:10],
+            "published": bool(vid and vid in mine),
+            "chars": len(say), "sec": sec, "say": say,
+            "to_whom": first.rstrip("。").endswith("へ"),
+            "herald": any(w in second for w in ("計算します", "話です")),
+            "question": ("？" in say or "?" in say),
+            "number": bool(re.search(r"[0-9０-９]", say)),
+        })
+    n = len(books)
+    secs = sorted(b["sec"] for b in books if b["sec"] is not None)
+    # 連は**新しいほうから**（`views_streak` と同じ向き）。「対象の名指し ＋ 予告」がそろった本だけ続く
+    run = 0
+    for b in reversed(books):
+        if b["to_whom"] and b["herald"]:
+            run += 1
+        else:
+            break
+    return {"n": n, "books": books, "gate": HOOK_GATE, "run": run,
+            "to_whom": sum(1 for b in books if b["to_whom"]),
+            "herald": sum(1 for b in books if b["herald"]),
+            "question": sum(1 for b in books if b["question"]),
+            "number": sum(1 for b in books if b["number"]),
+            "sec_med": secs[len(secs) // 2] if secs else None,
+            "sec_lo": secs[0] if secs else None, "sec_hi": secs[-1] if secs else None}
+
+
+def hook_line(rows: list[dict], scripts: "Path | None" = None) -> str:
+    """`hook_shape` を1行にする（`trend` が毎周 印字 ＝ **§7 へ数を写さない**）。"""
+    h = hook_shape(rows, scripts)
+    if not h["n"]:
+        return "**コマ1（フック）の型: 台本 0本**（`trend.hook_shape`）"
+    sec = ("—" if h["sec_med"] is None
+           else f"中央 **{h['sec_med']:.1f}秒**（{h['sec_lo']:.1f}〜{h['sec_hi']:.1f}）")
+    verdict = ("**型です**（連が門に届いた ＝ その本の書き手の癖ではない・"
+               "**当て先は §3・判定は `hourly` とオーナー**・§5）"
+               if h["run"] >= h["gate"] else
+               f"**まだ「型」とは呼びません**（あと {h['gate'] - h['run']}本）")
+    return ("**コマ1（フック）の型**（オーナー 2026-09-14 14:2x `d88d0dcd`「フックが弱い」に当てる口・"
+            "`trend.hook_shape`・台本と台帳だけ・**API 0単位**）: "
+            f"台本 **{h['n']}本**・コマ1 の秒数 {sec}。"
+            f"　1文目が「…へ。」（対象の名指し）**{h['to_whom']}/{h['n']}本**"
+            f"／2文目が「計算します」「話です」（予告）**{h['herald']}/{h['n']}本**"
+            f"／問いが在る **{h['question']}/{h['n']}本**／数が在る **{h['number']}/{h['n']}本**。"
+            f"　**「名指し ＋ 予告」の連（新しいほうから）: {h['run']}本**（門 {h['gate']}本）→ {verdict}。"
+            "　**この口が言うのは「同じ型が何本 続いたか」だけです**"
+            "（良し悪しは `hourly` とオーナー・覆る条件 3つ は `hook_shape` の註）。"
+            "　**維持率とはまだ突き合わせません** —— 新しい作りで 9秒 の点を持つ本の数は "
+            "`curve_aligned(rows, (9.0,))` が出す（覆る条件 (2) の門は 5本）。")
 
 
 #: §7「形」の門 —— **新しい作りの本を「何本」出して** 48h の中央値を旧作りと比べるか。
