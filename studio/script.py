@@ -581,6 +581,13 @@ class Script(BaseModel):
                 out.append(f"コマ{i} 人間の専門家を名乗っている: {s.say[:30]}")
             for run in uncovered_kanji(s.say, self.yomi):
                 out.append(f"コマ{i} 「{run}」の読みが固定されていない（yomi に足すか、ひらがなで書く）")
+            # **止める**（2026-09-15 05:xx・optimizer・Fable）。09/11 21:4x から `[?]` だったが、09/15 03:2x の長尺 1本目
+            # （コマ19「本来の額」）が hear で **ひたい** を実際に出した ＝ `[?]` は止めないので通っていた。
+            # 08/16 にオーナーが耳で見つけた語と同じ（オーナー 09/06「今後一個も出ないように」）。
+            # 覆る条件: Chirp3 が裸の「額」を「がく」と読む hear が 3本 続いたら `[?]` に戻す。
+            m = YOMI_IGNORED.search(s.say)
+            if m:
+                out.append(f"コマ{i} 「{m.group()}」は yomi を TTS が無視する語（実測 09/06・09/15 に ひたい が出た）。金額・じゅうぶん のように語を変える")
             for field in ("say", "show", "sub"):
                 m = TEN.search(getattr(s, field))
                 if m:
@@ -648,9 +655,6 @@ class Script(BaseModel):
                 if SCREEN_NEN_NI.search(field) and not BARE_YEAR.search(s.say):
                     out.append(f"コマ{i} 画面（{name}）だけに「年に」＋数字 が残っている: "
                                f"声は書き換え済みで画面が古い（§3 の 7・字幕は声と同じ文）。声に合わせる")
-            m = YOMI_IGNORED.search(s.say)
-            if m:
-                out.append(f"コマ{i} 「{m.group()}」は yomi を TTS が無視する語（実測 09/06）。金額・じゅうぶん のように語を変える")
             for sent in long_sentences(s.say):
                 out.append(f"コマ{i} の 1文 が {len(sent)}字（§3 の 6: {MAX_SENTENCE}字以内。長い文は hear が末尾で鳴る）: {sent[:18]}…")
         # **「なぜそうなるのか」のコマが 0 の本**（2026-09-11 20:0x・hourly・Opus。オーナー 19:5x）。
