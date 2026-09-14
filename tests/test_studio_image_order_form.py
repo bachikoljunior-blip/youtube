@@ -72,6 +72,12 @@ def test_縦の本の注文は1字も動かない():
         sid = o["id"][:-3]
         if not (SCRIPTS / f"{sid}.json").exists():
             continue                      # 旧 `src/` の注文（§8）
+        form = json.loads((SCRIPTS / f"{sid}.json").read_text(encoding="utf-8")).get("form", "short")
+        if form != "short":
+            # 長尺の注文は横（09/14 23:1x の 1本目 から）。陰性対照は縦の本だけ
+            # （2026-09-15 00:xx・optimizer: この検査は 1本目 の注文が置かれた周から落ちていた）
+            assert o["size"] == "1920x1080", p.name
+            continue
         assert o["size"] == "1080x1920", p.name
         seen += 1
     assert seen >= 9                       # 台本の在る本は 10本（予約前 1本 を含む）
