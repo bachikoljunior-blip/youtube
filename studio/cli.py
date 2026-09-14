@@ -968,6 +968,24 @@ def parse_at(text: str) -> dt.datetime | None:
     return None
 
 
+def thumbnail_for(s, vid: str) -> Path:
+    """上げた本に付けるサムネ。**`short` は 1コマ目の画面のまま**（縦のフィードでサムネは見られない・答えを変えない）。
+    `long` は `studio/thumb.py` の 1280x720（一覧の 320px で読める 2〜3行）。理由と覆る条件はそちらの冒頭。"""
+    d = workdir(vid)
+    if script.form_of(s.form) is script.LONG:
+        from . import thumb
+        return thumb.render(s, image_for(vid), d / "thumb.png")
+    return d / "slide-01.png"
+
+
+def cmd_thumb(a):
+    s = script.load(a.id)
+    out = thumbnail_for(s, a.id)
+    from . import thumb
+    print(f"サムネ: {out}  行: {' / '.join(thumb.lines_for(s)) if script.form_of(s.form) is script.LONG else '（short ＝ 1コマ目の画面）'}")
+    return 0
+
+
 def cmd_schedule(a):
     s = script.load(a.id)
     mp4 = workdir(a.id) / f"{a.id}.mp4"
@@ -1005,7 +1023,7 @@ def cmd_schedule(a):
         return 0
     vid = yt.upload(mp4, s.title, s.description, s.tags, at)
     print("上げた:", vid, f"公開 {at:%m/%d %H:%M} JST")
-    first = workdir(a.id) / "slide-01.png"
+    first = thumbnail_for(s, a.id)
     try:
         yt.set_thumbnail(vid, first)
     except Exception as e:  # noqa: BLE001
@@ -1672,6 +1690,7 @@ def main(argv=None):
     for c in ("lint", "build", "read", "critique", "crosscheck", "order-image"):
         sub.add_parser(c).add_argument("id")
     h = sub.add_parser("hear"); h.add_argument("id"); h.add_argument("--medium", action="store_true")
+    th = sub.add_parser("thumb"); th.add_argument("id")
     sc = sub.add_parser("schedule"); sc.add_argument("id"); sc.add_argument("--at", required=True)
     sc.add_argument("--replace", default=""); sc.add_argument("--force", action="store_true")
     sc.add_argument("--dry-run", action="store_true")

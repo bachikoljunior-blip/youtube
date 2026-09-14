@@ -463,6 +463,9 @@ class Script(BaseModel):
     # **形**（`short` ＝ 縦 1080x1920・95秒 まで／`long` ＝ 横 1920x1080・4〜10分）。
     # 既定は `short` ＝ **書かなければ今までと同じ**（`script.FORMS`・`docs/GOAL.md` (4-g) 2）。
     form: str = "short"
+    # 長尺のサムネの行（3行まで・最後の行に数が在れば黄色）。**`long` だけが読みます**（`studio/thumb.py`）。
+    # 空なら 1コマ目の `show` の行。`build_sig` には入れません（mp4 に渡らない ＝ `title` と同じ扱い）。
+    thumb: list[str] = []
     segments: list[Segment]
     notes: str = ""                 # 出典・前提・計算の根拠（人が読む）
 
