@@ -1038,10 +1038,16 @@ def cmd_schedule(a):
     return 0
 
 
-# 上げた直後に snippet を突き合わせる回数（`verify_meta`）。1回 直して、それでも残ったら印字して次の回へ渡す。
-META_REPAIR_TRIES = 1
-# insert 直後の 403 を待つ秒（上の実測）。
-META_REPAIR_RETRY_WAIT = 30
+# 上げた直後に snippet を突き合わせる回数（`verify_meta`）。**2回**（2026-09-15 09:1x・optimizer・Fable）——
+# 09/15 02:0x の覆る条件「403 が 3本 続けて 1回目 で通らなければ再試行を 2回 に」が引かれた:
+# `uc0SceBfoxQ`（02:16）・`PyVf22V74Ks`（04:14）・`cA-XdGquFpM`（08:51）の 3本 とも、insert 直後の 1回目
+# （30秒 後の撃ち直しを含む）では tags が readiness に残り、**数分 後の撃ち直し（別の周・または同じ周の 10分 後）で入った**。
+# ＝ 一過性の窓は 30秒 より長い。2回目 は `META_REPAIR_RETRY_WAIT` 置いてから撃つ。
+# **覆る条件**: (1) 2回目 でも残る本が 2本 出たら、待つのではなく `yt.upload` の body の側（`verify_meta` の註 (2)）。
+# (2) 1回目 で入る本が 5本 続いたら 1 に戻してよい（50単位 × 1回 の値段）。
+META_REPAIR_TRIES = 2
+# insert 直後の 403／取りこぼしを待つ秒。30秒 では 3本 とも足りなかった（上）＝ 120秒。
+META_REPAIR_RETRY_WAIT = 120
 
 
 def verify_meta(vid: str, s) -> list[str]:
@@ -1074,7 +1080,13 @@ def verify_meta(vid: str, s) -> list[str]:
         return []
     print(f"!! 上がった snippet が台本と食い違う: {'・'.join(drift)} → update_meta で入れ直す（50単位）")
     fixed = list(drift)
+    tries = 0
     for _ in range(META_REPAIR_TRIES):
+        if tries:
+            # 1回目 は通っても readiness に残る回が 3本 続いた（`META_REPAIR_TRIES` の註）→ 置いてから もう1回
+            print(f"!! 入れ直したが まだ食い違う: {'・'.join(drift)} → {META_REPAIR_RETRY_WAIT}秒 置いて撃ち直す")
+            time.sleep(META_REPAIR_RETRY_WAIT)
+        tries += 1
         try:
             yt.update_meta(vid, s.title, s.description, s.tags)
         except HttpError as e:
@@ -1094,7 +1106,7 @@ def verify_meta(vid: str, s) -> list[str]:
         if not drift:
             break
     ledger("meta_repaired", s.id, video_id=vid, fields="・".join(fixed),
-           left=drift or None, units=50 * META_REPAIR_TRIES + 1)
+           left=drift or None, units=50 * tries + 1, tries=tries)
     print("入れ直した（台本どおり）" if not drift else f"!! まだ食い違う: {'・'.join(drift)}（次の回が見ること）")
     return drift
 
