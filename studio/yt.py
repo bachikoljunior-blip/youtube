@@ -8,6 +8,9 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+import google_auth_httplib2
+import httplib2
+from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -17,12 +20,53 @@ from .common import JST, env, now_jst
 _svc = None
 
 
+def token_rejected_words(err: Exception) -> str:
+    """口（`YT_REFRESH_TOKEN`）を Google が拒んだときの 3行（2026-09-14 18:5x・`hourly`・Fable）。
+
+    **実測**: 入れ物の立て直し（09/14 18:2x JST）のあと最初に立ったサブ（18:45 起動）で、`status` が
+    `google.auth.exceptions.RefreshError: invalid_grant: Bad Request` で落ちた（traceback 40行）。
+    17:16 JST の `channel` の行までは同じ変数名で読めていた ＝ **値が替わって届いた周に、その値が拒まれた**
+    （オーナー 09:3x `efc96bd9`「上書き後のはクッキーストラテジャーというチャンネルの方のトークン」・`docs/GOAL.md` (4-f)）。
+    `invalid_grant` の文言で分かれる: **`Bad Request` ＝ token が この `YT_CLIENT_ID`／`YT_CLIENT_SECRET` の物ではない**
+    （別の OAuth クライアント／別の GCP プロジェクトで取った token）か、値の形が崩れている。
+    **`Token has been expired or revoked.` ＝ 同じクライアントの token が失効**（取り消し・テスト中アプリの 7日）。
+    どちらも **API 0単位**（token の口は日枠の外）。**この関数は判定しません** —— 文言を読み分けて、
+    次に置く物（3つ）を言うだけ。**止めるのは `svc()`**（口が無いのに 23か所 の呼び手がそれぞれ traceback を出す形をやめた）。
+    **覆る条件**: (1) 口が 2つ（環境変数名が 2つ）になったら、どの名の口が拒まれたかを行に持たせること
+    （`cli.channel_switch_line` の覆る条件 (2) と同じ刻）。(2) `invalid_grant` 以外（`invalid_client` ＝ secret 違い）が出たら、
+    その文言の枝をここに足すこと。(3) 拒まれた周が 3周 続いたら、この行ではなく親の【枠】の段に出す側（`quota` の印字）。
+    """
+    msg = str(err)
+    if "expired or revoked" in msg:
+        why = "同じクライアントの token が失効（取り消し・テスト中アプリの 7日）＝ 同じ YT_CLIENT_ID で取り直す"
+    elif "invalid_grant" in msg:
+        why = ("この YT_CLIENT_ID／YT_CLIENT_SECRET で取った token ではない（別の OAuth クライアントで取った物）か、"
+               "値の形が崩れている ＝ その token を取ったクライアントの id/secret も一緒に置くか、この id で取り直す")
+    else:
+        why = "文言が既知の 2つ のどちらでもない（`yt.token_rejected_words` の覆る条件 (2)）"
+    a0 = err.args[0] if getattr(err, "args", None) else msg
+    head = (a0 if isinstance(a0, str) else msg).splitlines()[0][:80] or "?"
+    return ("!! 口が拒まれました: YT_REFRESH_TOKEN を Google が受けません（" + head + "）\n"
+            "   なぜ: " + why + "\n"
+            "   置く物（オーナーの手・GOAL (4-f) 18:5x）: (1) お金と仕事の教科書 の token を YT_REFRESH_TOKEN に戻す"
+            "（台帳の 9本 と 09/15 の予約はこの口）・(2) クッキーストラテジャー の token は別の名（YT_REFRESH_TOKEN_2）に置く・"
+            "(3) それを取ったクライアントが別なら YT_CLIENT_ID_2／YT_CLIENT_SECRET_2 も。API 0単位 ＝ 日枠は減っていません")
+
+
 def svc():
     global _svc
     if _svc is None:
         creds = Credentials(token=None, refresh_token=env("YT_REFRESH_TOKEN"),
                             token_uri="https://oauth2.googleapis.com/token",
                             client_id=env("YT_CLIENT_ID"), client_secret=env("YT_CLIENT_SECRET"))
+        # **口を先に 1回 開けて、拒まれたら 3行 で止める**（2026-09-14 18:5x・`hourly`・Fable）。
+        # 遅延の refresh は最初の API 呼びの中で落ち、23か所 の呼び手がそれぞれ traceback 40行 を出す
+        # （実測: `cmd_status` の `yt.channel()`）。refresh は最初の呼びが必ず撃つ物なので、ここで撃っても
+        # 回数は増えない（API 0単位・token の口は日枠の外）。文言の読み分けは `token_rejected_words` の註。
+        try:
+            creds.refresh(google_auth_httplib2.Request(httplib2.Http()))
+        except RefreshError as e:
+            raise SystemExit(token_rejected_words(e)) from e
         _svc = build("youtube", "v3", credentials=creds, cache_discovery=False)
     return _svc
 
