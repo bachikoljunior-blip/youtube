@@ -1795,9 +1795,9 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    そこへ積みました）。数は `method_growth.py --split` と `output_growth.py` が
                    印字する ＝ 写さない。derivation は JOURNAL 09/14 01:5x／**14:3x**
     検査           **撃ち方は `python scripts/checks.py`**（束・秒は その註）。
-                   studio **1,115件 緑**（skip 8）／親 **739件 緑**（skip 11）・新しい検査 **+10件**
+                   studio **1,125件 緑**（skip 8）／親 **739件 緑**（skip 11）・新しい検査 **+20件**
                    ＝ JOURNAL 09/14 18:5x／**19:2x**
-    この回         **引かれた覆る条件 1件**（GOAL (4-f-2)・判定は `hourly` 18:5x）・**道具の欠陥 1件**・
+    この回         **引かれた覆る条件 1件**（GOAL (4-f-2)・判定は `hourly` 18:5x）・**道具の欠陥 3件**・
                    **8回目の二重**（道具・文書・訊き）＝ JOURNAL 09/14 18:5x／**19:2x**
     期限           **2026-12-13**（オーナー 09/13 20:0x・与件）。**残り日数・要る回数・要る登録・倍率は
                    `trend.rev_deadline` が毎周 印字する ＝ ここへ写さない**（**倍率は下端**）。

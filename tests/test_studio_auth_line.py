@@ -54,3 +54,29 @@ def test_口と関係ない失敗は握りつぶさない(monkeypatch):
     monkeypatch.setattr(cli, "cmd_trend", lambda a: (_ for _ in ()).throw(ValueError("壊れている")))
     with pytest.raises(ValueError):
         cli.main(["trend"])
+def test_svc_が_SystemExit_で止めた回も台帳に_1行_残る(monkeypatch):
+    """`yt.svc()` の 3行（`hourly` 18:5x）は印字だけで、周を数える口が無かった。
+
+    **陽性対照**: `main()` の `except SystemExit` の枝を外すと、この検査が落ちる。
+    """
+    wrote = []
+    monkeypatch.setattr(cli, "ledger", lambda ev, vid, **d: wrote.append((ev, vid, d)))
+    monkeypatch.setattr(cli, "cmd_status", lambda a: (_ for _ in ()).throw(
+        SystemExit("!! 口が拒まれました: YT_REFRESH_TOKEN を Google が受けません（invalid_grant: Bad Request）")))
+    try:
+        cli.main(["status"])
+    except SystemExit:
+        pass
+    assert wrote and wrote[0][0] == "token_rejected"
+    assert wrote[0][2]["cmd"] == "status" and wrote[0][2]["how"] == "svc"
+
+
+def test_口と関係ない_SystemExit_は台帳に残さない(monkeypatch):
+    wrote = []
+    monkeypatch.setattr(cli, "ledger", lambda ev, vid, **d: wrote.append(ev))
+    monkeypatch.setattr(cli, "cmd_status", lambda a: (_ for _ in ()).throw(SystemExit("環境変数 X が無い")))
+    try:
+        cli.main(["status"])
+    except SystemExit:
+        pass
+    assert wrote == []

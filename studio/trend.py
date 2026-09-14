@@ -3134,6 +3134,76 @@ def curve_line(rows: list[dict]) -> str:
             + " —— **判定は `hourly`・§5**（optimizer は数を並べるまで）" + tail)
 
 
+ROUNDS_JSONL = ROOT / "data" / "rounds.jsonl"
+MOUTH_GATE_LAPS = 3      # `docs/GOAL.md` (4-f-6)「3周 続けて 3行 のままなら」
+
+
+def mouth_closed_line(rows: list[dict], rounds: list[dict] | None = None,
+                      now: dt.datetime | None = None) -> str:
+    """**口（`YT_REFRESH_TOKEN`）が閉じてから、周が何回 立ったか**（API 0単位・台帳だけ）。
+
+    2026-09-14 19:4x・optimizer・Opus。**`docs/GOAL.md` (4-f-6) を読む印字**（§5 教訓の形 7つ目
+    ＝ 覆る条件を書いたら、その条件を読む印字も一緒に作ること）。18:5x の `hourly` は
+    (4-f-6) に「**3周 続けて 3行 のままなら** 親の【枠】の段に 1行 出して周の速さを落とす」と
+    書きましたが、**その 3周 を数える物がどこにもありませんでした** —— この repo でいちばん多い
+    壊れ方（`owner_words`・`views_streak`・`late_run`・`blind_run`・`turf_run`・`owner_ask` と同じ族）。
+
+    **数え方**:
+
+        閉じた刻   台帳のいちばん新しい `token_rejected`（`cli.main()` の門が書く）。
+                   **その後ろに `channel` の行が在れば、口は戻っています** ＝ この行は空を返す
+                   （`channel` は `status` が毎周 書く ＝ 口が開いた周にしか立たない）。
+        周        `data/rounds.jsonl` の `round` を重複なく数える（**役では数えない** ＝ 2体 で 1周・
+                   `scripts/owner_ask.py` と同じ数え方）。**その周にサブが撃ったかは見ません**
+                   —— 立った周は全部、口の閉じた周です。
+
+    **引いたあとに残る側を数えること**（§5 教訓の形 17つ目）＝ 引かれたあとも、この行は
+    **「閉じてから何周／何時間」**を言い続けます（「もう引かれました」とだけ言う印字にしない）。
+
+    **覆る条件**: (1) `channel` の行が立ったのに この行が出続けたら、口が戻った印は `channel` ではない
+    ＝ そのとき `cli.main()` の門に「戻った」を書く行を足すこと。
+    (2) 口が 2つ（環境変数名が 2つ）になったら、`token_rejected` の行に口の名を持たせてから数え直すこと
+    （`cli.channel_switch_line` の覆る条件 (2)・`yt.token_rejected_words` の (1) と同じ刻）。
+    (3) 門 3周 が引かれたのに 親の【枠】の段が動かない回が 2回 出たら、足りないのは数ではなく
+        親の手続きの側（`scripts/next_round.py`）＝ そこへ 1行。
+    derivation は `docs/JOURNAL.md` 2026-09-14 19:2x。
+    """
+    now = now or now_jst()
+    opened = [_at(r) for r in rows if r.get("event") == "channel" and r.get("at")]
+    last_open = max(opened) if opened else None
+    rejected = [_at(r) for r in rows if r.get("event") == "token_rejected" and r.get("at")
+                and (last_open is None or _at(r) > last_open)]
+    if not rejected:
+        return ""
+    at = min(rejected)
+    if rounds is None:
+        rounds = _rows_jsonl(ROUNDS_JSONL)
+    # **数えるのは「3行 を見た周」**（GOAL (4-f-6) の字のとおり）—— 拒まれた行を、その行より手前で
+    # いちばん新しい `round` へ畳む（1周に 2体・1体が 2回 撃っても **1周**）。周の記録より前に
+    # 撃たれた行（＝ 周の外）は数えません。
+    laps_at = sorted(dt.datetime.fromisoformat(k).astimezone(JST) for k in
+                     {r.get("round") or r.get("at") for r in rounds if r.get("round") or r.get("at")})
+    seen = {max((x for x in laps_at if x <= t), default=None) for t in rejected}
+    laps = len(seen - {None})
+    hours = (now - at).total_seconds() / 3600
+    drawn = ("**引かれました**" if laps >= MOUTH_GATE_LAPS else f"**まだ引けません**（あと {MOUTH_GATE_LAPS - laps}周）")
+    return (f"!! **口（`YT_REFRESH_TOKEN`）は閉じたままです**: 閉じてから **{laps}周・{hours:.1f}時間**"
+            f"（門 {MOUTH_GATE_LAPS}周 ＝ GOAL (4-f-6)）＝ {drawn}。"
+            f" **この周は `measure`／`comments`／`schedule` を撃てません**（`trend` は台帳だけ ＝ 読めます）。"
+            f" 置く物 3つ と判定は GOAL (4-f) 18:5x・訊きは `python scripts/owner_ask.py`")
+
+
+def _rows_jsonl(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            out.append(json.loads(line))
+    return out
+
+
 def report(within_h: float = 24 * 3) -> list[str]:
     return lines(ledger_rows(), within_h=within_h)
 

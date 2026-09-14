@@ -54,7 +54,8 @@ def token_rejected(e: BaseException) -> bool:
     (3) 印字が 2度 出る回が出たら（`yt.svc()` が `SystemExit` をやめて例外を投げ直す形に変わったら）、
     どちらか 1つ にすること —— **同じ周に同じ段落を 2度 印字しない**（`cmd_status` の 23:2x の決めと同じ）。
     """
-    return type(e).__name__ == "RefreshError" or "invalid_grant" in str(e)
+    return (type(e).__name__ == "RefreshError" or "invalid_grant" in str(e)
+            or "口が拒まれました" in str(e))
 
 
 def image_for(vid: str) -> Path | None:
@@ -1363,6 +1364,10 @@ def cmd_trend(a):
         for line in trend.by_day_count(ledger_rows()):
             print(line)
         return 0
+    # **口が閉じているあいだは、いちばん上に出すこと**（`trend.mouth_closed_line` の註・GOAL (4-f-6)）。
+    mc = trend.mouth_closed_line(ledger_rows())
+    if mc:
+        print(mc)
     for line in trend.report(within_h=24 * a.days):
         print(line)
     return 0
@@ -1652,10 +1657,18 @@ def main(argv=None):
     # 口ごとに `try` を置かないこと —— 置くと、次に足した口が黙って生のトレースバックへ戻ります。
     try:
         return fn(a) or 0
+    except SystemExit as e:
+        # `yt.svc()` は拒まれたら `SystemExit`（3行）で止まります（`hourly` 18:5x）。
+        # **印字はあちらに任せ、ここは台帳に 1行 だけ残す** ——(4-f-6) の「3周」を数える口が
+        # どこにも無かったため（`trend.mouth_closed_line` の註）。
+        if token_rejected(e):
+            ledger("token_rejected", "-", cmd=a.cmd, how="svc")
+        raise
     except Exception as e:  # noqa: BLE001
         if not token_rejected(e):
             raise
         # **文言は `yt.token_rejected_words` の 1か所**（同じ周の `hourly` 18:5x）。ここでは読み分けない。
+        ledger("token_rejected", "-", cmd=a.cmd, how="main")
         print(yt.token_rejected_words(e))
         return 2
 
