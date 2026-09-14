@@ -1733,7 +1733,8 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
     コメント        新着 **0件**・未返信 **4件**（問いは 0件 ＝ `cli reply` を撃つ先は 0）・
                    消えた **1件**・保留/迷惑 0件。**言い分は 3**（derivation は JOURNAL 09/13 21:5x）
     オーナーの言葉   **`python scripts/owner_words.py` が印字する ＝ ここへ写さない**（連・並び・札の在り処・持ち場）。
-                   札の無い言葉 **0件**・**判定は `hourly` とオーナー**（§5）・JOURNAL 09/14 07:2x／**07:5x**
+                   札の無い言葉 **1件**（`8e695b8e` 11:30・**1周 札なし ＝ まだ `hourly` の持ち場**・
+                   門は `owner_words.TURF_GATE_LAPS` 2周）・**判定は `hourly` とオーナー**（§5）・JOURNAL 09/14 07:5x
     オーナーへの訊き  **`python scripts/owner_ask.py` が印字する ＝ ここへ写さない**。返事待ち **0件**
                    ＝ 覆る条件 (1)（畳んでよい側）・決めは `docs/GOAL.md` (4-a)(4-e)・JOURNAL 09/14 07:5x
     音の側の答え     **`分けられない` 0/3本**・答えた本 **5本**・1度も答えなかった本 **5本**
