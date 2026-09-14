@@ -121,3 +121,71 @@ def test_チャンネルの行が無い台帳でも落ちない(刻):
     line = trend.rev_deadline_line(rows)
     assert "登録は" not in line, "見ていない数を印字しないこと"
     assert "下端" in line
+
+
+# ---- 扉が 2つ あること（2026-09-14 21:0x・optimizer・Opus）--------------------
+#
+# **なぜ要るか**: オーナー 20:15 `b478751a`「最適化立った時その役はまず期限内に目標達成
+# できるか考え、できる以外の判断をしたならやり方が間違ってることを疑え」（19:26 `3aa5cecf`
+# の言い直し ＝ 2度）。**毎周「できない」の側の判断を作っていた数は、この口の 138倍 でした。**
+# その 138倍 は **扉(a)（ショート 1,000万回）だけ**を数えており、`docs/GOAL.md` (4-g) が
+# 09/14 13:4x に開けた **扉(b)（長尺 4,000時間 ＝ 1/167）を見ていませんでした。**
+#
+# **陽性対照**（撃って落とした）: 扉(b) を 12か月 で割ると `test_扉bは残り日数で割る` が落ち、
+# 要る登録率を扉ごとに分けないと `test_要る登録率は扉で桁が変わる` が落ち、
+# 小さいほうを名指ししないと `test_小さいほうの扉を名指しする` が落ちる。
+
+
+def test_扉bは残り日数で割る(刻):
+    """陽性対照: 12か月（365日）で割ると 164回/日 になり、期限の中で門を通れない。"""
+    刻("2026-09-14T21:00:00")
+    r = trend.rev_deadline(_rows())
+    assert r["long_total"] == pytest.approx(
+        trend.REV_LONG_HOURS * 60 / trend.REV_LONG_MIN_PER_VIEW)
+    assert r["long_need_per_day"] == pytest.approx(r["long_total"] / r["days_left"])
+    assert r["long_need_per_day"] != pytest.approx(r["long_total"] / 365)
+
+
+def test_小さいほうの扉を名指しする(刻):
+    刻("2026-09-14T21:00:00")
+    r = trend.rev_deadline(_rows())
+    assert r["long_need_per_day"] < r["need_per_day"], "扉(b) のほうが小さい"
+    assert r["door"] == "b"
+    assert r["door_ratio"] == pytest.approx(r["need_per_day"] / r["long_need_per_day"])
+    line = trend.rev_deadline_line(_rows())
+    assert "扉(a)" in line and "扉(b)" in line and "小さいほうの扉は (b)" in line
+
+
+def test_要る登録率は扉で桁が変わる(刻):
+    """扉(a) は再生が大きいので登録は自然に付き、扉(b) は**登録率のほうが縛る**。"""
+    刻("2026-09-14T21:00:00")
+    r = trend.rev_deadline(_rows())
+    assert r["sub_rate_need_a"] == pytest.approx(
+        r["subs_need"] / (trend.REV_GOAL_VIEWS - r["got"]))
+    assert r["sub_rate_need_b"] == pytest.approx(r["subs_need"] / r["long_total"])
+    assert r["sub_rate_need_b"] > r["sub_rate_need_a"] * 100, "桁が 2つ 以上ちがう"
+    assert r["sub_rate_now"] is not None and r["sub_rate_need_b"] > r["sub_rate_now"]
+
+
+def test_長尺が0本であることを毎周言う(刻):
+    """**扉(b) の 0.83倍 を「もう届いている」と読ませないこと** —— ショートの再生は
+    この扉に 1秒も数えられません（`docs/GOAL.md` (4-g)）。"""
+    刻("2026-09-14T21:00:00")
+    line = trend.rev_deadline_line(_rows())
+    assert "いまの長尺は 0本" in line and "0秒" in line
+    assert "尺の入れ替え" in line
+
+
+def test_判断は立った_optimizer_が下すと毎周言う(刻):
+    """オーナー `b478751a` / `3aa5cecf`。**この行が無いと、次の回はまた 138倍 だけを読む。**"""
+    刻("2026-09-14T21:00:00")
+    line = trend.rev_deadline_line(_rows())
+    assert "`optimizer`" in line and "b478751a" in line
+    assert "できる" in line
+
+
+def test_4分per回は前提だと言う(刻):
+    """`REV_LONG_MIN_PER_VIEW` は実測ではない（覆る条件 (5)）＝ 印字でそう言うこと。"""
+    刻("2026-09-14T21:00:00")
+    assert "は前提" in trend.rev_deadline_line(_rows())
+    assert "実測ではありません" in trend.rev_deadline.__doc__

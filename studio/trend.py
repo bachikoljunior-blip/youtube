@@ -571,6 +571,13 @@ def shakes(rows: list[dict]) -> list[dict]:
                 "span": hi - lo,
                 "rounds": window,
                 "floor": ev["floor"],
+                # **低いほうが「この窓で本が通った値」の範囲に在るか**（`_lag_evidence` の判定の側）。
+                # **`held_h` は証拠で、判定はこちら**（同じ関数の註「判定に使うのは `explained`」）——
+                # 2026-09-14 21:1x に返り値へ出しました（optimizer・Opus）: 出ていなかったので
+                # `tests/test_studio_shakes.py` が **証拠のほう（`held_h`）を門に使っており**、
+                # 台帳が点と点のあいだの値を 1度も書いていない行（`Edmce94ZVKs` 齢 34.1h・
+                # 138 対 139・floor 126）で赤くなりました ＝ **道具の註と検査の主張が別**だった。
+                "explained": ev["explained"],
                 "held_h": ev["held_h"],
                 "recounted": vid in recounted,
                 "after": after,
@@ -2424,6 +2431,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  `views_streak`）。**単位は「引き」＝ 周ではありません**（`trend.rev7_run` の註）。
     out.append(rev7_line(rows))
     out.append(rev_deadline_line(rows))
+    out.append(sub_rate_line(rows))
     #  そのすぐ隣に「上がった分の中身」を出す（`rev7_line` の「引かれました」は連だけを見るので、
     #  この行が無いと分子の中身を見ないまま §1 を開けます・`trend.rev7_source_line` の註）。
     out.append(rev7_source_line(rows))
@@ -2665,6 +2673,14 @@ REV_GOAL_VIEWS = 10_000_000
 REV_GOAL_DAYS = 90
 #: 基準2 のもう一方（登録 1,000人）。**公表ページの写し**（同・覆る条件 (10)）。
 REV_GOAL_SUBS = 1_000
+#: 収益化の門の**もう一方の扉**（基準1 ＝ 長尺の総再生時間 4,000時間 / 直近12か月）。
+#: **公表ページの写し**（`REV_GOAL_VIEWS` と同じ族 ＝ 覆る条件 (10) で一緒に当て直すこと）。
+REV_LONG_HOURS = 4_000
+#: その時間を**回数**に直すときの、1回ぶんの分。**10分の本 × 維持 40% ＝ 4分/回**
+#: （`CLAUDE.md`「いま把握しておくべき数字」・`docs/GOAL.md` (4-g) の表と同じ数）。
+#: **これは前提で、実測ではありません** —— 新しい作りの長尺は **0本**（(4-g) の「未測」）。
+#: **覆る条件は `rev_deadline` の (5)**（長尺が 3本 出たら、この 4.0分 を実測で置き換える）。
+REV_LONG_MIN_PER_VIEW = 4.0
 #: **オーナーが置いた達成期限**（2026-09-13 20:0x JST・原文
 #: 「YouTube月収20万の達成期限3ヶ月にして。他は元々そうだけど自由にしていいからね」・受け取り帳 `6a67e8e7`）。
 #: **3ヶ月 は言われた刻（2026-09-13）から数えます。**
@@ -2686,17 +2702,43 @@ def rev_deadline(rows: list[dict]) -> dict:
     **既に過ぎた日（実測 800回/日 前後）が窓に入ります** ＝ 要る倍率はこれより**大きくなります**。
     **審査の日数は、こちらでは 1度も測っていません** ＝ ここには入れません（前提を数に混ぜない）。
 
+    **扉は 2つ あります**（2026-09-14 21:0x・optimizer・Opus。オーナー 20:15 `b478751a`
+    「**最適化立った時その役はまず期限内に目標達成できるか考え、できる以外の判断をしたなら
+    やり方が間違ってることを疑え**」・19:26 `3aa5cecf` の言い直し ＝ **2度 言われました**）:
+    この口は 2026-09-13 20:3x から **扉(a)（ショート 1,000万回/90日）だけ**を数えており、
+    毎周 **138倍** を印字していました。**その 138倍 が、毎周「できない」の側の判断を作っていた数です。**
+    ところが `docs/GOAL.md` (4-g)（09/14 13:4x・`hourly`）は **扉(b)（長尺 4,000時間/12か月）を開けており**、
+    その距離は **1/167**（同じ表）—— **＝ 判断を作っていた数は、この手法がもう出た扉のものでした。**
+    **オーナーが言う「やり方が間違ってる」の 1件目は、形ではなく この口です。**
+    いまは **両方 印字し、小さいほう（`door`）を名指しします。**
+
+    **扉ごとに縛る側が入れ替わります**（この回に数えた）: 扉(a) は再生が 1,000万回 なので
+    要る登録率は **0.010%**（いま 0.026% ＝ **もう足りている**）。扉(b) は再生が 60,000回 なので
+    要る登録率は **1.62%**（いま 0.026% ＝ **62倍**）。
+    **＝ 扉(b) では、縛るのは再生ではなく登録率です。** いまの物差し（48h の再生・維持率・いいね）は
+    **本ごとの登録率を 1つも測っていません**（`trend` に口が無い ＝ 次に立つ穴）。
+
     返り: `{"deadline", "days_left", "start", "past_days", "got", "ahead_days",
-            "need_per_day", "now_per_day", "times", "subs", "subs_need",
-            "subs_per_day", "subs_need_per_day", "subs_times", "subs_days", "floor"}`。
+            "need_per_day", "now_per_day", "times",
+            "long_total", "long_need_per_day", "long_times", "door", "door_ratio",
+            "subs", "subs_need", "subs_per_day", "subs_need_per_day", "subs_times",
+            "subs_days", "sub_rate_now", "sub_rate_need_a", "sub_rate_need_b", "floor"}`。
 
     **覆る条件**: (1) オーナーが期限を言い直したら `REV_DEADLINE` を直すこと（**門は 1か所**）。
     (2) 窓に実測の日が入り始めたら（`past_days` が 0 でなくなったら）、`need_per_day` は
         「残りの日で埋める数」になります ＝ そのときは `got` も一緒に読むこと。
     (3) 審査の日数を**測れたら**、窓の閉じる日をその日数だけ手前へ寄せて数え直すこと
         ＝ そのとき `floor` は偽になります。
-    (4) 基準2 の数（`REV_GOAL_VIEWS` / `REV_GOAL_SUBS`）が公表ページで変わったら、
-        **引く前に同じページへ当て直すこと**（収益の節の 覆る条件 (10)）。
+    (4) 基準2 の数（`REV_GOAL_VIEWS` / `REV_GOAL_SUBS` / `REV_LONG_HOURS`）が公表ページで
+        変わったら、**引く前に同じページへ当て直すこと**（収益の節の 覆る条件 (10)）。
+    (5) **`REV_LONG_MIN_PER_VIEW`（4.0分）は前提で、実測ではありません。**
+        新しい作りの長尺が **3本** 出たら（GOAL (4-g) 1）、`analytics` の視聴時間 ÷ 再生で
+        置き換えること ＝ そのとき扉(b) の距離は動きます。**置き換えるまで、この扉の数を
+        「実測」と書かないこと。**
+    (6) **`door` が `b` のまま 長尺が 1本も出ない周が 3周 続いたら**、引かれているのは
+        この口ではなく**持ち場**です（GOAL (4-g-4) と同じ形）＝ §5 の表を直すこと。
+    (7) 扉(b) の要る登録率（`sub_rate_need_b`）を **いまの登録率が越えたら**、縛る側は
+        登録率から再生へ戻ります ＝ そのときこの註を書き直すこと。
     """
     end = dt.date.fromisoformat(REV_DEADLINE)
     today = now_jst().date()
@@ -2719,10 +2761,27 @@ def rev_deadline(rows: list[dict]) -> dict:
     subs_need = max(REV_GOAL_SUBS - subs, 0) if subs is not None else None
     days_left = (end - today).days
     per = subs_need is not None and days_left > 0
+    # **扉(b)（長尺 4,000時間）を回数に直す。** 期限までに門を通っている必要があるので、
+    # 12か月 の窓ではなく **残り日数** で割ります（扉(a) の窓 90日 と同じ読み）。
+    # **いまの長尺は 0本 なので、この扉に数えられている時間は 0秒です**
+    # ＝ `b_times` は「進み具合」ではなく **要る大きさが いまの日の再生の何倍か** です。
+    long_total = REV_LONG_HOURS * 60 / REV_LONG_MIN_PER_VIEW
+    b_need = (long_total / days_left) if days_left > 0 else None
+    b_times = (b_need / now) if (b_need and now) else None
+    door = ("b" if (b_need is not None and need is not None and b_need < need)
+            else ("a" if need is not None else None))
+    # **要る登録率** ＝ 残りの登録 ÷ その扉が通るまでに立つ再生。
+    # 扉ごとに**桁が変わります**（扉(a) は再生が大きいので登録は自然に付き、
+    # 扉(b) は再生が小さいので **登録率のほうが縛る側**になります）。
+    a_rate = (subs_need / (REV_GOAL_VIEWS - got)) if (subs_need and REV_GOAL_VIEWS > got) else None
+    b_rate = (subs_need / long_total) if subs_need else None
     return {"deadline": end, "days_left": days_left,
             "start": start, "past_days": len(past), "got": got, "ahead_days": ahead,
             "need_per_day": need, "now_per_day": now,
             "times": (need / now) if (need and now) else None,
+            "long_total": long_total, "long_need_per_day": b_need, "long_times": b_times,
+            "door": door,
+            "door_ratio": (need / b_need) if (need and b_need) else None,
             "subs": subs, "subs_need": subs_need,
             "subs_per_day": subs_per_day,
             "subs_need_per_day": (subs_need / days_left) if per else None,
@@ -2730,6 +2789,8 @@ def rev_deadline(rows: list[dict]) -> dict:
                           if (per and subs_per_day) else None,
             "subs_days": (subs_need / subs_per_day)
                          if (subs_need is not None and subs_per_day) else None,
+            "sub_rate_now": g.get("subs_per_view"),
+            "sub_rate_need_a": a_rate, "sub_rate_need_b": b_rate,
             "floor": True}
 
 
@@ -2750,18 +2811,168 @@ def rev_deadline_line(rows: list[dict]) -> str:
     else:
         out += f"うち台帳に実測の在る日 **0日**・これから **{r['ahead_days']}日**。"
     if r["need_per_day"] and r["now_per_day"]:
-        out += (f"**要る {r['need_per_day']:,.0f}回/日 対 いま {r['now_per_day']:.1f}回/日 "
-                f"＝ {r['times']:.0f}倍**（いまの回数は `rev7_line` と同じ引き）。")
+        out += (f"**扉(a)（ショート {REV_GOAL_VIEWS:,}回）＝ 要る {r['need_per_day']:,.0f}回/日 "
+                f"対 いま {r['now_per_day']:.1f}回/日 ＝ {r['times']:.0f}倍**"
+                "（いまの回数は `rev7_line` と同じ引き）。")
+    if r["long_need_per_day"]:
+        out += (f"**扉(b)（長尺 {REV_LONG_HOURS:,}時間 ＝ {r['long_total']:,.0f}回・"
+                f"{REV_LONG_MIN_PER_VIEW:.0f}分/回 は前提）＝ 要る "
+                f"{r['long_need_per_day']:,.0f}回/日**"
+                + (f" 対 同じ口がいま立てている {r['now_per_day']:.1f}回/日 ＝ "
+                   f"**{r['long_times']:.2f}倍**" if r["long_times"] else "")
+                + (f"（扉(a) の **1/{r['door_ratio']:.0f}**）" if r["door_ratio"] else "")
+                + "。**ただし いまの長尺は 0本 ＝ この扉に数えられている時間は 0秒です** ＝ "
+                  "要るのは倍率ではなく**尺の入れ替え**（`docs/GOAL.md` (4-g) 1・覆る条件 (5)(6)）。")
+    if r["door"]:
+        out += f"**小さいほうの扉は ({r['door']})**。"
     if r["subs_per_day"] is not None and r["subs_need"] is not None:
         out += (f"登録は **いま {r['subs']}人・あと {r['subs_need']:,}人** ＝ "
                 f"**要る {r['subs_need_per_day']:.1f}人/日 対 いま {r['subs_per_day']:.2f}人/日**"
                 + (f" ＝ **{r['subs_times']:.0f}倍**" if r["subs_times"] else "")
                 + (f"（いまの速さでは **{r['subs_days']:,.0f}日**）" if r["subs_days"] else "")
                 + "。")
+    if r["sub_rate_need_b"] and r["sub_rate_need_a"]:
+        now_r = (f"いま **{r['sub_rate_now'] * 100:.3f}%**"
+                 if r["sub_rate_now"] else "いまは測れていません")
+        out += (f"**要る登録率は扉で桁が変わります**: 扉(a) **{r['sub_rate_need_a'] * 100:.3f}%**／"
+                f"扉(b) **{r['sub_rate_need_b'] * 100:.2f}%** 対 {now_r}"
+                + (f" ＝ 扉(b) では **{r['sub_rate_need_b'] / r['sub_rate_now']:.0f}倍**"
+                   if r["sub_rate_now"] else "")
+                + "。**＝ 扉(b) で縛るのは再生ではなく登録率です**（覆る条件 (7)）。"
+                  "**本ごとの登録率を測る口は `trend` に在りません**（次に立つ穴）。")
     out += ("**この倍率は下端です** —— 「月収20万」は**門を通ったあとの収益**なので、"
             "門は期限より前に通っている必要があり、窓は手前で閉じて**過ぎた日が入ります**"
             "（審査の日数は 1度も測っていないので、ここには入れません・覆る条件 (3)）。"
-            "**形を変えるかの判定は `hourly` とオーナー**（§5 ＝ optimizer は数を並べるまで）。")
+            "**期限内に届くかの判断は、立った `optimizer` がこの行の数でまず下します**"
+            "（オーナー 2026-09-14 20:15 `b478751a` / 19:26 `3aa5cecf`・**2度**）——"
+            "**「できる」以外を出したら、疑うのは形ではなく まずこの口の数です**"
+            "（この口自身が 09/13〜09/14 に扉(a) だけで 138倍 を印字していた・覆る条件 (5)）。"
+            "**形を変えるかの判定は `hourly` とオーナー**（§5）。")
+    return out
+
+
+#: **ショートと長尺を分ける秒**（YouTube の公表の上限 ＝ 60秒 を越える本も「ショート」として
+#: 配られる窓が在るので、`script.MAX_SECONDS`（95秒）ではなく**扉の側**の数で切ります）。
+#: **覆る条件**: 長尺が出たら、この数で分けた側と `docs/GOAL.md` (4-g) 4 の「別の扉」が
+#: 一致しているかを、1度 実物で確かめること。
+SHORTS_MAX_SECONDS = 180
+#: 本ごとの登録率を数えるときの、再生の下限。**`ANALYTICS_MIN_VIEWS` と同じ族**
+#: （再生が 1〜6回 の本を混ぜると、1人 の登録で 20% のような率が出る）。
+SUB_RATE_MIN_VIEWS = ANALYTICS_MIN_VIEWS
+
+
+def sub_rate_cohorts(rows: list[dict]) -> dict:
+    """**本ごとの登録率**（`analytics_video` の `subs_gained` ÷ `views`）を
+    新しい作り（`studio` の札）と旧で分ける（台帳だけ・**Data API 0単位**）。
+
+    **なぜ要るか**（2026-09-14 21:2x・optimizer・Opus）: 同じ回に `rev_deadline` へ
+    扉(b)（長尺 4,000時間）を足したら、**扉(b) で縛るのは再生ではなく登録率**でした
+    （要る **1.62%** 対 チャンネル全体 0.026% ＝ 61倍）。ところが `trend` は
+    **本ごとの登録率を 1つも持っていませんでした** —— 0.026% は `channel_growth` の
+    「登録の増え ÷ 総再生の増え」で、**どの本が登録を連れてきたかを言いません。**
+    数は台帳にもう在ります（`cli.analytics` が `subs_gained` を毎回 書いている）。
+
+    **この率は下端です** —— Analytics は登録をチャンネルのページ側へも付けるので、
+    本ごとの `subsGained` の合計は、チャンネルの増えより**小さく出ます**。
+    実測（この回）: 本ごとの合計 **+2人** 対 同じ窓のチャンネルの増え **+1人** ＝ 同じ桁。
+
+    **いまは 9本 ともショートです** ＝ **長尺の登録率は 0本・未測**
+    （`rev_deadline` の 覆る条件 (5)(7) と同じ穴）。**この率を「長尺でもこうなる」と読まないこと。**
+
+    返り: `{"new", "old", "need_b", "times", "long_n"}`。側は
+    `{"n", "views", "subs", "rate", "med", "max"}`（`n` が 0 なら率は None）。
+
+    **覆る条件**: (1) 新しい作りの側が **7本**（`shape_run` と同じ門）を越えても
+        `rate` が扉(b) の要る率の **1/10** に届かないなら、縛っているのは本の中身ではなく
+        **配り**（`docs/GOAL.md` (4-g-1) と同じ先）＝ 2つ目のチャンネルの側へ。
+    (2) 長尺が 1本 でも出たら、**側をもう1つ足すこと**（ショートと長尺は別の扉なので、
+        同じ側で中央値を取ると扉の判定が混ざる ＝ (4-g) 4 と同じ規則）。
+    (3) 本ごとの合計が、同じ窓のチャンネルの増えの **2倍** を越えたら、
+        `subs_gained` の窓の取り方を見ること（いまは最後の引きだけを使っている）。
+    """
+    latest: dict[str, dict] = {}
+    for r in sorted((r for r in rows if r.get("event") == "analytics_video"),
+                    key=lambda r: r["at"]):
+        latest[r["id"]] = r
+
+    def _side(want: bool) -> dict:
+        got = [r for r in latest.values()
+               if bool(r.get("studio")) is want
+               and (r.get("views") or 0) >= SUB_RATE_MIN_VIEWS]
+        if not got:
+            return {"n": 0, "views": 0, "subs": 0, "rate": None, "med": None, "max": None}
+        v = sum(int(r["views"]) for r in got)
+        sb = sum(int(r.get("subs_gained") or 0) for r in got)
+        each = sorted(int(r.get("subs_gained") or 0) / int(r["views"]) for r in got)
+        return {"n": len(got), "views": v, "subs": sb,
+                "rate": (sb / v) if v else None,
+                "med": each[len(each) // 2], "max": each[-1]}
+
+    new_, old_ = _side(True), _side(False)
+    # **尺で分けた側**（扉が違うので、`studio` の札とは**別の分け方**）。
+    # **再生の下限を当てません** —— 実測（2026-09-14 21:2x）で長尺は 5本 とも 4〜28回 で、
+    # 下限（30回）を当てると **0本**になり、扉(b) の分子が「無い」に化けます。
+    # **下限を外した率は当てにならない**ので、率ではなく**視聴時間（分）**を読むこと
+    # （扉(b) の通貨は時間で、率ではない）。
+    sec = curve_seconds(rows)
+    lg = [r for vid, r in latest.items() if sec.get(vid, 0) > SHORTS_MAX_SECONDS]
+    long_side = {"n": len(lg),
+                 "views": sum(int(r.get("views") or 0) for r in lg),
+                 "subs": sum(int(r.get("subs_gained") or 0) for r in lg),
+                 "minutes": sum(float(r.get("minutes") or 0) for r in lg)}
+    long_side["hours"] = long_side["minutes"] / 60
+    d = rev_deadline(rows)
+    need = d.get("sub_rate_need_b")
+    return {"new": new_, "old": old_, "long": long_side,
+            "long_hours_need": REV_LONG_HOURS,
+            "long_times": (REV_LONG_HOURS / long_side["hours"]) if long_side["hours"] else None,
+            "need_b": need,
+            "times": (need / new_["rate"]) if (need and new_["rate"]) else None,
+            # **長尺の本数。** 尺は台帳の欄ではなく `curve_seconds`（`avg_seconds / avg_percent`）で
+            # 出します —— `analytics_video` に `seconds` の欄は**在りません**
+            # （この口を足した回に `r.get("seconds")` と書いて、**黙って 0本 を返していました** ＝
+            #  この repo でいちばん多い壊れ方。検査 `test_長尺の数は尺の口から出す` が押さえます）。
+            # `avg_percent` が 0 の本は尺が出ないので、**数えられた本だけ**が分母です。
+            "long_n": sum(1 for vid, sec in curve_seconds(rows).items()
+                          if vid in latest and sec > SHORTS_MAX_SECONDS)}
+
+
+def sub_rate_line(rows: list[dict]) -> str:
+    """`sub_rate_cohorts` を1行にする（`trend` が毎周 印字する ＝ **§7 へ写さないこと**）。"""
+    c = sub_rate_cohorts(rows)
+    n, o = c["new"], c["old"]
+    if not n["n"] and not o["n"]:
+        return ("**本ごとの登録率は まだ測れていません**（`analytics_video` が 1行も無い ＝ "
+                "`python -m studio.cli analytics` を撃つ番・`trend.sub_rate_cohorts`）")
+    def _s(x: dict, name: str) -> str:
+        if not x["n"]:
+            return f"{name} なし"
+        return (f"{name} **{x['n']}本**・再生 {x['views']:,}・登録 +{x['subs']} ＝ "
+                f"**{x['rate'] * 100:.3f}%**（本ごとの中央 {x['med'] * 100:.3f}%・"
+                f"最大 {x['max'] * 100:.3f}%）")
+    out = ("**本ごとの登録率**（`analytics_video` の `subs_gained` ÷ `views`・"
+           f"再生 {SUB_RATE_MIN_VIEWS}回 以上 の本だけ・**Data API 0単位**・"
+           f"`trend.sub_rate_cohorts`）: {_s(n, '新しい作り')}／{_s(o, '旧')}。")
+    if c["need_b"]:
+        out += (f"**扉(b) が要る {c['need_b'] * 100:.2f}%**"
+                + (f" ＝ 新しい作りは **{c['times']:.0f}倍**"
+                   if c["times"] else "（新しい作りは登録 0人 ＝ 倍率が出ません）")
+                + "（`trend.rev_deadline`）。")
+    lg = c["long"]
+    if lg["n"]:
+        out += (f"**尺で分けた側**（{SHORTS_MAX_SECONDS}秒 超・**再生の下限は当てない** ＝ "
+                f"当てると 0本 になる）: **{lg['n']}本**・再生 {lg['views']:,}・"
+                f"登録 +{lg['subs']}・**視聴 {lg['hours']:.1f}時間**"
+                + (f" ＝ 扉(b) の {c['long_hours_need']:,}時間 まで **{c['long_times']:,.0f}倍**"
+                   if c["long_times"] else "")
+                + "。**この 5本 は旧作りで、いまの口の配りの下の数です**"
+                  "（`docs/GOAL.md` (4-g-1): 新しい作りの長尺 3本 の 48h が 25回 を越えなければ、"
+                  "扉ではなく**配り**の側）。**率ではなく時間で読むこと**（扉(b) の通貨は時間）。")
+    else:
+        out += ("**長尺 0本** ＝ **長尺の側は未測です**（この率を「長尺でもこうなる」と"
+                "読まないこと・`rev_deadline` の 覆る条件 (5)(7)）。")
+    out += ("**この率は下端です**（Analytics は登録をチャンネルのページ側へも付ける）。"
+            "**判定は `hourly` とオーナー**（§5）。")
     return out
 
 

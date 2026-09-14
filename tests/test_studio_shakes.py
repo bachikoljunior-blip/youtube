@@ -72,11 +72,23 @@ def test_本物の台帳に_maxが高すぎた行は無い() -> None:
         # （`trend.shakes` の 19:0x の註が、まさにそう書いてあった側）。
         # ＝ ここで赤くしていたのは道具ではなく**この検査の主張**でした
         # （METHOD §5 の教訓の形 3つ目「落ちなければ、疑うのは道具ではなく検査のデータ」の裏返し）。
-        held = s["held_h"]
-        assert held is not None and held < trend.ENVELOPE_LAG_H, (
-            "低い側で水準になり、しかも生が包絡を "
-            f"{trend.ENVELOPE_LAG_H}時間 より長く下回っているのに `recounts()` が挙げていない "
+        #
+        # **【2026-09-14 21:1x に、門を `held_h` から `explained` へ移しました】**
+        # （optimizer・Opus。実測で落ちた: `Edmce94ZVKs` 齢 34.1h・**138 対 139**・
+        #  floor 126・`held_h` **None**・`verdict` `lag`）。
+        # `held_h` は「その値を台帳が**そのまま**持っていたなら何時間 前か」で、
+        # **台帳は 41分ごとにしか見ていない**ので、複製が座っている値を 1度も書いていない
+        # 行は必ず出ます（`trend._lag_evidence` の註が、まさにそう書いてあった側 ——
+        # 「**判定に使うのは `explained`**（範囲）で、`held_h` は**証拠として並べるだけ**」）。
+        # ＝ ここで赤くしていたのは道具ではなく**この検査が証拠を門に使っていたこと**でした
+        # （21:5x に踏んだのと同じ形の 2度目・METHOD §5 の教訓の形 3つ目の裏返し）。
+        assert s["explained"], (
+            "低い側で水準になり、しかもその値が**この窓で本が通った範囲の外**（生が包絡を "
+            f"{trend.ENVELOPE_LAG_H}時間 より長く下回っている）のに `recounts()` が挙げていない "
             f"＝ 数え直しの機構そのものを見ること: {s}")
+        held = s["held_h"]
+        assert held is None or held < trend.ENVELOPE_LAG_H, (
+            f"証拠の側（`held_h`）が窓より古い ＝ `_lag_evidence` の窓の切り方を見ること: {s}")
 
 
 def test_齢_48h_超で割れた行は_低いほうが窓で通った値() -> None:
