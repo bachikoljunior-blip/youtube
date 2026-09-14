@@ -590,8 +590,16 @@ def test_positive_control_通算の行は合計が引かれた窓にだけ出る
     monkeypatch.setattr(M, "span_carry", lambda ps: ["  通算（2窓 を 1つ に読む）: **見張りの印**"])
     monkeypatch.setattr(M, "split_drawn", lambda ps: [])
     got = M.report()
-    drawn = [l for l in got.split("\n") if "字の門" in l and "**引かれました**" in l]
-    assert ("見張りの印" in got) == bool(drawn)
+    # **`span_carry` が繋がっているのは「§7 の 4塊 の合計」の門だけ**です（`report` の同じ枝）。
+    # **2026-09-14 12:2x に赤くなりました** —— `report` は「字の門 1周 +300字」を
+    # **3か所**（§0〜§6・§8 の合計／§7 の 4塊 の合計／直近の1本）で同じ字で印字するので、
+    # 「字の門 ＋ 引かれました」で拾うと**別の門**まで数えます。この回に引かれていたのは
+    # **直近の1本**（§17・`hourly` の持ち場）で、4塊 の側は引かれていませんでした。
+    # ＝ この陽性対照が見張っている繋がりとは無関係の赤。**4塊 の塊だけを見ること。**
+    lines = got.split("\n")
+    head = next(i for i, l in enumerate(lines) if "見ていない 4塊" in l)
+    gate = next(l for l in lines[head:] if "字の門" in l)
+    assert ("見張りの印" in got) == ("**引かれました**" in gate)
     # 塊ごとが鳴っている窓では足さない（名指しは `split_drawn` が先・`span_carry` の覆る条件 (2)）
     monkeypatch.setattr(M, "split_drawn", lambda ps: ["いまの数（+400 / +400）"])
     assert "見張りの印" not in M.report()
