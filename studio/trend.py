@@ -257,6 +257,11 @@ FLAT_STOP_H = 24.0
 #: **まだ伸びが戻っていない平ら**を「止まった」と数える長さ。**戻った中でいちばん長い平ら
 #: （`EkNqtkK49Bw` の 20.9時間）より上**に置くこと ——下に置くと、その本を取り逃す。
 
+FLAT_THIN_GAIN = 1
+#: **境目の下端（`longest_resumed_h`）を持つ平らの「戻り」が、これ以下の回数だったら名指しする**
+#: （2026-09-14 12:1x・optimizer・Opus）。この下端は `hold` と `views_streak` の
+#: `growing` の門そのものなので、**1回 の再生で 35時間 動きます**（実測 ＝ `flats` の 覆る条件 (6)）。
+
 
 #: 「落ち着いた」と呼ぶのに要る、**推定が動かなかった周の数**（この周を含む）。
 #: 複製の遅れの実測は 最大 2.8時間（`envelope` の註）＝ 床 42分 なら 4周ぶん。3周 は その手前。
@@ -803,6 +808,26 @@ def flats(rows: list[dict]) -> dict:
     (5) **外した本が 2本 を越えたら**、`stayed` ではなく**その本たち自身**が問いです
     （配りが来ない本が続く ＝ §7 (l)(l-2) の側）。数は `zero_view` が毎周 印字します。
 
+    **【2026-09-14 12:1x・optimizer・Opus】上の 覆る条件 (4) が、この回に引かれました（数だけ置きます）。**
+    `2YZ_4FXC-XI` が 齢 95.5〜97.1h のあいだに **初めて 1回** 配られ（`first_view` の挟み）、
+    `env[-1]` が 0 → 1 になって絞りを抜けました。**その結果、境目の下端が動きました**:
+
+        `longest_resumed_h`  **60.4 → 95.2時間**（持ち主 `EkNqtkK49Bw` 140回 → `2YZ_4FXC-XI` **0回**）
+        境目の幅             98.5 → **63.7時間**（上端 `nQbVxuWpWw8` 158.9時間 は動いていない）
+        `views_streak`       `run_if_growing` **3 → 7本** ＝ **門（7本）に届き得る側へ**
+                             （`thresh_h` は `growing` の門そのもの ＝ `hold` も同じ数を使う）
+
+    **＝ 再生 1回 で、35時間 ぶんの「まだ伸びている」が全部の本に足されました。**
+    数としては正しい（**95.2時間 平らでも、そのあと配りが来た**は実測）ので、
+    **手で外さないこと**（(4) の「手で戻さないこと」はそのまま生きています）。
+
+    **新しい覆る条件 (6)**: 下端を持つ 1件 の**戻りが `FLAT_THIN_GAIN`（1回）以下**のあいだは、
+    その下端で「止まった／止まっていない」を判定しないこと ——
+    **`0回 → 1回` は「伸びが戻った」ではなく「初めて 1回 配られた」かもしれません**
+    （この台帳に、その 2つ を分ける点が在りません）。
+    **2件目**（戻りが 2回 以上 の、同じ長さ級の平ら）が出たら、この註ごと畳んでよい。
+    いま下端を持つ 1件 と その戻りは `flat_holder_clause` が毎周 名指しします ＝ **ここには写さない。**
+
     """
     mine = ours(rows)
     runs: list[dict] = []
@@ -825,6 +850,8 @@ def flats(rows: list[dict]) -> dict:
             if j > i and ages[j] - ages[i] >= FLAT_MIN_H and ages[i] < 48.0:
                 runs.append({"id": vid, "from_h": ages[i], "to_h": ages[j],
                              "len_h": ages[j] - ages[i], "views": env[i],
+                             # **戻りの大きさ**（覆る条件 (6) —— 下端を +1回 が持つ回が在る）。
+                             "gain": env[-1] - env[i],
                              "resumed": env[-1] > env[i]})
             i = max(j, i + 1)
 
@@ -832,14 +859,50 @@ def flats(rows: list[dict]) -> dict:
     # **門は定数ではなく、実測でいちばん長い「戻った平ら」**（`FLAT_STOP_H` はその床）。
     # 覆る条件 (2)「より長い平らのあとに伸びた本が出たら門を上げる」を、手ではなく道具が引く。
     longest_back = max((r["len_h"] for r in resumed), default=0.0)
+    # **その門を持っている 1件 を返す**（覆る条件 (6)・2026-09-14 12:1x）——
+    # 門だけを返すと、次の回は「なぜ 35時間 動いたか」を台帳から引き直すことになる。
+    holder = max(resumed, key=lambda r: r["len_h"], default=None) if resumed else None
     thresh = max(FLAT_STOP_H, longest_back)
     stayed = [r for r in runs if not r["resumed"] and r["len_h"] > thresh]
     open_runs = [r for r in runs if not r["resumed"] and r["len_h"] <= thresh]
     shortest_stay = min((r["len_h"] for r in stayed), default=0.0)
     return {"resumed": len(resumed), "stayed": stayed, "open": len(open_runs),
             "thresh_h": thresh, "longest_resumed_h": longest_back,
+            "longest_resumed": holder,
+            "thin": bool(holder is not None and holder["gain"] <= FLAT_THIN_GAIN
+                         and longest_back >= FLAT_STOP_H),
             "shortest_stayed_h": shortest_stay, "runs": runs,
             "zero_view": sorted(zero_view)}
+
+
+def flat_holder_clause(fl: dict) -> str:
+    """**境目の下端を持っている 1件** を名指しする（`flats` の 覆る条件 (6)・2026-09-14 12:1x）。
+
+    下端（`longest_resumed_h`）は `hold` と `views_streak` の `growing` の門そのものなので、
+    **これが動くと全部の本の「まだ伸びている」が一緒に動きます**。実測 2026-09-14 12:0x:
+    `2YZ_4FXC-XI` の **0回 → 1回** で 60.4 → 95.2時間（`views_streak` の
+    `run_if_growing` は 3 → 7本）。**門だけを印字すると、次の回はその 1回 を見ません。**
+    """
+    h = fl.get("longest_resumed")
+    if not h:
+        return ""
+    return (f"（持ち主 **{h['id']}** 齢{h['from_h']:.1f}→{h['to_h']:.1f}h・"
+            f"平らのときの再生 **{h['views']}回**・**戻りは +{h['gain']}回**）")
+
+
+def flat_thin_note(fl: dict) -> str:
+    """下端を **戻り 1回 以下** の平らが持っている回だけ、その1文を足す（覆る条件 (6)）。
+
+    **`flat_holder_clause` と分けてあるのは、印字の位置が違うから**です ——
+    名指しは境目の数のすぐ隣、註意は行の終わり（境目の幅を言い終えたあと）。
+    """
+    if not fl.get("thin"):
+        return ""
+    return ("  !! **この下端は、戻り 1回 の平らが持っています** —— "
+            "`0回 → 1回` は「伸びが戻った」ではなく「**初めて 1回 配られた**」かもしれません"
+            "（この台帳に、その 2つ を分ける点が在りません）。"
+            "**この下端で「止まった／止まっていない」を判定しないこと**"
+            "（`flats` の 覆る条件 (6)。**手で外さないこと** ＝ (4) はそのまま）。")
 
 
 def last_rise_gap_h(pts: list[dict], env: list[int]) -> float:
@@ -2383,6 +2446,10 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         + (f"（{where}）" if where else "")
         + f"・まだ言えない平ら {fl['open']}件。"
         + (f"**決めに使うのは件数ではなく境目**: 戻った平らのいちばん長いもの **{fl['longest_resumed_h']:.1f}時間**"
+           # **その下端を持っている 1件 を、同じ行で名指しする**（覆る条件 (6)・12:1x）——
+           # 下端は `hold` / `views_streak` の `growing` の門そのもので、
+           # 実測 09/14 12:0x は **再生 1回** で 60.4 → 95.2時間 動いた。
+           + flat_holder_clause(fl)
            + (f" 〜 戻らなかった平らのいちばん短いもの **{fl['shortest_stayed_h']:.1f}時間** の"
               f"あいだは、まだ測れていません（差 {fl['shortest_stayed_h'] - fl['longest_resumed_h']:.1f}時間）。"
               if fl["stayed"] else "より短い平らを「止まった」と読まないこと。")
@@ -2391,6 +2458,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
            f"（{'・'.join(fl['zero_view'])}）—— **`resumed` に構造として入れないので、"
            f"混ぜると上端だけが下がります**（`flats` の 18:0x の註・覆る条件 (4)(5)）。"
            if fl["zero_view"] else "")
+        + flat_thin_note(fl)
         + "齢の浅い1点で本を比べないこと。")
     if DEAD_START <= now.hour < DEAD_END:
         # **この一文は、数に追随させること**（2026-09-09 02:5x に直した）。

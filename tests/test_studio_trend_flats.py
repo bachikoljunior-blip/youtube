@@ -140,3 +140,55 @@ def test_外した本を印字する():
     rows += _rows([(0.3, 0), (20.0, 0), (50.0, 0), (79.7, 0)], vid="Z1")
     line = [ln for ln in trend.lines(rows) if "平らは「止まった」ではない" in ln][0]
     assert "ずっと 0回 の本 1本" in line and "Z1" in line
+
+
+# ---- 2026-09-14 12:1x に足した（optimizer・Opus）----
+# **覆る条件 (4) が引かれた回**（`2YZ_4FXC-XI` が 齢 95.5〜97.1h で初めて 1回 配られ、
+# 絞りを抜けて `longest_resumed_h` を 60.4 → 95.2時間 へ押し上げた）。
+# **下端は `hold` / `views_streak` の `growing` の門そのもの** ＝ 再生 1回 で
+# 35時間 ぶんの「まだ伸びている」が全部の本に足される。**手で外さない・黙らせない。**
+
+
+def test_下端を持つ平らと戻りの大きさを返す():
+    """**陽性対照**: `longest_resumed_h`（数）だけを返す形に戻すと落ちる。
+    数だけでは、次の回は「なぜ 35時間 動いたか」を台帳から引き直すことになる。"""
+    rows = _rows([(0.3, 0), (20.0, 0), (95.5, 0), (97.1, 1)], vid="Z3")   # 95.2h・戻り +1
+    rows += _rows([(5.0, 100), (35.0, 100), (36.0, 200), (60.0, 200)], vid="V1")  # 30.0h・戻り +100
+    got = trend.flats(rows)
+    assert abs(got["longest_resumed_h"] - 95.2) < 0.05
+    h = got["longest_resumed"]
+    assert h["id"] == "Z3" and h["views"] == 0 and h["gain"] == 1
+    assert got["thin"] is True
+
+
+def test_戻りが大きい下端は名指しだけで註意を出さない():
+    """**陰性対照**（覆る条件 (6)）: 註意が出るのは**戻りが `FLAT_THIN_GAIN` 以下**の回だけ。
+    いつも出すと、次の回は「!!」を読み飛ばすようになる。"""
+    rows = _rows([(5.0, 100), (40.0, 100), (41.0, 300), (60.0, 300)], vid="V1")  # 35.0h・戻り +200
+    got = trend.flats(rows)
+    assert got["thin"] is False
+    line = [ln for ln in trend.lines(rows) if "平らは「止まった」ではない" in ln][0]
+    assert "持ち主 **V1**" in line and "**戻りは +200回**" in line
+    assert "戻り 1回 の平らが持っています" not in line
+
+
+def test_戻り1回の下端は行で名指しされる():
+    """**陽性対照の当のもの**（実物 `2YZ_4FXC-XI` 0回 → 1回）。
+    名指しを外すと、次の回は 95.2時間 を 140回 の本が持っていると読む。"""
+    rows = _rows([(0.3, 0), (20.0, 0), (95.5, 0), (97.1, 1)], vid="Z3")
+    rows += _rows([(8.0, 300), (60.0, 300), (120.0, 300), (170.0, 300)], vid="V2")  # 上端（戻らない）
+    line = [ln for ln in trend.lines(rows) if "平らは「止まった」ではない" in ln][0]
+    assert "持ち主 **Z3**" in line and "平らのときの再生 **0回**" in line
+    assert "**戻りは +1回**" in line
+    assert "戻り 1回 の平らが持っています" in line
+    # **註意は境目を言い終えたあと**（数の途中に割り込むと、幅の一文が読めなくなる）。
+    assert line.index("まだ測れていません") < line.index("戻り 1回 の平らが持っています")
+
+
+def test_下端が床のうちは註意を出さない():
+    """**陰性対照**: `longest_resumed_h` が `FLAT_STOP_H`（24時間）に届かない回は、
+    門は床のほうで決まっている ＝ その 1件 は何も決めていない。"""
+    rows = _rows([(0.3, 0), (2.0, 0), (5.0, 0), (6.0, 1)], vid="Z4")   # 4.7h・戻り +1
+    got = trend.flats(rows)
+    assert got["thin"] is False
+    assert abs(got["thresh_h"] - trend.FLAT_STOP_H) < 0.05
