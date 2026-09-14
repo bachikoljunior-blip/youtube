@@ -564,9 +564,9 @@ def _standing_models() -> str:
         return ""
     roles_fn = getattr(q, "sub_roles", None)
     try:
-        names = tuple(roles_fn()) if callable(roles_fn) else ("hourly", "optimizer")
+        names = tuple(roles_fn()) if callable(roles_fn) else ("optimizer",)
     except Exception:                                          # noqa: BLE001
-        names = ("hourly", "optimizer")
+        names = ("optimizer",)
     out = []
     for r in names:
         try:
@@ -1009,7 +1009,7 @@ def _siblings_block(siblings: list[str]) -> str:
     （`docs/METHOD.md` §5 の表）。そのときは表のほうを直すこと。
     """
     if not siblings:
-        head = ("**同じ枝で他に走っている相手は、立てた時点ではいません。**\n"
+        head = ("**同じ枝で他に走っている相手は、立てた時点ではいません**（1周に立つサブはこの 1体 だけ ＝ オーナー 09/14 20:22・`next_round.ROLES`）。\n"
                 "それでも push 前に必ず `git fetch`。競合したら merge で"
                 "**相手の作業を残すこと。捨てないこと。**")
     else:
@@ -1163,9 +1163,12 @@ _NOTE_SLOT = "<<オーナーの言葉を、ここに原文のまま。要約し�
 #:
 #: **覆る条件**: `next_round.py` が役を1つずつ立てる形に戻ったら（交互）、ここは空に戻すこと。
 #: `owner-*` は親が単独で立てる（`next_round_owner.py`）ので名指ししません。
+#: **09/14 20:22 オーナー「サブ立てるのは今最適化の役やってるやつの分だけにして」** ＝ 1周に立つのは
+#: `optimizer` 1体（`next_round.ROLES`）。同じ周の相手はいない ＝ 名指しは空（`_siblings_block` は
+#: 「空」を「調べていない」と区別して印字する）。`hourly` の行は立てない役なので残さない。
 SAME_ROUND_SIBLINGS: dict[str, list[str]] = {
-    "hourly": ["optimizer（同じ周に親が一緒に立てる役。`next_round.py` は2種類そろって1周）"],
-    "optimizer": ["hourly（同じ周に親が一緒に立てる役。`next_round.py` は2種類そろって1周）"],
+    "hourly": [],
+    "optimizer": [],
 }
 
 

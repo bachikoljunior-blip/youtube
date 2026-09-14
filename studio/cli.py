@@ -20,9 +20,13 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import re
 import json
 import sys
+import time
 from pathlib import Path
+
+from googleapiclient.errors import HttpError
 
 from . import analytics, critic, hear, render, reporting, script, trend, yt
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
@@ -943,6 +947,27 @@ def cmd_order_image(a):
     return 0
 
 
+def parse_at(text: str) -> dt.datetime | None:
+    """`--at` を読む。`HH:MM` ＝ きょう（JST）・`YYYY-MM-DD HH:MM` ＝ その日。読めなければ None。
+
+    2026-09-14 20:3x（hourly・Fable）まで `cmd_schedule` は「当日以外には予約しない」で止めていました。
+    その床はオーナーが 09/14 06:1x「とっくの前にはずしていいと言った」・09:0x「目標以外の制約はない」で外しています
+    （`src/house_rule.OWNER_FLOORS_LIFTED`・METHOD §4 (4)）。同じ日に口（`YT_REFRESH_TOKEN`）が 18:2x〜20:2x の
+    2時間 死に、**当日の朝に口が無ければ 1日 出せない**形が実物で見えた ＝ 前の晩に翌日の枠へ置けるようにした。
+    「1日1本」の門は日付ごとに数えます（`yt.today_lineup(date=...)`）。**覆る条件**: 前の晩に置いた本を当日の輪が
+    差し替えなかった（`--replace` を 1度も使わない）本が 3本 続いたら、当日の輪の側（§4 (1)）を疑うこと。
+    """
+    text = text.strip()
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", text)
+    if m:
+        return now_jst().replace(hour=int(m[1]), minute=int(m[2]), second=0, microsecond=0)
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})", text)
+    if m:
+        y, mo, d, hh, mm = map(int, m.groups())
+        return dt.datetime(y, mo, d, hh, mm, tzinfo=JST)
+    return None
+
+
 def cmd_schedule(a):
     s = script.load(a.id)
     mp4 = workdir(a.id) / f"{a.id}.mp4"
@@ -961,18 +986,17 @@ def cmd_schedule(a):
         print(f"mp4 はいまの本文で焼かれていない（{why}）。先に build を撃ち直すこと")
         print(f"  刻印 {have or '無し'} ／ いまの本文 {want}")
         return 1
-    hh, mm = map(int, a.at.split(":"))
-    at = now_jst().replace(hour=hh, minute=mm, second=0, microsecond=0)
-    if at.date() != now_jst().date():
-        print("当日以外には予約しない")
+    at = parse_at(a.at)
+    if at is None:
+        print(f"--at の形が読めない: {a.at!r}（HH:MM ＝ きょう／YYYY-MM-DD HH:MM ＝ その日）")
         return 1
     if at <= now_jst() + dt.timedelta(minutes=5):
-        print(f"{a.at} はもう過ぎている（いま {now_jst():%H:%M}）。--at を後ろへ")
+        print(f"{a.at} はもう過ぎている（いま {now_jst():%m/%d %H:%M}）。--at を後ろへ")
         return 1
-    lineup = yt.today_lineup()
+    lineup = yt.today_lineup(date=at.date())
     others = [v for v in lineup if v["id"] != a.replace]
     if others and not a.force:
-        print("きょうの枠にはもう本がある（1日1本）。差し替えなら --replace <videoId>:")
+        print(f"{at:%m/%d} の枠にはもう本がある（1日1本）。差し替えなら --replace <videoId>:")
         for v in others:
             print(f"  {yt.when(v):%H:%M} {v['privacy']} {v['id']} {v['title'][:40]}")
         return 1
@@ -998,6 +1022,8 @@ def cmd_schedule(a):
 
 # 上げた直後に snippet を突き合わせる回数（`verify_meta`）。1回 直して、それでも残ったら印字して次の回へ渡す。
 META_REPAIR_TRIES = 1
+# insert 直後の 403 を待つ秒（上の実測）。
+META_REPAIR_RETRY_WAIT = 30
 
 
 def verify_meta(vid: str, s) -> list[str]:
@@ -1031,7 +1057,20 @@ def verify_meta(vid: str, s) -> list[str]:
     print(f"!! 上がった snippet が台本と食い違う: {'・'.join(drift)} → update_meta で入れ直す（50単位）")
     fixed = list(drift)
     for _ in range(META_REPAIR_TRIES):
-        yt.update_meta(vid, s.title, s.description, s.tags)
+        try:
+            yt.update_meta(vid, s.title, s.description, s.tags)
+        except HttpError as e:
+            # 実測 2026-09-14 20:27（hourly・Fable）: insert の直後の `videos.update` が **403 forbidden** で落ち、
+            # 約2分後に同じ呼びで通った（tags 8語 が入った）。一過性なので 1度 だけ 30秒 置いて撃ち直す。
+            # 2度目も落ちたら、予約そのものは済んでいるので traceback で止めず 印字して次の回へ渡す。
+            print(f"!! update_meta が拒まれた（{str(e)[:80]}）。30秒 置いて 1度 だけ撃ち直す")
+            time.sleep(META_REPAIR_RETRY_WAIT)
+            try:
+                yt.update_meta(vid, s.title, s.description, s.tags)
+            except HttpError as e2:
+                print(f"!! 2度目も拒まれた: {str(e2)[:120]}（予約は済んでいる・次の回が status で見ること）")
+                ledger("meta_repaired", s.id, video_id=vid, fields="・".join(fixed), left=drift, units=1, error=str(e2)[:200])
+                return drift
         rd = yt.readiness(vid)
         drift = drift_fields(rd, s) if rd.get("title") is not None else drift
         if not drift:

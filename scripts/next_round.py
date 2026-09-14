@@ -295,7 +295,7 @@ LIVE_STALE_MIN = 30.0
 
 #: 役。`docs/spawn_prompt.rendered.md` の `kind:` と同じ名前にすること。
 #: **1周でこれを全部立てます。**（交互ではありません。上の節）
-ROLES = ("hourly", "optimizer")
+ROLES = ("optimizer",)
 
 #: 同じ周とみなす幅の上限（分）。実際の幅は `round_span(floor)` が決めます。
 #:

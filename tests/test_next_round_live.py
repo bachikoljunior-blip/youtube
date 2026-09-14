@@ -120,11 +120,12 @@ def test_前の周の記録が無ければ0体はGO(monkeypatch):
 
 
 def test_0体で片方だけ欠けていれば欠けをGO(monkeypatch):
-    group = [{"at": STARTED.isoformat(), "role": nr.ROLES[0], "round": "R1"}]
+    """役が 1つ（09/14 20:22）なので「片方だけ欠け」は、記録に**知らない役**しか無い形で作る。"""
+    group = [{"at": STARTED.isoformat(), "role": "hourly", "round": "R1"}]   # 立てない役の古い記録
     monkeypatch.setattr(nr, "current_round", lambda *a, **k: group)
     d = nr.decide(now=NOW, live=0)
     assert d["go"] is True and d.get("patch") is True
-    assert d["roles"] == [nr.ROLES[1]]
+    assert d["roles"] == [nr.ROLES[0]]
 
 
 def test_走っているサブが在れば間隔を待つ():

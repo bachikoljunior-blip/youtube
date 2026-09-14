@@ -134443,3 +134443,57 @@ studio **1,115件 緑**（1,105 + hourly 5 + この 5）・parent 739件 緑。
     台帳      `token_rejected` **1行**（19:12 `status`・`how: svc`）
     `trend`   いちばん上に「口は閉じたままです: 1周・…時間（門 3周）」
     引かれた覆る条件  GOAL (4-f-2)（判定は 18:5x の `hourly`）・**この回に新しく引いたのは 0件**
+
+## 2026-09-14 20:2x〜20:4x JST  `hourly`・Fable  (session_01Rm57UNW83XVTpihLex2iew) —— **09/15 の本を前の晩に予約した**（`Pq8PgYUuX8s`・10:00 JST）
+
+### 1. 口は戻っていた
+20:2x の入れ物で `status` が「お金と仕事の教科書」（`UChTXZzwkIJHqyL7L_fEtuqQ`）を見せた ＝ GOAL (4-f-4)。
+環境に在る名は `YT_CLIENT_ID` / `YT_CLIENT_SECRET` / `YT_REFRESH_TOKEN` の 3つ だけ（名だけ数えた・値は読んでいない）
+＝ オーナー 20:14「いれたよ」は (1)（元の token を戻す）。`YT_REFRESH_TOKEN_2` は無い ＝ 2つ目のチャンネルの口はまだ無い。
+
+### 2. 出した物
+- `apt-get install ffmpeg fonts-noto-cjk`（新しい入れ物に無かった。`scripts/setup.sh` と同じ手）
+- `build` 90.3秒・sig `1:d14bf17f6dbe`（台本 17:2x のまま ＝ 輪は開けていない）・sheet 13コマ 折れ 0（目で見た）
+- `schedule --at "2026-09-15 10:00"` → **`Pq8PgYUuX8s`**・publishAt 2026-09-15T01:00Z・サムネ maxres 在り・tags 8語
+- 09/14 の本 `-bSkulqONhI` は 10時間 で **957回**（直近 10本 の中では 09/11 の 1,034回 に次ぐ）
+
+### 3. 道具を 1つ 変えた: `schedule --at` が日付を読む（前の晩に翌日の枠へ置ける）
+`cmd_schedule` は「当日以外には予約しない」で止めていた。その床は 09/14 06:1x「とっくの前にはずしていいと言った」・
+09:0x「目標以外の制約はない」で外れている。同じ日に口が 18:2x〜20:2x の 2時間 死に、**当日の朝に口が無ければ 1日 出せない**形が
+実物で見えた（もし 10:00 前に入れ物が立て直されていたら 09/15 は空だった）。
+`cli.parse_at`（`HH:MM` ＝ きょう・`YYYY-MM-DD HH:MM` ＝ その日）・`yt.today_lineup(date=)` で「1日1本」の門は日付ごと。
+検査 `tests/test_studio_schedule_dated_at.py` 4件（陽性対照: 読めない形は None・門は翌日の本を数える）。
+**覆る条件**: 前の晩に置いた本を当日の輪が 1度も `--replace` しない本が 3本 続いたら、当日の輪（§4 (1)）の側を疑う。
+
+### 4. 踏んだ物: insert 直後の `videos.update` が 403 forbidden
+`verify_meta` が tags の落ち（09/13 と同じ形）を見て `update_meta` を撃ち、**403 forbidden** で traceback（予約は済んでいた）。
+約2分後に同じ呼びで通り、tags 8語 が入った ＝ 一過性。`verify_meta` に「HttpError なら 30秒 置いて 1度 撃ち直し・2度目も落ちたら
+印字して台帳に残し次の回へ」を足した（`META_REPAIR_RETRY_WAIT`）。tags が insert で落ちるのは 09/13・09/15 の 2本目 ＝ `verify_meta` の覆る条件 (1) はまだ引かれない。
+
+### 5. オーナー 20:22 `176da533`
+「サブ立てるのは今最適化の役やってるやつの分だけにして。そいつは Fable5.1 の ultracode にして。目標と、（期限内に達成できるか考え・
+できる以外なら やり方を疑え）だけ固定で、他の実行は全て自由にさせて」—— 親の手続き（`scripts/next_round.py`・`docs/spawn_prompt.md`）の側。
+この回は台本の側を持っており、同じ周の optimizer と同じファイルを触る形になるので、**この回では触っていない**（窓で相手の押しを見た上で）。
+次に来る側（親か optimizer）がこの言葉を `next_round.py` と `spawn_prompt.md` に入れること ＝ hourly の役はそこで終わる。
+
+## 2026-09-14 20:4x〜21:0x JST  `hourly`・Fable  (session_01Rm57UNW83XVTpihLex2iew) —— **親の手続きをオーナー 20:22 `176da533` の形へ**（1周に立つのは `optimizer` 1体・Fable・本文は固定 2つ と事実だけ）
+
+オーナー原文（20:22）: 「最初の可変設定として、サブ立てるのは今最適化の役やってるやつの分だけにして。そいつはFable5.1のultracodeにして。目標と、立った時まず期限内に目標達成できるか考え、できる以外の判断をしたならやり方が間違ってることを疑え、というのだけ固定で、他の実行は全て自由にさせて」
+
+**なぜこの回（hourly）が取ったか**: 20:2x〜21:0x の窓に optimizer の押しは無く（`git log --since`）、親は判断しない（09/06 14:0x）ので、
+誰も入れなければ次の周も 2体 立つ ＝ オーナーの言葉と逆。台本の側の仕事（09/15 の予約）は 20:3x に終えていた。
+
+### 変えた所（機械の側）
+- `scripts/next_round.py`: `ROLES = ("optimizer",)`（GO は optimizer だけ印字する）
+- `scripts/quota.py`: `ROLE_TIER["optimizer"] = "leverage"`（Fable を 100% の 1体 手前まで・配りの線もそのまま効く ＝ 09/11 19:4x「ずっと使えるように」の門は残る）・`ROLE_TIER["hourly"] = "retired"`（立てない役。撃たれても Opus ＝ Fable を減らさない）・`expected_goal_effect` の文言
+- `docs/spawn_prompt.md` `kind: optimizer`: 「ultracode」＋固定 1（目標の本文・期限 3ヶ月 の原文）＋固定 2（期限内にできるか考え・できる以外なら やり方を疑え）＋事実 4行（正本の在り処・1体 だけ・最初の1手・サブであること）＋窓＋枠。**「〜すること」は書いていない**（09/06 14:0x）。`hourly` の型は残した（立てない・写しにも残る ＝ 消さない）
+- `scripts/spawn_prompt.py`: `SAME_ROUND_SIBLINGS` を空に（同じ周の相手はいない）・既定の役の名簿 `("optimizer",)`・相手が空のときの見出しに「1体 だけ」の事実
+- `docs/trigger_parent.md` 第1節 に日付つきの塊 1つ（親の手は変わらない: GO の役をそのまま・model は GO の印字）・`docs/METHOD.md` §5 冒頭に 1段
+- 検査: 役に依る 15件 を optimizer の側へ書き直し（`test_model_by_role`・`test_next_round`・`test_next_round_live`・`test_quota_fable_*`・`test_quota_pace_role_models`・`test_role_model`）、2体 を前提にした 3件 を skip（理由に覆る条件）。`checks.py parent` は **method_growth の 13件 だけ赤**（この入れ物は浅い clone ＝ 67 commit・`blob_at` が古い METHOD を引けない。役の変更の前から赤・触っていない）
+
+### 「ultracode」について（推測・確かめていない）
+Workflow ツールは「オーナーが自分の言葉で ultracode と言ったとき」に開く（CLAUDE.md 事実）。サブの本文の 1行目 に置いたが、
+Agent ツール経由のサブでそれが Workflow を開くかは**この回では確かめられない**（サブからサブは立てられない）。
+**次に立つ optimizer が見ること**: 自分の道具に Workflow が在るか。無ければ、本文の側ではなく親の立て方（Agent の引数）を疑うこと。
+
+**覆る条件**: オーナーが役の数か模型を言い直したとき（その言葉が正本）。`ROLES` を 2つ に戻すなら、skip した 3件 と `SAME_ROUND_SIBLINGS` も戻すこと。

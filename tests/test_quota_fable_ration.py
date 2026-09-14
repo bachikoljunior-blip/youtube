@@ -63,13 +63,13 @@ def test_線の上なら_hourly_も_opus(monkeypatch) -> None:
     monkeypatch.setattr(quota, "fable_estimate", lambda *a, **kw: {
         "gauge": g, "rate": 0.0, "rate_source": "measured", "est": 70.0,
         "exhaust_at": None, "stale_hours": 0.0})
-    m, why = quota.sub_model(now, "hourly")
+    m, why = quota.sub_model(now, "optimizer")
     assert m == "opus"
     assert "配りの線" in why and "この周は Opus" in why
     assert "100% を越えて落とさない" not in why
 
 
-def test_線の下なら_hourly_は_fable(monkeypatch) -> None:
+def test_線の下なら_optimizer_は_fable(monkeypatch) -> None:
     _no_subs(monkeypatch)
     resets = datetime(2026, 9, 12, 7, 0, tzinfo=quota.JST)
     now = resets - timedelta(hours=WEEK / 2)
@@ -78,7 +78,7 @@ def test_線の下なら_hourly_は_fable(monkeypatch) -> None:
     monkeypatch.setattr(quota, "fable_estimate", lambda *a, **kw: {
         "gauge": g, "rate": 0.0, "rate_source": "measured", "est": 30.0,
         "exhaust_at": None, "stale_hours": 0.0})
-    m, why = quota.sub_model(now, "hourly")
+    m, why = quota.sub_model(now, "optimizer")
     assert m == "fable" and "配りの線" in why
 
 
@@ -101,11 +101,11 @@ def test_リセットされたら_fable_に戻る_かつ配りも始まる(monke
     assert r["est"] == 0.0 and r["line"] < 1.0 and r["over"] is False
     assert r["resets"] == resets + timedelta(hours=WEEK)
 
-    assert owner.corrected_sub_model(now, "hourly")[0] == "fable"
+    assert owner.corrected_sub_model(now, "optimizer")[0] == "fable"
     monkeypatch.setattr(quota, "fable_estimate", lambda *a, **kw: {
         "gauge": g, "rate": 0.0, "rate_source": "reset", "est": 100.0,
         "exhaust_at": None, "stale_hours": 0.0})
-    assert quota.sub_model(now, "hourly")[0] == "fable"
+    assert quota.sub_model(now, "optimizer")[0] == "fable"
 
 
 def test_リセット直後でも_使いすぎたら_opusへ倒す(monkeypatch) -> None:
@@ -119,11 +119,11 @@ def test_リセット直後でも_使いすぎたら_opusへ倒す(monkeypatch) 
     monkeypatch.setattr(owner.quota, "fable_gauge", lambda: g)
     r = quota.fable_ration(now, gauge=g)
     assert r["est"] == 20.0 and r["over"] is True
-    assert owner.corrected_sub_model(now, "hourly")[0] == "opus"
+    assert owner.corrected_sub_model(now, "optimizer")[0] == "opus"
 
 
-def test_optimizerは配りに関係なく_opus(monkeypatch) -> None:
-    """`ROLE_TIER` の `other` は Fable の目盛りに関係なく Opus（§5・09/07 08:1x）。"""
+def test_hourlyは立てない役なので配りに関係なく_opus(monkeypatch) -> None:
+    """`ROLE_TIER` の `retired`（09/14 20:22）は Fable の目盛りに関係なく Opus。"""
     _no_subs(monkeypatch)
     resets = datetime(2026, 9, 12, 7, 0, tzinfo=quota.JST)
     now = resets - timedelta(hours=WEEK / 2)
@@ -132,7 +132,7 @@ def test_optimizerは配りに関係なく_opus(monkeypatch) -> None:
     monkeypatch.setattr(quota, "fable_estimate", lambda *a, **kw: {
         "gauge": g, "rate": 0.0, "rate_source": "measured", "est": 10.0,
         "exhaust_at": None, "stale_hours": 0.0})
-    assert quota.sub_model(now, "optimizer")[0] == "opus"
+    assert quota.sub_model(now, "hourly")[0] == "opus"
 
 
 def test_目盛りに_resets_が無ければ_線は何も言わない(monkeypatch) -> None:
@@ -152,7 +152,7 @@ def test_役の段は_呼ぶ側が渡した目盛りだけを見る(monkeypatch)
     def _boom(*a, **kw):
         raise AssertionError("role_model が自分で fable_ration を呼んでいる")
     monkeypatch.setattr(quota, "fable_ration", _boom)
-    m, why = quota.role_model("fable", "why", 50.0, "hourly", None)
+    m, why = quota.role_model("fable", "why", 50.0, "optimizer", None)
     assert m == "fable" and "配りの線" not in why
 
 

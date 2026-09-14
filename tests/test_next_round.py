@@ -56,7 +56,8 @@ def test_役は交互ではなく2種類そろえる():
     d = nr.decide()
     assert "roles" in d, "`decide()` が `roles` を返していません（`role` のままです）"
     assert isinstance(d["roles"], list)
-    assert len(nr.ROLES) == 2, "役が2つでなくなったら、この検査の前提を書き直すこと"
+    # 09/14 20:22 オーナー「サブ立てるのは今最適化の役やってるやつの分だけにして」＝ 役は 1つ。
+    assert nr.ROLES == ("optimizer",), "役が変わったら、この検査の前提を書き直すこと"
 
 
 def test_記録が無ければ2種類とも立てる():

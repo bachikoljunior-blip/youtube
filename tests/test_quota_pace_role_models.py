@@ -20,7 +20,7 @@ import quota  # noqa: E402
 def test_サブの役は_ROLE_TIER_から引く():
     """名簿を2か所に持たない —— 役を1つ足す日に `ROLE_TIER` だけを直せばよい。"""
     roles = quota.sub_roles()
-    assert "hourly" in roles and "optimizer" in roles
+    assert roles == ("optimizer",)   # 09/14 20:22 オーナー「サブ立てるのは最適化の役だけ」
     # 親自身の回（`owner-*`）はサブではない。
     assert not any(r.startswith("owner-") for r in roles)
 
@@ -51,7 +51,7 @@ def test_役ごとに模型が分かれる_Fableの枠がまだ在るとき(monk
     """
     _fake_fable(monkeypatch, est=50.0)              # Fable の枠はまだ半分
     got = {r: quota.sub_model(None, r)[0] for r in quota.sub_roles()}
-    assert got == {"hourly": "fable", "optimizer": "opus"}, got
+    assert got == {"optimizer": "fable"}, got
 
 
 def test_Fableが上限に着いたら_2つとも_opus(monkeypatch):
@@ -78,7 +78,7 @@ def test_役が読まれていること(monkeypatch):
     枠が真ん中のときにしか出ません。ここが 1点 ぶんの本体です。
     """
     _fake_fable(monkeypatch, est=50.0)
-    assert quota.sub_model(None, "hourly")[0] != quota.sub_model(None, "optimizer")[0]
+    assert quota.sub_model(None, "owner-record")[0] != quota.sub_model(None, "optimizer")[0]
 
 
 def test_役を足したら印字も増える():

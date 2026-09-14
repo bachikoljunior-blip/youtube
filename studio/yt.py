@@ -198,8 +198,9 @@ def scheduled_all() -> list[dict]:
     return [v for v in all_videos() if v["publish_at"] and v["privacy"] != "public"]
 
 
-def today_lineup(videos: list[dict] | None = None) -> list[dict]:
+def today_lineup(videos: list[dict] | None = None, date: dt.date | None = None) -> list[dict]:
     """きょう（JST）に公開ずみ・公開予定の本。**公開ずみも予約も、全本から拾う。**
+    `date` を渡せばその日（2026-09-14 20:3x・hourly: `schedule --at "YYYY-MM-DD HH:MM"` の「1日1本」の門がこれで数える）。
 
     2026-09-07 16:4x（optimizer・Opus）に public 側を全本に変えた。それまで公開ずみは
     「上げた順の先頭 60本」から拾っていたので、08月に上げて きょう公開された旧作りの本が
@@ -208,7 +209,7 @@ def today_lineup(videos: list[dict] | None = None) -> list[dict]:
     素通りして、きょうは 2本 出ている。`all_videos()` は1度しか引かないので単位は増えない。
     """
     videos = videos if videos is not None else all_videos()
-    d = now_jst().date()
+    d = date or now_jst().date()
     rows = [v for v in videos if v["privacy"] == "public" and when(v).date() == d]
     seen = {v["id"] for v in rows}
     rows += [v for v in scheduled_all() if v["id"] not in seen and when(v).date() == d]
