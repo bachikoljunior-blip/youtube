@@ -179,6 +179,35 @@ def test_まだ着いていない5から7本目は待ちに入る(tmp_path):
     books += _n_books(tmp_path, [9999], reached=False, start=6)
     got = trend.shape_run(_rows(books), tmp_path)
     assert [b["idx"] for b in got["n1_wait"]] == [6]
+    assert got["n1_closed"] is False and got["n1_verdict"] == "まだ"
+
+
+def test_5から7本目が全部着いて門に届かなければ1aは確定で引かれない(tmp_path):
+    """**この検査がこの回の当のもの**（2026-09-14 11:0x）——
+    (1-a) の並びは 3本（5〜7本目）で閉じているので、3本 とも着いて 1本 しか下回らなければ
+    **2本目 は もう出ません**。`1本／門 2本` だけを読むと「待てば来る」に見えます。
+    """
+    got = trend.shape_run(
+        _rows(_n_books(tmp_path, [1, 2, 3, 4, 0, 970, 820])), tmp_path)
+    assert [b["idx"] for b in got["n1_below"]] == [5]
+    assert got["n1_wait"] == []
+    assert got["n1_closed"] is True
+    assert got["n1_verdict"] == "引かれません（確定）"
+
+
+def test_門に届いたら1aは引かれましたと言う(tmp_path):
+    got = trend.shape_run(
+        _rows(_n_books(tmp_path, [1, 2, 3, 4, 0, 0, 820])), tmp_path)
+    assert len(got["n1_below"]) == 2
+    assert got["n1_verdict"] == "引かれました"
+
+
+def test_8本目以降は1aに数えない(tmp_path):
+    """並びは 5〜7本目 で閉じています —— 8本目 が下回っても 2本目 にはなりません。"""
+    got = trend.shape_run(
+        _rows(_n_books(tmp_path, [1, 2, 3, 4, 0, 970, 820, 0, 0])), tmp_path)
+    assert [b["idx"] for b in got["n1_below"]] == [5]
+    assert got["n1_verdict"] == "引かれません（確定）"
 
 
 # ------------------------------------------------------------------ 印字
@@ -190,6 +219,29 @@ def test_行に門と残りと1aが出る(tmp_path):
     assert "(1-a)" in line and "門 2本" in line
     assert "挟み" in line
     assert "判定は" not in line or "hourly" in line
+
+
+def test_行は1aが尽きたら待たないと言う(tmp_path):
+    """**行に出ないと、次の回は `1本／門 2本` を「待ち」と読みます。**"""
+    line = trend.shape_line(
+        _rows(_n_books(tmp_path, [1, 2, 3, 4, 0, 970, 820])), tmp_path)
+    assert "引かれません・確定" in line
+    assert "待たないこと" in line
+
+
+def test_行は1aが引かれたら宛先を言う(tmp_path):
+    line = trend.shape_line(
+        _rows(_n_books(tmp_path, [1, 2, 3, 4, 0, 0, 820])), tmp_path)
+    assert "(1-a) が引かれました" in line
+    assert "`hourly`" in line
+
+
+def test_行はまだ待つ本が在るうちは確定と言わない(tmp_path):
+    books = _n_books(tmp_path, [1, 2, 3, 4, 0])
+    books += _n_books(tmp_path, [9999], reached=False, start=6)
+    line = trend.shape_line(_rows(books), tmp_path)
+    assert "確定" not in line
+    assert "まだ 48h に着いていない 1本" in line
 
 
 def test_行は門に届いたら判定の宛先を言う(tmp_path):

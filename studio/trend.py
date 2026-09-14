@@ -4120,7 +4120,9 @@ def shape_run(rows: list[dict], scripts: "Path | None" = None) -> dict:
     * 新しい作りの本が **何本** 在り、うち **48h に着いた本が何本** か（＝ 門 7本 までの残り）
     * その 48h を**挟みのまま**並べた **中位**（`views_at_age` ＝ 齢 48.0h ちょうどの点は実物 0本）
     * それが **旧作りの帯（60〜191回）のどちら側**か（**重なったら「分けられない」** ＝ 言い切らない）
-    * 覆る条件 (1-a) の連 —— **5〜7本目 のうち 48h が 437回 を下回った本の数**（門 2本）
+    * 覆る条件 (1-a) の連 —— **5〜7本目 のうち 48h が 437回 を下回った本の数**（門 2本）と、
+      **その並びが尽きたか**（``n1_closed`` / ``n1_verdict``。2026-09-14 11:0x に足した ——
+      下の 覆る条件 (4)）
 
     **0回 の本も 1本 として数えます**（§7「形」の 決め (5)・`feature_cohorts` と同じ側）。
 
@@ -4136,6 +4138,13 @@ def shape_run(rows: list[dict], scripts: "Path | None" = None) -> dict:
     (3) 門に届いたあとも本は増えます —— **中位は動き続けます**が、
     「形か題材が原因」の判定は **7本 の刻で 1度** 下すものです（§7「形」の本文）。
     届いたあとの中位で判定を上書きするなら、その理由をその回に書くこと。
+    (4) **(1-a) の並びは 3本（5〜7本目）で閉じています** —— 3本 とも 48h に着いて門（2本）に
+    届かなかったら、``n1_verdict`` は **「引かれません（確定）」** を返し、
+    **それ以上は待ちません**。08:2x までのこの口は ``1本／門 2本`` とだけ言い、
+    **尽きたことを言いませんでした**（§7 の行は「2本目は 09/13 か 09/14 の 48h」と
+    待つ側で書かれていた）。**並びを 8本目 以降へ伸ばすなら `SHAPE_N1_RANGE` を動かすこと** ——
+    そのときは「5〜7本目」という言い回しも一緒に直す（門は 1か所）。
+    derivation は JOURNAL 2026-09-14 11:0x。
     """
     books = studio_books(rows, scripts)
     ready = [b for b in books if b["at48"]["reached"]]
@@ -4146,6 +4155,19 @@ def shape_run(rows: list[dict], scripts: "Path | None" = None) -> dict:
     n1_below = [b for b in n1_range
                 if b["at48"]["reached"] and b["at48"]["hi"] < SHAPE_N1_VIEWS]
     n1_wait = [b for b in n1_range if not b["at48"]["reached"]]
+    #: (1-a) の並びが**尽きた**か —— 5〜7本目 が全部 48h に着き、それでも門（2本）に
+    #: 届かなかったら、**2本目 は もう出ません**（並びは 3本 で閉じているので、
+    #: 8本目 以降は数えません）。**「1本／門 2本」だけを読むと、待てば来るように見えます** ——
+    #: §7 の行が「2本目は 09/13 か 09/14 の 48h」と書いていた当のもので、
+    #: 2026-09-14 11:0x に**両方 着いて、どちらも 437回 の上**でした。3値:
+    #: ``"引かれました"`` / ``"引かれません（確定）"`` / ``"まだ"``。
+    n1_done = not n1_wait
+    if len(n1_below) >= SHAPE_N1_GATE:
+        n1_verdict = "引かれました"
+    elif n1_done:
+        n1_verdict = "引かれません（確定）"
+    else:
+        n1_verdict = "まだ"
     verdict = "まだ"
     if len(ready) >= SHAPE_GATE and mid is not None:
         if mid["lo"] > hi_band:
@@ -4160,7 +4182,8 @@ def shape_run(rows: list[dict], scripts: "Path | None" = None) -> dict:
             "n": len(books), "ready": ready, "n_ready": len(ready),
             "short": max(0, SHAPE_GATE - len(ready)), "mid": mid, "verdict": verdict,
             "n1_gate": SHAPE_N1_GATE, "n1_views": SHAPE_N1_VIEWS,
-            "n1_below": n1_below, "n1_wait": n1_wait}
+            "n1_below": n1_below, "n1_wait": n1_wait,
+            "n1_closed": n1_done, "n1_verdict": n1_verdict}
 
 
 def shape_line(rows: list[dict], scripts: "Path | None" = None) -> str:
@@ -4186,8 +4209,13 @@ def shape_line(rows: list[dict], scripts: "Path | None" = None) -> str:
         body += f"　→ !! **門に届きました。中位は {r['verdict']}**（**判定は `hourly`**・§5）"
     body += (f"　**(1-a)（5〜7本目 の 48h が {r['n1_views']}回 を下回った本）: "
              f"{len(r['n1_below'])}本／門 {r['n1_gate']}本**"
-             + (f"（まだ 48h に着いていない {len(r['n1_wait'])}本）" if r["n1_wait"] else "")
-             + "。**48h は挟みで読みます**（`views_at_age`）・**0回 の本も数えます**（決め (5)）")
+             + (f"（まだ 48h に着いていない {len(r['n1_wait'])}本）" if r["n1_wait"] else ""))
+    if r["n1_verdict"] == "引かれました":
+        body += "　→ !! **(1-a) が引かれました**（**判定は `hourly`**・§5）"
+    elif r["n1_verdict"] == "引かれません（確定）":
+        body += ("　→ **(1-a) は引かれません・確定**（5〜7本目 は 3本 とも 48h に着いた ＝ "
+                 "**2本目 は もう出ません。待たないこと**・`n1_closed`）")
+    body += "。**48h は挟みで読みます**（`views_at_age`）・**0回 の本も数えます**（決め (5)）"
     return body
 
 
