@@ -891,13 +891,28 @@ def cmd_order_image(a):
     ORDERS.mkdir(parents=True, exist_ok=True)
     oid = f"{a.id}-bg"
     p = ORDERS / f"{oid}.json"
+    # **注文の大きさは形から引く**（2026-09-14 17:3x・optimizer・Opus。`script.Form.size` が正本）。
+    # それまで `"1080x1920"` が字で埋まっていました —— 14:2x に足した長尺（`form: "long"` ＝ 横 1920x1080）は
+    # **縦の絵を注文し**、`slides.background` は cover-fit なので、届いた縦の絵は
+    # **真ん中の 32% だけに切り取られて**横の画面に貼られます（1080x1920 を 1920x1080 に合わせると
+    # 倍率 1.778・高さ 3413px の 1080px ぶんだけが残る）。**赤は出ません** —— 絵は貼れるからです。
+    # **数を 2度 書かないこと**: 画面の寸法は `script.FORMS` の 1か所（`slides.Geom` と検査で挟んである）。
+    form = script.form_of(s.form)
+    size = f"{form.size[0]}x{form.size[1]}"
     if p.exists():
-        print("注文ずみ:", p, json.loads(p.read_text(encoding="utf-8")).get("status"))
+        prev = json.loads(p.read_text(encoding="utf-8"))
+        print("注文ずみ:", p, prev.get("status"))
+        # **置いたあとに形が動いた本**（注文は 1度しか置かないので、黙って縦の絵のまま残る）。
+        # 直し方は 1つ: この json の `size` と `out` を書き換えて `status` を `pending` へ戻し、
+        # 焼き直しを頼むこと（**注文を消さない** ＝ 届いた絵の履歴が切れる）。
+        if prev.get("size") and prev["size"] != size:
+            print(f"  !! 注文は {prev['size']} ・いまの形 `{form.name}` は {size}"
+                  " ＝ **届く絵は cover-fit で切り取られます**（`cmd_order_image` の註）")
         return 0
     order = {"id": oid, "asked_at": now_jst().isoformat(timespec="seconds"),
-             "for": f"{s.date} の本（{s.id}）の背景",
+             "for": f"{s.date} の本（{s.id}・形 {form.name}）の背景",
              "prompt": s.image_prompt or "落ち着いた紺色の背景に、机の上の書類と電卓。写実的。文字は入れない。",
-             "avoid": "文字・ロゴ・実在の人物・透かし", "size": "1080x1920", "format": "jpg",
+             "avoid": "文字・ロゴ・実在の人物・透かし", "size": size, "format": "jpg",
              "out": f"assets/images/{oid}.jpg", "status": "pending"}
     p.write_text(json.dumps(order, ensure_ascii=False, indent=1), encoding="utf-8")
     print("注文を置いた:", p, "（外の毎時セッションが焼く。届いたら build し直す）")

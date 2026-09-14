@@ -4409,7 +4409,7 @@ def shape_line(rows: list[dict], scripts: "Path | None" = None) -> str:
 
 
 def image_orders(rows: list[dict], orders: "Path | None" = None,
-                 images: "Path | None" = None) -> dict:
+                 images: "Path | None" = None, scripts: "Path | None" = None) -> dict:
     """**画像の注文が届いたか**と、**届いた絵が本に載ったか**を数える
     （2026-09-11 02:0x・optimizer・Opus。**API 0単位**・ファイルを見るだけ）。
 
@@ -4435,16 +4435,51 @@ def image_orders(rows: list[dict], orders: "Path | None" = None,
     (2) `slides` が背景を build 時ではなく予約時に貼るようになったら、この数は意味を失う
     （`cli.image_for` の呼ばれ方が変わったら、ここも書き直すこと）。
     (3) 注文の置き場が `docs/IMAGE_ORDERS.md` の約束から動いたら、両方の道を直すこと。
+
+    **大きさの側（2026-09-14 17:3x・optimizer・Opus が足した）**: `cmd_order_image` は 14:2x まで
+    `"1080x1920"` を字で持っており、**長尺（`form: "long"` ＝ 横 1920x1080）の本は縦の絵を注文していました**。
+    `slides.background` は cover-fit なので、**届いた絵は切り取られて貼れてしまい、赤は出ません**。
+    根は `cmd_order_image`（この回に `script.Form.size` から引くよう直した）で、ここが数えるのは
+    **その根が漏らした分**の 2つ です:
+      `mis_form`  注文の `size` が、その本の**いまの形**の寸法と違う（＝ 置いたあとに形が動いた本。
+                  注文は 1度しか置かないので、`cmd_order_image` を撃ち直しても直りません）
+      `mis_file`  **届いた絵の画素**が注文の `size` と違う（＝ 外のセッションが別の大きさで焼いた）
+    **台本の無い注文は数えません**（旧 `src/` の 8件 ＝ 形を訊く先が無い・§8）。
+    **覆る条件**: (4) `mis_file` が 3件 出たら、直すのは注文ではなく `docs/IMAGE_ORDERS.md` の約束の書き方。
+    (5) 形が 3つ目 になったら、`Form.size` が正本のままか（`slides.Geom` と挟んであるか）を先に見ること。
     """
     from pathlib import Path
     orders = Path(orders) if orders is not None else ROOT / "data" / "image_orders"
     images = Path(images) if images is not None else ROOT / "assets" / "images"
 
+    def _img(oid: str) -> "Path | None":
+        for ext in ("jpg", "png"):
+            q = images / f"{oid}.{ext}"
+            if q.exists():
+                return q
+        return None
+
     def _has(oid: str) -> bool:
-        return any((images / f"{oid}.{ext}").exists() for ext in ("jpg", "png"))
+        return _img(oid) is not None
 
     oids = sorted(p.stem for p in orders.glob("*.json")) if orders.is_dir() else []
     missing = [o for o in oids if not _has(o)]
+    mis_form, mis_file = [], []
+    for oid in oids:
+        try:
+            o = json.loads((orders / f"{oid}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        want = str(o.get("size") or "")
+        sid = oid[:-3] if oid.endswith("-bg") else oid
+        form = _script_form(sid, scripts)
+        if want and form is not None and want != form:
+            mis_form.append(f"{oid}（注文 {want} ／ 形 {form}）")
+        q = _img(oid)
+        if want and q is not None:
+            got = _png_size(q)
+            if got and got != want:
+                mis_file.append(f"{oid}（注文 {want} ／ 届いた絵 {got}）")
     last: dict[str, dict] = {}
     for r in rows:
         if r.get("event") == "built" and r.get("id"):
@@ -4453,7 +4488,33 @@ def image_orders(rows: list[dict], orders: "Path | None" = None,
                      if not r.get("image") and _has(f"{vid}-bg"))
     return {"n": len(oids), "delivered": len(oids) - len(missing),
             "missing": missing, "restale": restale,
+            "mis_form": mis_form, "mis_file": mis_file,
             "built_books": len(last)}
+
+
+def _script_form(sid: str, scripts: "Path | None" = None) -> str | None:
+    """台本 `sid` の形の寸法（`"1080x1920"` の形）。台本が無ければ None（旧 `src/` の注文 ＝ §8）。"""
+    from .script import SCRIPTS, form_of
+    base = Path(scripts) if scripts is not None else SCRIPTS
+    q = base / f"{sid}.json"
+    if not q.exists():
+        return None
+    try:
+        d = json.loads(q.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    w, h = form_of(str(d.get("form") or "short")).size
+    return f"{w}x{h}"
+
+
+def _png_size(q: "Path") -> str | None:
+    """絵の画素（`"1080x1920"` の形）。読めなければ None（**読むのは頭だけ** ＝ 画素は展開しません）。"""
+    try:
+        from PIL import Image
+        with Image.open(q) as im:
+            return f"{im.width}x{im.height}"
+    except Exception:  # noqa: BLE001  絵が読めないことは、この口の答えではありません
+        return None
 
 
 def loop_open(rows: list[dict], now: dt.datetime | None = None) -> dict:
@@ -4555,6 +4616,16 @@ def image_line(rows: list[dict]) -> str:
                  "**`build` し直してから (3) 目で見ること**（`image_orders` の註）。")
     else:
         body += "  **焼き直し待ちの本 0本**（届いた絵は、いちばん新しい build に載っています）。"
+    if q["mis_form"]:
+        body += ("  !! **注文の大きさが、その本の形と違う: " + "・".join(q["mis_form"][:3])
+                 + "** ＝ 届く絵は cover-fit で切り取られます。"
+                 "**注文の json の `size`／`out` を書き換えて `status` を `pending` へ戻すこと**"
+                 "（消さない・`image_orders` の註）。")
+    if q["mis_file"]:
+        body += ("  !! **届いた絵の画素が注文と違う: " + "・".join(q["mis_file"][:3])
+                 + "**（`image_orders` の 覆る条件 (4)）。")
+    if not q["mis_form"] and not q["mis_file"]:
+        body += "  **大きさの食い違い 0件**（注文 対 形・注文 対 届いた絵）。"
     return body
 
 

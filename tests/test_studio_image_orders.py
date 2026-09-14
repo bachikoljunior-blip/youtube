@@ -81,13 +81,21 @@ def test_絵が届いていない本は焼き直し待ちではない(tmp_path):
 def test_行は焼き直しが要るときだけ鳴る(monkeypatch):
     monkeypatch.setattr(tr, "image_orders",
                         lambda rows, **kw: {"n": 1, "delivered": 1, "missing": [],
-                                            "restale": ["a"], "built_books": 1})
+                                            "restale": ["a"], "mis_form": [], "mis_file": [],
+                                            "built_books": 1})
     assert "!!" in tr.image_line([])
     monkeypatch.setattr(tr, "image_orders",
                         lambda rows, **kw: {"n": 1, "delivered": 1, "missing": [],
-                                            "restale": [], "built_books": 1})
+                                            "restale": [], "mis_form": [], "mis_file": [],
+                                            "built_books": 1})
     line = tr.image_line([])
     assert "!!" not in line and "0本" in line
+    # 大きさの側（2026-09-14 17:3x に足した 2つ）も、同じ形で「鳴るときだけ鳴る」こと。
+    monkeypatch.setattr(tr, "image_orders",
+                        lambda rows, **kw: {"n": 1, "delivered": 1, "missing": [],
+                                            "restale": [], "mis_form": ["a-bg（注文 1080x1920 ／ 形 1920x1080）"],
+                                            "mis_file": [], "built_books": 1})
+    assert "!!" in tr.image_line([])
 
 
 def test_毎周の並びに出る():
