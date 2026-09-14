@@ -514,11 +514,36 @@ def record_ready(vid: str, rd: dict, drift) -> None:
            meta_drift=(None if drift is None else list(drift)))
 
 
+def channel_switch_line(ch: dict, rows: list[dict]) -> str:
+    """口（`YT_REFRESH_TOKEN`）が見せるチャンネルが、台帳の前の周と違ったら名指しする（**API 0単位**）。
+
+    2026-09-14 09:4x・`hourly`・Fable。オーナー 09:3x「上書き後のはクッキーストラテジャーというチャンネルの方のトークン」
+    （受け取り帳 `efc96bd9`・`docs/GOAL.md` (4-f)）＝ 環境の側の値は上書きずみで、**届くのは次の起動から**
+    （いまの親は 05:25 起動・09:26 の `status` はまだ「お金と仕事の教科書」）。
+    `yt.channel()` は `mine=True` の**先頭 1件**を返すだけで、**どのチャンネルかは誰も見ていません** ——
+    次の起動で口が替わると `status`／`measure`／`schedule` は**黙って**もう一方のチャンネルへ向きます
+    （台帳の 9本 は元の側）。**止めません**（1日1本の門とは別の問い）—— 名指しだけ。
+    比べる相手は台帳のいちばん新しい `channel` の行（`record_channel` が毎周 書く）。**この関数は `record_channel` より前に呼ぶこと**
+    （後に呼ぶと、比べる相手が自分になる）。
+    **覆る条件**: (1) この行が出た周の判定は `hourly` とオーナー（GOAL (4-f-2)）。
+    (2) 口が 2つ（環境変数名が 2つ）になったら、比べる相手は「その口の前の周」＝ 行に口の名を持たせてから比べること。
+    """
+    prev = [r for r in rows if r.get("event") == "channel" and r.get("id")]
+    if not prev or prev[-1]["id"] == ch.get("id"):
+        return ""
+    return (f"!! チャンネルが変わりました: 台帳の前の周 {prev[-1]['id']} → いま {ch.get('id')}（{ch.get('title')}）"
+            " ＝ この口の `schedule`／`measure` はこちらのチャンネルへ向きます・台帳の本はもう一方の側（GOAL (4-f)・判定は hourly とオーナー）")
+
+
 def cmd_status(a):
     ch = yt.channel()
     vids = yt.all_videos()
     sids = studio_video_ids()
     print(f"チャンネル: 登録 {ch['subscriberCount']}・総再生 {ch['viewCount']}・本数 {ch['videoCount']}")
+    # 口が替わっていたら名指し（`channel_switch_line` の註・**`record_channel` より前**）。
+    sw = channel_switch_line(ch, ledger_rows())
+    if sw:
+        print(sw)
     # 毎周 読んでいた数を台帳へ（`record_channel` の註。**追加 0単位** ＝ 上ですでに引いてある）。
     record_channel(ch)
     # **短い形で印字する**（2026-09-10 23:2x・optimizer・Opus）—— `trend` も同じ周に
