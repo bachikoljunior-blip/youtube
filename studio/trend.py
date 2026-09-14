@@ -6261,7 +6261,50 @@ def pair_gap_line(rows: list[dict], at: dt.datetime | None = None) -> str:
 #: **重なりの窓の端が、刻み 1つ ぶん ずれうる幅**（時間）。`channel_steps` の `periods` の上端が
 #: 読めるあいだはそちらを使い、この数は**刻みが 1つも載っていない枠の代理**です
 #: （実測の周期 12.73／11.16時間・`channel_steps` の覆る条件 (1)）。
+#: **2026-09-14 16:0x から、許容そのものはこの数から引いていません**（`_overlap_edge_views`）——
+#: 単位が時間のままだと、**再生の割合として読むことになり**、`channel_steps` の覆る条件 (3)
+#: （「率として読まないこと」）と同じ誤りを、同じ file の中で犯します。**残すのは
+#: 刻みが 1つも載っていない枠の代理としてだけ**（そのときは端の刻みの大きさも読めない）。
 CHANNEL_OVERLAP_EDGE_H = 13.0
+
+#: **刻みが 1つも載っていない枠で、端の刻み 1つ ぶんを再生で代理する数**。
+#: 実測の刻みは 20〜1,625回 と 2桁 開くので、**代理は上端ではなく中位**（`periods` が読めれば使わない）。
+CHANNEL_OVERLAP_EDGE_VIEWS = 300
+
+
+def _overlap_edge_views(steps: list[dict], start: dt.datetime, end: dt.datetime) -> int:
+    """**重なりの窓の端で、刻み 1つ ぶんが取り違えられる大きさ（再生）**。
+
+    **なぜ時間ではないか**（2026-09-14 16:0x・optimizer・Opus。**この回に覆る条件 (4) が
+    引かれ、引いたのは伸びではなく単位でした**）: 台帳の側の 1日 は
+    `env(窓の終わり) − env(窓の始まり)` で、**総再生は率ではなく刻みで動きます**
+    （`channel_steps` の覆る条件 (3) ＝「その速さが立った区間は 1つ もありません」）。
+    刻みは実測で **20 / 40 / 44 / 90 / 224 / 796 / 948 / 1,625回** と 2桁 開くので、
+    **端の刻み 1つ が窓の内と外で入れ替わると、合計はその刻みの大きさだけ動きます。**
+    ＝ 許容を `刻みの周期（時間） ÷ 日数` で置くと、**時間の割合を再生の割合として**読むことになり、
+    **大きい配りを含む窓では必ず越えます**（実測 09/14 15:4x: 読める日 2日・報告 1,291回 に対し、
+    終わりの端の刻みが **796回** ＝ **62%**。時間の門は **29%** で、**+40.0% が「引かれました」に化けていた**）。
+
+    **数え方**: 窓の端ごとに、**その端の直前の刻み**と**直後の刻み**の大きい方を取り、2つ を足す
+    （どちらの向きにずれても、動くのはその刻み 1つ ぶん）。**`censored` の刻みも大きさは読めるので入れます**
+    （読めないのは「いつからのぶんか」で、大きさではありません）。
+
+    **覆る条件**: (1) 端の刻みが **20回 以下**の回が 3回 続いたら、端の取り違えは
+        もう合計を動かしません ＝ そのときは許容を刻みではなく**測りの揺れ**（複製）から引くこと。
+    (2) 読める日が **7日** を越えたら、端 2つ の刻みは分母に薄まります ＝
+        そのときは「端 1つ ぶん」ではなく `max(端) ÷ 日数` へ縮めること（いまは 2日 なので薄まらない）。
+    (3) 刻みが 1つも載っていない枠では `CHANNEL_OVERLAP_EDGE_VIEWS` の代理が立ちます ＝
+        **その回の `drawn` を根拠に (m) を作り直さないこと**（代理は実測ではありません）。
+    """
+    if not steps:
+        return CHANNEL_OVERLAP_EDGE_VIEWS
+    out = 0
+    for edge in (start, end):
+        before = [s["d"] for s in steps if s["t1"] <= edge]
+        after = [s["d"] for s in steps if s["t1"] > edge]
+        cand = ([before[-1]] if before else []) + ([after[0]] if after else [])
+        out += max(cand) if cand else 0
+    return out or CHANNEL_OVERLAP_EDGE_VIEWS
 
 
 def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> dict:
@@ -6308,10 +6351,11 @@ def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> di
     実測 20260910（09/10 16:00〜09/11 16:00 JST）: **報告 797 対 台帳 1,665（+109%）** ——
     この 2.09倍 は「チャンネルが報告と別の物を数えている」ではなく、**窓が最初の刻みを含んだ**側です。
     → `overlap[i]["censored"]` を立て、**読むのは `read`（`censored` でない日）の累計だけ**。
-    **許容は `periods` の上端 ÷ 日数**（端の誤りは刻み 1つ ぶんまでで、日を重ねると薄まる）。
+    **許容は端の刻み 1つ ぶん（`_overlap_edge_views`・単位は再生）÷ 報告の累計**
+    （~~`periods` の上端 ÷ 日数~~ は 2026-09-14 16:0x に落ちた ＝ 覆る条件 (4) の下）。
 
     `channel` は `{"overlap": [{"date","rep","led","censored"}], "read": [...],
-    "rep_sum", "led_sum", "ratio", "tol", "edge_h", "drawn", "first_step",
+    "rep_sum", "led_sum", "ratio", "tol", "edge_h", "edge_views", "drawn", "first_step",
     "next_day", "predict", "first_t", "last_t"}`。
 
     **覆る条件**: (1) 若い境目の差が **3本 続けて ±5% の中**に入ったら、複製の遅れは
@@ -6323,6 +6367,13 @@ def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> di
     (4) **`read` の累計が許容（`tol`）を越えたら**（`drawn`）、チャンネルの `viewCount` は
         報告と同じ物を数えていません ＝ §7 (m) の当て所ごと作り直すこと。
         **越えるまでは、1日 の比で (m) を動かさないこと**（上の 20260910 がその 1例目）。
+        **【2026-09-14 16:0x・optimizer・Opus】この (4) は 1度 引かれ、引いたのは単位でした。**
+        許容を `刻みの周期（時間） ÷ 日数` で置いていたので、**時間の割合を再生の割合として**
+        読んでおり（`channel_steps` の覆る条件 (3) が同じ file で禁じている読み）、
+        **終わりの端に 796回 の刻みが立った回に、+40.0% が 29% の門を越えました。**
+        再生で数え直すと端の取り違えは **840回 ＝ 65%** で、**引かれません**。
+        いまの許容は `_overlap_edge_views`（**単位は再生**）で、覆る条件 3つ はその註。
+        **引くのは「端の刻み 1つ ぶんより大きい食い違い」が出た回だけです。**
     (5) 報告に出ない本（消した本・非公開に戻した本）の再生が総再生に残るなら、
         差は**片側だけ**（台帳 ＞ 報告）に出ます ＝ `ratio` が**正の側だけ**で門を越え続けたら、
         疑うのは刻みではなく**報告の側の本の数**（`reporting` の `latest_rows` の本数と
@@ -6396,14 +6447,20 @@ def report_vs_ledger(rows: list[dict], rep_rows: list[dict] | None = None) -> di
         if ch["read"]:
             rep_sum = sum(o["rep"] for o in ch["read"])
             led_sum = sum(o["led"] for o in ch["read"])
-            # **許容は日数で縮みます** —— 窓の端の誤りは「刻み 1つ ぶん」までで、
-            # 日を重ねるとその 1つ が分母に薄まります（`periods` が空のあいだは代理）。
+            # **許容の単位は再生です。時間ではありません**（2026-09-14 16:0x に直した）——
+            # 窓の端の誤りは「刻み 1つ ぶん」までですが、**その 1つ の大きさは 20〜1,625回 と
+            # 2桁 開く**ので、時間の割合で置くと大きい配りを含む窓で必ず越えます
+            # （`_overlap_edge_views` の註・`channel_steps` の覆る条件 (3) と同じ誤り）。
+            r_start = reporting.day_end_jst(ch["read"][0]["date"]) - dt.timedelta(days=1)
+            r_end = reporting.day_end_jst(ch["read"][-1]["date"])
+            edge_v = _overlap_edge_views(st["steps"], r_start, r_end)
             edge = st["periods"]["max"] or CHANNEL_OVERLAP_EDGE_H
-            tol = edge / (24.0 * len(ch["read"]))
+            tol = (edge_v / rep_sum) if rep_sum else None
             ratio = (led_sum / rep_sum - 1.0) if rep_sum else None
             ch.update({"rep_sum": rep_sum, "led_sum": led_sum, "ratio": ratio,
-                       "tol": tol, "edge_h": edge,
-                       "drawn": bool(ratio is not None and abs(ratio) > tol)})
+                       "tol": tol, "edge_h": edge, "edge_views": edge_v,
+                       "drawn": bool(ratio is not None and tol is not None
+                                     and abs(ratio) > tol)})
         # **次に読める日**（重なりが 1日も無い回と、重なりが全部 `censored` の回の両方で要ります）。
         if last_day:
             nxt = (dt.datetime.strptime(last_day, "%Y%m%d").date() + dt.timedelta(days=1))
@@ -6650,8 +6707,9 @@ def report_vs_ledger_line(rows: list[dict], rep_rows: list[dict] | None = None) 
             chl = (f"  **(m) を外から当てた**: {seen} ＝ **読める日 {len(ch['read'])}日**・"
                    f"累計 報告 **{ch['rep_sum']}回** 対 台帳 **{ch['led_sum']}回**"
                    + (f"（**{r * 100:+.1f}%**・許容 **±{ch['tol'] * 100:.0f}%** ＝ "
-                      f"刻みの周期 {ch['edge_h']:.1f}時間 ÷ {len(ch['read'])}日）"
-                      if r is not None else "")
+                      f"**端の刻み {ch['edge_views']}回**（単位は時間ではなく再生・"
+                      f"`_overlap_edge_views`）÷ 報告 {ch['rep_sum']}回）"
+                      if r is not None and ch.get("tol") is not None else "")
                    + (" ＝ **引かれました。チャンネルの `viewCount` は、報告と同じ物を数えていません** ——"
                       "§7 (m) の当て所ごと作り直すこと（`report_vs_ledger` の覆る条件 (4)）"
                       if ch["drawn"] else
