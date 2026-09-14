@@ -35,6 +35,56 @@ ORDERS = ROOT / "data" / "image_orders"
 MAX_SECONDS = script.MAX_SECONDS
 
 
+def auth_line(e: BaseException) -> str:
+    """**口（`YT_REFRESH_TOKEN`）が開かなかったとき**に印字する 1行（空なら別の失敗 ＝ 握りつぶさない）。
+
+    2026-09-14 19:0x・optimizer・Opus。**この回に踏んだ**: 親のコンテナが 18:2x に立ち直り、
+    そこから立ったサブ（18:45 起動）で `python -m studio.cli status` が
+    `RefreshError: ('invalid_grant: Bad Request', ...)` の**生のトレースバック**で落ちました
+    （17:16 の周までは同じ口で `measure` が通っている ＝ **替わったのは値のほう**。
+    オーナー 09:3x「上書き後のはクッキーストラテジャーというチャンネルの方のトークン」`efc96bd9`）。
+
+    **なぜ 1行 を作ったか**: `status` は**毎周の 2手目**です（`docs/spawn_prompt.md`）。
+    そこがトレースバックで落ちると、次の回は「自分が壊したのか・口が死んだのか」を
+    分けられません（§6「赤が既定になると、次の回は自分が壊したのかを見分けられない」と同じ形）。
+    **門は `main()` の 1か所**（`status`／`measure`／`schedule`／`comments`／`analytics`／
+    `reporting`／`reply` が全部そこを通る ＝ 口ごとに `try` を置かない）。
+
+    **`invalid_grant` の読み分け**（`docs/SETUP.md` の表）:
+      `Token has been expired or revoked.` … 同意画面が「テスト」のまま 7日 過ぎた／人が取り消した
+      `Bad Request`（説明が無い側）        … **その refresh token が、いまの `YT_CLIENT_ID` の物ではない**
+                                            ＝ 別の OAuth クライアントで取った token を入れた形
+    **どちらも repo の側では直せません**（ブラウザの同意が要る ＝ オーナーの手・`docs/SETUP.md` STEP 4）。
+
+    **止めるか**: 止めます（返り 2）。`schedule`／`measure` は**撃てたふりをしてはいけない**側で、
+    `trend`（API 0単位）だけは この門の外なので、口が死んだ周でも §7 は読めます。
+
+    **覆る条件**: (1) この行が出た周に、口が 2つ（環境変数名が 2つ）になっていたら、
+    名指しするのは「どちらの口か」＝ そのとき `yt.svc()` に口の名を持たせてから、この行を書き直すこと。
+    (2) `invalid_grant` 以外（`invalid_client`・`unauthorized_client`）で落ちた回が出たら、
+    その語をこの読み分けに足すこと（いまは 2つ しか実物を見ていない）。
+    (3) 口が生き返っても この行が出続けたら、見ているのは例外の字ではなく別の失敗 ＝ 空を返すこと。
+    """
+    s = f"{type(e).__name__}: {e}"
+    if "invalid_grant" not in s and "RefreshError" not in type(e).__name__:
+        return ""
+    revoked = "expired or revoked" in s
+    why = ("同意画面が「テスト」のまま 7日 過ぎたか、人が取り消した側"
+           if revoked else
+           "いまの `YT_CLIENT_ID` で取った token ではない側（別の OAuth クライアントの token を入れた形）")
+    return (
+        "!! **YouTube の口が開きません**（`YT_REFRESH_TOKEN`・`invalid_grant`）＝ "
+        f"{why}。\n"
+        "   `status`／`measure`／`schedule`／`comments` は**この周は撃てません**"
+        "（`trend` は API 0単位 なので読めます）。\n"
+        "   **直せるのはオーナーだけです**（ブラウザの同意 ＝ `docs/SETUP.md` STEP 4）——"
+        " `YT_REFRESH_TOKEN` を いまの `YT_CLIENT_ID`/`YT_CLIENT_SECRET` で取り直すか、\n"
+        "   その token を作った側の `YT_CLIENT_ID`/`YT_CLIENT_SECRET` も一緒に環境へ置くこと。"
+        " 訊きは `data/owner_ask.jsonl` の `yt_token_dead`（`python scripts/owner_ask.py`）。\n"
+        f"   生の字: {s[:160]}"
+    )
+
+
 def image_for(vid: str) -> Path | None:
     for ext in ("jpg", "png"):
         p = IMAGES / f"{vid}-bg.{ext}"
@@ -1626,7 +1676,16 @@ def main(argv=None):
     if getattr(a, "id", None):
         a.id = script.norm_id(a.id)
     fn = globals()["cmd_" + a.cmd.replace("-", "_")]
-    return fn(a) or 0
+    # **口が開かなかったときの門は、ここ 1か所**（`auth_line` の註）。
+    # 口ごとに `try` を置かないこと —— 置くと、次に足した口が黙って生のトレースバックへ戻ります。
+    try:
+        return fn(a) or 0
+    except Exception as e:  # noqa: BLE001
+        line = auth_line(e)
+        if not line:
+            raise
+        print(line)
+        return 2
 
 
 if __name__ == "__main__":
