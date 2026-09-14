@@ -35,54 +35,26 @@ ORDERS = ROOT / "data" / "image_orders"
 MAX_SECONDS = script.MAX_SECONDS
 
 
-def auth_line(e: BaseException) -> str:
-    """**口（`YT_REFRESH_TOKEN`）が開かなかったとき**に印字する 1行（空なら別の失敗 ＝ 握りつぶさない）。
+def token_rejected(e: BaseException) -> bool:
+    """**口（`YT_REFRESH_TOKEN`）が拒まれた例外か**（2026-09-14 19:1x・optimizer・Opus。**8回目の二重**）。
 
-    2026-09-14 19:0x・optimizer・Opus。**この回に踏んだ**: 親のコンテナが 18:2x に立ち直り、
-    そこから立ったサブ（18:45 起動）で `python -m studio.cli status` が
-    `RefreshError: ('invalid_grant: Bad Request', ...)` の**生のトレースバック**で落ちました
-    （17:16 の周までは同じ口で `measure` が通っている ＝ **替わったのは値のほう**。
-    オーナー 09:3x「上書き後のはクッキーストラテジャーというチャンネルの方のトークン」`efc96bd9`）。
+    同じ周の `hourly`（18:5x）が `yt.svc()` で同じ欠陥を直しました（`yt.token_rejected_words`）。
+    **文言の読み分けは そちらが正本** —— ここは**残った口 2つ** だけを塞ぎます:
+    **`studio/analytics.py` と `studio/reporting.py` は自分の `svc()` で `Credentials` を組み**、
+    `yt.svc()` を通りません（＝ `cli analytics`／`cli reporting` は 18:5x の直しのあとも
+    生のトレースバック 40行 で落ちます。撃って確かめた）。
+    **`yt.py` に口をもう 1つ 足さないこと** —— そこは この周の `hourly` の持ち場です（§5 11:0x の取り分）。
 
-    **なぜ 1行 を作ったか**: `status` は**毎周の 2手目**です（`docs/spawn_prompt.md`）。
-    そこがトレースバックで落ちると、次の回は「自分が壊したのか・口が死んだのか」を
-    分けられません（§6「赤が既定になると、次の回は自分が壊したのかを見分けられない」と同じ形）。
-    **門は `main()` の 1か所**（`status`／`measure`／`schedule`／`comments`／`analytics`／
-    `reporting`／`reply` が全部そこを通る ＝ 口ごとに `try` を置かない）。
+    **止めるか**: 止めます（`main()` が 返り 2）。`schedule`／`measure`／`analytics` は
+    **撃てたふりをしてはいけない**側で、`trend`（API 0単位）は この門の外なので、口が死んだ周でも §7 は読めます。
 
-    **`invalid_grant` の読み分け**（`docs/SETUP.md` の表）:
-      `Token has been expired or revoked.` … 同意画面が「テスト」のまま 7日 過ぎた／人が取り消した
-      `Bad Request`（説明が無い側）        … **その refresh token が、いまの `YT_CLIENT_ID` の物ではない**
-                                            ＝ 別の OAuth クライアントで取った token を入れた形
-    **どちらも repo の側では直せません**（ブラウザの同意が要る ＝ オーナーの手・`docs/SETUP.md` STEP 4）。
-
-    **止めるか**: 止めます（返り 2）。`schedule`／`measure` は**撃てたふりをしてはいけない**側で、
-    `trend`（API 0単位）だけは この門の外なので、口が死んだ周でも §7 は読めます。
-
-    **覆る条件**: (1) この行が出た周に、口が 2つ（環境変数名が 2つ）になっていたら、
-    名指しするのは「どちらの口か」＝ そのとき `yt.svc()` に口の名を持たせてから、この行を書き直すこと。
-    (2) `invalid_grant` 以外（`invalid_client`・`unauthorized_client`）で落ちた回が出たら、
-    その語をこの読み分けに足すこと（いまは 2つ しか実物を見ていない）。
-    (3) 口が生き返っても この行が出続けたら、見ているのは例外の字ではなく別の失敗 ＝ 空を返すこと。
+    **覆る条件**: (1) `analytics`／`reporting` の `svc()` が `yt.svc()` を通るようになったら、
+    この門は要りません（そのとき `main()` の `try` ごと外すこと）。
+    (2) `RefreshError` 以外の型で口が拒まれた回が出たら、型の名ではなく文言だけで引くこと。
+    (3) 印字が 2度 出る回が出たら（`yt.svc()` が `SystemExit` をやめて例外を投げ直す形に変わったら）、
+    どちらか 1つ にすること —— **同じ周に同じ段落を 2度 印字しない**（`cmd_status` の 23:2x の決めと同じ）。
     """
-    s = f"{type(e).__name__}: {e}"
-    if "invalid_grant" not in s and "RefreshError" not in type(e).__name__:
-        return ""
-    revoked = "expired or revoked" in s
-    why = ("同意画面が「テスト」のまま 7日 過ぎたか、人が取り消した側"
-           if revoked else
-           "いまの `YT_CLIENT_ID` で取った token ではない側（別の OAuth クライアントの token を入れた形）")
-    return (
-        "!! **YouTube の口が開きません**（`YT_REFRESH_TOKEN`・`invalid_grant`）＝ "
-        f"{why}。\n"
-        "   `status`／`measure`／`schedule`／`comments` は**この周は撃てません**"
-        "（`trend` は API 0単位 なので読めます）。\n"
-        "   **直せるのはオーナーだけです**（ブラウザの同意 ＝ `docs/SETUP.md` STEP 4）——"
-        " `YT_REFRESH_TOKEN` を いまの `YT_CLIENT_ID`/`YT_CLIENT_SECRET` で取り直すか、\n"
-        "   その token を作った側の `YT_CLIENT_ID`/`YT_CLIENT_SECRET` も一緒に環境へ置くこと。"
-        " 訊きは `data/owner_ask.jsonl` の `yt_token_dead`（`python scripts/owner_ask.py`）。\n"
-        f"   生の字: {s[:160]}"
-    )
+    return type(e).__name__ == "RefreshError" or "invalid_grant" in str(e)
 
 
 def image_for(vid: str) -> Path | None:
@@ -1681,10 +1653,10 @@ def main(argv=None):
     try:
         return fn(a) or 0
     except Exception as e:  # noqa: BLE001
-        line = auth_line(e)
-        if not line:
+        if not token_rejected(e):
             raise
-        print(line)
+        # **文言は `yt.token_rejected_words` の 1か所**（同じ周の `hourly` 18:5x）。ここでは読み分けない。
+        print(yt.token_rejected_words(e))
         return 2
 
 

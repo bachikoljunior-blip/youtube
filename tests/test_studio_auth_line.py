@@ -1,13 +1,15 @@
-"""`cli.auth_line` と `cli.main` の門 —— **口（`YT_REFRESH_TOKEN`）が死んだ周に、生のトレースバックを出さない**。
+"""`cli.token_rejected` と `cli.main` の門 —— **`analytics`／`reporting` が生のトレースバックで落ちない**。
 
-2026-09-14 19:0x・optimizer・Opus。**この回に踏んだ**: 親のコンテナが 18:2x に立ち直り、
-そこから立ったサブ（18:45 起動）の `status` が `RefreshError: ('invalid_grant: Bad Request', ...)` で落ちた
-（17:16 の周までは同じ口で `measure` が通っている）。
+2026-09-14 19:1x・optimizer・Opus。**8回目の二重**（§5 の取り分）: 同じ周の `hourly`（18:5x）が
+`yt.svc()` の側で同じ欠陥を直しました（`yt.token_rejected_words`・検査 `tests/test_studio_token_rejected.py`）。
+**文言の読み分けはそちらが正本で、ここでは読み分けません。** 残る口は 2つ ——
+`studio/analytics.py` と `studio/reporting.py` は**自分の `svc()`** で `Credentials` を組むので
+`yt.svc()` の `SystemExit` を通らない（＝ 18:5x の直しのあとも 40行 の traceback で落ちる）。
 
 **陽性対照**（撃って落とした）:
- (1) `auth_line` の `invalid_grant` の判定を常に真にすると `test_別の失敗は空を返す` が落ちる。
- (2) `main()` の `if not line: raise` を外すと `test_口と関係ない失敗は握りつぶさない` が落ちる。
- (3) 読み分け（`expired or revoked`）を外すと `test_取り消された側と_クライアント違いの側を読み分ける` が落ちる。
+ (1) `main()` の `if not token_rejected(e): raise` を外すと `test_口と関係ない失敗は握りつぶさない` が落ちる。
+ (2) `token_rejected` を常に真にすると同じ検査が落ちる。
+ (3) `main()` の `print` を消すと `test_analytics_が拒まれたら_3行_と返り_2_になる` が落ちる。
 """
 import pytest
 
@@ -21,32 +23,31 @@ class _Refresh(Exception):
 _Refresh.__name__ = "RefreshError"
 
 
-def test_取り消された側と_クライアント違いの側を読み分ける():
-    revoked = cli.auth_line(_Refresh("('invalid_grant: Token has been expired or revoked.', {})"))
-    mismatch = cli.auth_line(_Refresh("('invalid_grant: Bad Request', {'error': 'invalid_grant'})"))
-    assert "テスト" in revoked and "取り消した" in revoked
-    assert "YT_CLIENT_ID" in mismatch and "取り消した" not in mismatch
+def test_口が拒まれた例外を型でも文言でも引く():
+    assert cli.token_rejected(_Refresh("('invalid_grant: Bad Request', {})"))
+    assert cli.token_rejected(Exception("invalid_grant: Token has been expired or revoked."))
 
 
-def test_どちらの側もオーナーの手と訊きの名を出す():
-    for e in (_Refresh("('invalid_grant: Bad Request', {})"),
-              _Refresh("('invalid_grant: Token has been expired or revoked.', {})")):
-        line = cli.auth_line(e)
-        assert line.startswith("!! **YouTube の口が開きません**")
-        assert "docs/SETUP.md" in line and "yt_token_dead" in line
-        assert "trend" in line          # 口が死んだ周でも §7 は読める、と言うこと
+def test_別の失敗は引かない():
+    assert not cli.token_rejected(ValueError("台本が無い"))
+    assert not cli.token_rejected(KeyError("viewCount"))
 
 
-def test_別の失敗は空を返す():
-    assert cli.auth_line(ValueError("台本が無い")) == ""
-    assert cli.auth_line(KeyError("viewCount")) == ""
-
-
-def test_main_は口の失敗を_1行_と返り_2_にする(capsys, monkeypatch):
-    monkeypatch.setattr(cli, "cmd_trend", lambda a: (_ for _ in ()).throw(
+def test_analytics_が拒まれたら_3行_と返り_2_になる(capsys, monkeypatch):
+    monkeypatch.setattr(cli, "cmd_analytics", lambda a: (_ for _ in ()).throw(
         _Refresh("('invalid_grant: Bad Request', {})")))
-    assert cli.main(["trend"]) == 2
-    assert "YouTube の口が開きません" in capsys.readouterr().out
+    assert cli.main(["analytics"]) == 2
+    out = capsys.readouterr().out
+    assert out.startswith("!! 口が拒まれました")          # 文言は `yt.token_rejected_words` の 1か所
+    assert "YT_REFRESH_TOKEN_2" in out                   # 置く物（オーナーの手）まで出ていること
+    assert out.count("!! 口が拒まれました") == 1          # 同じ段落を 2度 印字しない
+
+
+def test_reporting_も同じ門を通る(capsys, monkeypatch):
+    monkeypatch.setattr(cli, "cmd_reporting", lambda a: (_ for _ in ()).throw(
+        _Refresh("('invalid_grant: Token has been expired or revoked.', {})")))
+    assert cli.main(["reporting"]) == 2
+    assert "失効" in capsys.readouterr().out
 
 
 def test_口と関係ない失敗は握りつぶさない(monkeypatch):
