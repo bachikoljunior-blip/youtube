@@ -617,7 +617,7 @@ _表 = ("読み方\n"
 
 
 def test_行ごとに数え_ラベルで名を取ること():
-    rows, head = M.now_rows(_表)
+    rows, head, _ = M.now_rows(_表)
     assert [r[0] for r in rows] == ["測った刻", "この回"]
     assert rows[1][2] == 3                              # 続きの行は前の行に付く
     assert head > 0                                     # 見出しと「この塊の形」は頭の側
@@ -626,12 +626,12 @@ def test_行ごとに数え_ラベルで名を取ること():
 def test_positive_control_型の段落は行として数えないこと():
     """「この塊の形」は 字下げ 4 で始まりますが **ラベルの列を持ちません** ——
     行として数えると、型そのものが「越えた行」に化けます（`now_rows` の覆る条件 (2)）。"""
-    rows, _ = M.now_rows(_表)
+    rows, _, _ = M.now_rows(_表)
     assert all("この塊の形" not in r[0] for r in rows)
 
 
 def test_行と頭の合計は塊の字と一致すること():
-    rows, head = M.now_rows(_表)
+    rows, head, _ = M.now_rows(_表)
     assert sum(r[1] for r in rows) + head == M.measure7_split(_表)["いまの数"]["body_chars"]
 
 
@@ -649,6 +649,42 @@ def test_positive_control_門を潰すと越えた行が黙ること(monkeypatch
     assert "でかい行" in "\n".join(M.now_rows_report(t))
     monkeypatch.setattr(M, "ROW_GATE", 10 ** 6)
     assert "引かれません" in "\n".join(M.now_rows_report(t))
+
+
+def test_形を外れた行は名指しされ_上の行に足されること():
+    """ラベルの後ろが **1字 空き**だと `NOW_ROW` を外れ、**1つ上の行の字に黙って足されます**
+    （2026-09-14 09:3x に `docs/METHOD.md` で 3行 踏んだ・`now_rows` の覆る条件 (2)）。"""
+    t = _表.replace("    この回         あいうえお\n",
+                   "    この回         あいうえお\n    ながいラベル **中身**\n")
+    rows, head, stray = M.now_rows(t)
+    assert [r[0] for r in rows] == ["測った刻", "この回"]      # 行は増えない
+    assert len(stray) == 1 and "ながいラベル" in stray[0]
+    assert rows[1][2] == 4                                  # 上の行の続きとして数えられている
+    out = "\n".join(M.now_rows_report(t))
+    assert "形を外れた行 1行" in out and "ながいラベル" in out
+
+
+def test_positive_control_2字_空きにすると自分の字を持つこと():
+    """**直すのは行のほう** —— 2字 空きにした同じ行は、`stray` から消えて 1行 になります。"""
+    t = _表.replace("    この回         あいうえお\n",
+                   "    この回         あいうえお\n    ながいラベル  **中身**\n")
+    rows, _, stray = M.now_rows(t)
+    assert stray == []
+    assert [r[0] for r in rows] == ["測った刻", "この回", "ながいラベル"]
+    assert "形を外れた行" not in "\n".join(M.now_rows_report(t))
+
+
+def test_positive_control_続きの行は形を外れた行に数えないこと():
+    """続きの行（字下げ 19）は `NOW_STRAY` に入りません ——
+    入れると、まともな表が毎行 鳴ります。"""
+    _, _, stray = M.now_rows(_表)
+    assert stray == []
+
+
+def test_頭の側の段落は形を外れた行に数えないこと():
+    """「この塊の形」の段落は**最初のラベル行より前** ＝ 頭の側で、`stray` ではありません。"""
+    _, head, stray = M.now_rows(_表)
+    assert head > 0 and stray == []
 
 
 def test_行ごとの並びは_split_のときだけ出ること():

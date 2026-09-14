@@ -584,12 +584,24 @@ ROW_GATE = CHAR_GATE
 #: **見出しではありません** —— この形を外れた行は、前の行の続きとして数えます。
 NOW_ROW = re.compile(r"^ {4}(\S(?:.*?\S)?)\s{2,}\S")
 
+#: **字下げ 4 で「ラベルに見える」のに `NOW_ROW` を外れた行**（`now_rows` の `stray`）。
+#: 続きの行は字下げ 19 で始まるので、この形には入りません。
+#: **2字 空きを 1字 にするだけで、その行は自分の字を持たなくなります**（2026-09-14 09:3x に踏んだ・下）。
+NOW_STRAY = re.compile(r"^ {4}\S")
 
-def now_rows(text: str) -> tuple[list[tuple[str, int, int]], int]:
+
+def _stray_name(ln: str, width: int = 20) -> str:
+    """形を外れた行を名指しするための短い名（ラベルが取れないので、行の頭を切る）。"""
+    s = ln[4:].rstrip()
+    return s if len(s) <= width else s[:width] + "…"
+
+
+def now_rows(text: str) -> tuple[list[tuple[str, int, int]], int, list[str]]:
     """§7「いまの数」を **行ごと**に数える（2026-09-14 01:5x・optimizer・Opus が足した）。
 
     返すのは `[(ラベル, 字, 行数), …]`（大きい順ではなく、METHOD の並び）と、
-    **表より前の頭**（見出し ＋「この塊の形」の段落）の字。
+    **表より前の頭**（見出し ＋「この塊の形」の段落）の字と、
+    **形を外れた行**（`stray`・下の 覆る条件 (2)）。
 
     **なぜ要るか**（この回に数えた）: この塊には **型**が在ります ——
     **ここに置いてよいのは 数・その数を持つ口の名・宛先（判定は誰か）・日付の指し の 4つ だけ**
@@ -610,8 +622,18 @@ def now_rows(text: str) -> tuple[list[tuple[str, int, int]], int]:
     **覆る条件**:
      (1) 300字 を越えた行を読んで、**中身が 4つ の型に収まっていた**回が出たら、
          代理は当たっていない ＝ 門を上げるのではなく、この口を畳んで JOURNAL に理由を書くこと。
-     (2) 表の行が `NOW_ROW` の形（字下げ 4 ＋ ラベル ＋ 2字 空き）を外れたら、この数は黙って
-         **頭の側**へ寄ります ＝ 頭の字が跳ねた回は、まず挟みを疑うこと（`_now_cut` の覆る条件 (1) と同じ向き）。
+     (2) ~~表の行が `NOW_ROW` の形（字下げ 4 ＋ ラベル ＋ 2字 空き）を外れたら、この数は黙って
+         **頭の側**へ寄ります~~ → **2026-09-14 09:3x（optimizer・Opus）に撃って外しました。**
+         **頭へは寄りません** —— 頭に入るのは**最初のラベル行より前**だけで、それより後で形を外れた行は
+         `elif rows` の側 ＝ **1つ上の行の続きとして、その行の字に黙って足されます。**
+         **実測（この回・`docs/METHOD.md`）**: 形を外れた行が **3行** 在り、
+         `(2-b) 振れ幅の幅` は `(2) 帯` へ・`読みの取りこぼし` は `(3) いいね` へ・
+         `題・説明欄の直し` は `画像の注文` へ入っていました
+         （**ラベルの後ろが 1字 空きだった** ＝ ラベルが長い行ほど起きます）。
+         ＝ **門（1行 +300字）が名指しする先が、字を書いた行とは別の行になります**
+         ——`(2) 帯` は **297字**（自分の字は 2行 ぶん）で、**門まで 3字**でした。
+         **いまは `stray` として毎周 名指しします**（字の合算は変えない ＝ 行と頭の合計は塊の字のまま）。
+         **直すのは道具ではなく行のほう**（ラベルの後ろを 2字 空きにする）。derivation は JOURNAL 09/14 09:3x
      (3) 型そのものが変わったら（4つ が 3つ／5つ になったら）、この註の「なぜ」を書き直すこと。
     """
     lines = text.split("\n")
@@ -619,22 +641,25 @@ def now_rows(text: str) -> tuple[list[tuple[str, int, int]], int]:
     blk = lines[a:b]
     rows: list[list] = []
     head = [blk[0]]
+    stray: list[str] = []
     for ln in blk[1:]:
         m = NOW_ROW.match(ln)
         if m:
             rows.append([m.group(1), [ln]])
         elif rows:
+            if NOW_STRAY.match(ln):
+                stray.append(_stray_name(ln))
             rows[-1][1].append(ln)
         else:
             head.append(ln)
     return ([(lab, _count(ls)["body_chars"], len(ls)) for lab, ls in rows],
-            _count(head)["body_chars"])
+            _count(head)["body_chars"], stray)
 
 
 def now_rows_report(text: str, full: bool = False) -> list[str]:
     """`now_rows` の印字（門の 1行 ＋ `--split` のときは並び）。"""
     try:
-        rows, head = now_rows(text)
+        rows, head, stray = now_rows(text)
     except (KeyError, ValueError, IndexError):
         return []
     over = sorted([r for r in rows if r[1] > ROW_GATE], key=lambda r: -r[1])
@@ -650,6 +675,13 @@ def now_rows_report(text: str, full: bool = False) -> list[str]:
                      "（畳めない 1行 が出たら `now_rows` の覆る条件 (1)）")
     else:
         out.append(f"  行の門 1行 +{ROW_GATE}字: 引かれません（越えた行は 0 行）")
+    if stray:
+        out.append(f"  !! **形を外れた行 {len(stray)}行**（字下げ 4 で ラベルに見えるのに **2字 空きが無い** ＝ "
+                   f"**その字は 1つ上の行に黙って足されています**・`NOW_STRAY`）: "
+                   + "・".join(f"`{n}`" for n in stray[:5]) + ("…" if len(stray) > 5 else "")
+                   + "。**門が名指しする先が、字を書いた行とは別の行になります** ＝ "
+                     "**直すのは道具ではなく行のほう**（ラベルの後ろを 2字 空きにする・"
+                     "`now_rows` の覆る条件 (2)）")
     if full:
         for lab, c, n in sorted(rows, key=lambda r: -r[1]):
             out.append(f"    {c:6,d}字  {n:3d}行  {lab}")
