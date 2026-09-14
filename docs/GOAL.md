@@ -322,6 +322,48 @@ auto mode の分類器が 2度 とも止めました（1度目は API で口を�
  (4-f-3) オーナーが環境の名か変数の名を言ったら、その言葉が正本。
 derivation は `docs/JOURNAL.md` 2026-09-14 09:4x。
 
+#### (4-f) 18:5x —— **上書きされた値は届きました。そして Google が拒みました**（2026-09-14 18:5x・`hourly`・Fable。**(4-f-2) の門が「別のチャンネルが見える」ではなく「何も見えない」の形で引かれた**）
+
+**実測**（API 0単位・token の口は日枠の外）: 親の入れ物は 09/14 18:2x JST に立て直され（`data/parent_wakes.jsonl`「入れ物の立て直しで起きた」）、
+その後 最初のサブ（このセッション・**18:45 起動**・`CCR_SPAWN_TIMESTAMP_MS`）で `python -m studio.cli status` が
+
+    google.auth.exceptions.RefreshError: invalid_grant: Bad Request
+
+で落ちました。**17:16 JST の `channel` の行（台帳・`UChTXZzwkIJHqyL7L_fEtuqQ` お金と仕事の教科書）までは同じ変数名で読めていた**
+＝ 立て直しで新しい値が届き、**その値を Google の token の口が受けません**。値の形は崩れていません
+（`YT_REFRESH_TOKEN` は 103字・前後に空白なし ＝ Google の refresh token の普通の長さ。中身は読んでいません ＝ 分類器が止める側）。
+`YT_CLIENT_ID`（72字）・`YT_CLIENT_SECRET`（35字）は在ります。
+
+**読み**（`yt.token_rejected_words` が印字する側・判定はオーナー）: `invalid_grant` の文言が **`Bad Request`** なのは、
+**その refresh token が この `YT_CLIENT_ID`／`YT_CLIENT_SECRET`（お金と仕事の教科書の側で使っていた OAuth クライアント）の物ではない**とき
+（クッキーストラテジャーの token を**別の OAuth クライアント／別の GCP プロジェクト**で取った ＝ token とクライアントの組が合っていない）。
+同じクライアントの token が失効したときの文言は `Token has been expired or revoked.` で、**今回はそちらではありません**。
+
+**いま止まっている物**: `status`／`measure`／`comments`／`schedule` の全部（口が 1つ で、それが拒まれている）。
+**09/15 10:00 の本（§18・台本は閉じている・絵も在る）は、口が戻らないと予約できません** —— §4 (4) の「10:00 を過ぎていたら
+20分 以上あとの 00分」で出す形も、口が要ります。**出さない日を作る分かれ目はここ 1つ**です。
+台帳の 9本 の再生・コメントも、口が戻るまで読めません（4-f-2 の「読めない」の当のもの）。
+
+**オーナーの手が要る物（1度だけ訊く ＝ (4-f-2) の「実測を持った 1度目」・`data/owner_ask.jsonl` `second_channel_env_name`）**:
+
+    (1) お金と仕事の教科書 の refresh token を `YT_REFRESH_TOKEN` に戻す
+        （台帳の 9本・コメント・09/15 の予約は全部この口。**戻るまで 1日1本 が止まります**）
+    (2) クッキーストラテジャー の token は **別の名 `YT_REFRESH_TOKEN_2`** に置く
+        （口が 2つ になれば、道具は名で選べる ＝ `yt.svc` に口の名の引数を足すのは こちらの手・API 0単位）
+    (3) その token を取った OAuth クライアントが (1) と別なら **`YT_CLIENT_ID_2`／`YT_CLIENT_SECRET_2`** も置く
+        （`Bad Request` はこの組が合っていない印。**同じクライアントで取り直す**なら (3) は要りません）
+
+**サブからは 1つも置けません**（環境変数は環境の側・`docs/KICKOFF.md` 1）。**置かれた値が届くのは次の起動から**（09:4x と同じ）。
+**この回に機械へ入れた物**: `yt.svc()` が口を先に 1回 開け、拒まれたら traceback ではなく 3行（何が拒まれたか・なぜ・置く物 3つ）で止まる
+（`yt.token_rejected_words`・検査 `tests/test_studio_token_rejected.py` 5件・陽性対照つき）。**23か所 の呼び手が同じ traceback を出す形をやめた**。
+
+**覆る条件**:
+ (4-f-4) 次の起動で `status` が「お金と仕事の教科書」を見せたら（`channel_switch_line` が鳴らず 3行 も出ない）、(1) は済んだ側 ＝ この段は畳み、(2)(3) だけ残す。
+ (4-f-5) `status` が `channel_switch_line` で **クッキーストラテジャー** を見せたら、(1) は済んでおらず (3) だけが済んだ側 ＝ 口は在るが向きが違う ＝ **09/15 の本をその口で出さないこと**（台帳の 9本 と別のチャンネル・(4-e-4)）。(1) を待つ。
+ (4-f-6) 3周 続けて 3行 のままなら、`quota` の親の【枠】の段に 1行 出して、周の速さを落とす側（読む物が無い周に Fable を使わない ＝ `quota.short_words` の門は既に「引かれました」）。
+ (4-f-7) オーナーが変数の名を言い直したら、その名が正本（(4-f-3) と同じ）。
+derivation は `docs/JOURNAL.md` 2026-09-14 18:5x。
+
 ### (4-g) 「できないと判断したなら、やり方を疑え」への答え（2026-09-14 13:4x・`hourly`・Fable）—— **疑う先は「本の磨き」ではなく「門の入り方」と「配り」**
 
 オーナー 11:30 `8e695b8e`「**適宜、期限内にできるか考え、できないと判断したならやり方が間違ってることを疑え**」
@@ -368,44 +410,24 @@ derivation は `docs/JOURNAL.md` 2026-09-14 09:4x。
  (4-g-5) 2つ目のチャンネルの口が先に届いたら、**1 の 3本 はそちらで出してよい**（絞られた口を避けられる ＝ (4-g-1) を先に消せる）。
 derivation は `docs/JOURNAL.md` 2026-09-14 13:4x。
 
-### (4-h) 口が死にました（2026-09-14 19:2x・optimizer・Opus）—— **上書きで届いた `YT_REFRESH_TOKEN` を Google が拒みます**
+### (4-h) (4-f) 18:5x に畳みました（2026-09-14 19:3x・optimizer・Opus）—— **同じ周に 2体 が同じ口を書いた（8回目の二重）**
 
-**(4-f) の「届くのは次の起動から」は届きました。届いた値が拒まれています。**
+**正本は上の (4-f) 18:5x**（`hourly`・18:5x）です。置く物 3つ・覆る条件 (4-f-4)〜(4-f-7)・訊き（`second_channel_env_name`）は
+**そちらに在り、ここには写しません**。19:2x にこちらが書いた同じ塊（置く物 3つ・覆る条件 4つ）と、訊き `yt_token_dead` は
+**取り下げました**（台帳に `answered: 取り下げ（二重）` を追記した ＝ 07:5x の `second_channel_env` と同じ形）。
 
-    17:16 JST まで   同じ変数名で `channel` / `measured` が通っていた（台帳・「お金と仕事の教科書」）
-    18:2x           親のコンテナが立ち直った（`data/parent_wakes.jsonl`）
-    18:45 起動のサブ  `invalid_grant: Bad Request` —— **`status` / `measure` / `schedule` /
-                    `comments` / `analytics` / `reporting` が全部 撃てません**
-    同じ周に撃った対照  **Google TTS の鍵は 200 で通ります** ＝ 網でも串でもなく、**この口だけ**が死んでいます
+**この節が (4-f) に足す実測は 2つ だけです**:
 
-**`invalid_grant` の 2つ の文言のうち `Bad Request` の側**です ＝ 失効（`Token has been expired or revoked.`）ではなく
-**その token が いまの `YT_CLIENT_ID` / `YT_CLIENT_SECRET` の物ではない側**（別の OAuth クライアントで取った token）。
-読み分けは `yt.token_rejected_words`・残る口 2つ（`analytics` / `reporting` は自分の `svc()` を持つ）は `cli.main()` の門。
+ (4-h-1) **死んでいるのは この口だけです。網でも串（proxy）でもありません** —— 同じ周に Google TTS へ
+        `ja-JP-Neural2-D` を 1回 撃って **200**（`GOOGLE_TTS_API_KEY` は生きている）。
+        ＝ **台本と mp4（`build`）はこの口の外で回せます。出せないだけです。**
+        **覆る条件**: TTS も落ちた回が出たら、疑うのは口ではなく網 ＝ そのときは `$HTTPS_PROXY/__agentproxy/status` の側。
+ (4-h-2) **`studio/analytics.py` と `studio/reporting.py` は自分の `svc()` を持ち、`yt.svc()` を通りません**
+        （撃って確かめた ＝ 2つ とも `SystemExit` ではなく生の `RefreshError`）。18:5x の 3行 はそこには届かないので、
+        **`cli.main()` に門を 1つ 置きました**（`cli.token_rejected`・文言は `yt.token_rejected_words` の 1か所のまま）。
+        **覆る条件**: その 2つ が `yt.svc()` を通るようになったら、`main()` の `try` ごと外すこと。
 
-**値段**: **09/15 10:00 の予約ができません** ＝ **1日1本 がそこで切れます**（台本 §18 は 494字 で閉じており、
-`build`（TTS）まではこの口の外なので回せます —— **出せないだけ**です）。台帳の 9本 も、きょうの数字も読めません。
-
-> **オーナーへ（4つ目）: `YT_REFRESH_TOKEN` を 1つ 直してください。** どれか 1つ で戻ります:
-> **(1)** 「お金と仕事の教科書」の token を `YT_REFRESH_TOKEN` に戻す（台帳の 9本 と 09/15 の本はこの口）。
-> **(2)** クッキーストラテジャーの token は**別の名 `YT_REFRESH_TOKEN_2`** に置く
-> （それを取ったクライアントが別なら `YT_CLIENT_ID_2` / `YT_CLIENT_SECRET_2` も）。
-> **(3)** いまの `YT_CLIENT_ID` / `YT_CLIENT_SECRET` で取り直す（`docs/SETUP.md` STEP 4・ブラウザだけ・5分）。
-> **置き替えたら、親のコンテナを 1度 立て直してください** —— 走っているセッションには届きません（09/14 の実測）。
-
-**訊きは `data/owner_ask.jsonl` の `yt_token_dead`**（`python scripts/owner_ask.py` が毎周 印字する ＝ ここへ周の数を写さない）。
-**これで訊きは 4件目 ＝ (4-c)（3件 になったら `docs/FOR_OWNER.md` へ移す）は引かれています** ——
-ただし**返事待ちは 1件**で、残る 3件 は返事ずみです。**移すのは「返事待ちが 3件 並んだ」回**
-＝ `owner_ask.py` の覆る条件 (2) の分母を、この回に「返事待ち」の側で読みました（`scripts/owner_ask.py` の註）。
-
-**覆る条件**:
- (4-h-1) 口が戻ったら、**戻った周が `measure` を撃って `channel` の行を見ること** ——
-        `cli.channel_switch_line` が「チャンネルが変わりました」と言ったら、そこから先の台帳は別の口の物です（(4-f-2)）。
- (4-h-2) **3周 返事が無かったら**（`owner_ask.py` の門）、`build` まで回した 09/15 の本を持ったまま待つ側ではなく、
-        **出せない日が何日 続いたかをこの節に 1行 で数えること**（期限 2026-12-13 の分母は日数です）。
- (4-h-3) オーナーが「2つ目のチャンネルで出せ」と言ったら、その言葉が正本（口の名も含めて ＝ (4-f-3)）。
- (4-h-4) `invalid_grant` 以外（`invalid_client`）が出たら、拒んでいるのは token ではなく `YT_CLIENT_SECRET` の側
-        ＝ そのときは上の (1)(2)(3) ではなく、secret の側を訊くこと。
-derivation は `docs/JOURNAL.md` 2026-09-14 19:2x。
+derivation は `docs/JOURNAL.md` 2026-09-14 **19:2x**（18:5x の側は `hourly` の同じ日の節）。
 
 ## 何かを決める前に、毎回この5つに答えること
 
