@@ -4526,17 +4526,52 @@ REPLICA_LAG_H = 2.8
 CHANNEL_BLOCK_MIN_H = 2 * REPLICA_LAG_H
 
 
+def channel_ids(rows: list[dict]) -> list[str]:
+    """台帳の `channel` の行に出てくるチャンネル id を、**最後に見た順**（新しいほうが後ろ）で返す。
+
+    2026-09-14 09:4x JST（optimizer・Opus）に足した。**まだ 1つ しか出ていません**
+    （`UChTXZzwkIJHqyL7L_fEtuqQ` 243件）—— 足したのは、**2つ目が出る口が開いたから**です
+    （オーナー 09/14 09:3x「上書き後のはクッキーストラテジャーというチャンネルの方のトークン」
+    ＝ `YT_REFRESH_TOKEN` が別のチャンネルを指し得る。台帳 `data/owner_ask.jsonl` の
+    `second_channel_token`・`docs/GOAL.md` (4-e)）。
+    """
+    seen: dict[str, None] = {}
+    for r in sorted([r for r in rows if r.get("event") == "channel" and r.get("id")], key=_at):
+        seen[str(r["id"])] = None
+    return list(seen)
+
+
 def _channel_rows(rows: list[dict]) -> list[dict]:
-    """`channel` の行を**刻の順**に並べて返す。
+    """`channel` の行を**刻の順**に並べ、**いちばん新しい id の分だけ**返す。
 
     **並べ直す理由（2026-09-10 16:4x・optimizer・Opus。実物で踏んだ）**: 台帳は追記なので
     行の順は**書いた順**であって刻の順ではありません —— 同じ周の 2体 が数十秒 差で書くと
     入れ替わります（実測: `15:59:33` の行が `15:58:58` の行より**前**に在る）。
     `channel_growth` は両端しか使わないので、**入れ替わりが端に来た周は窓が負になります**
     （`views_per_h` の符号が反転する）。いまは中ほどで起きただけで、まだ数は狂っていません。
+
+    **id で絞る理由（2026-09-14 09:4x・optimizer・Opus。まだ踏んでいない ＝ 口が開いた側）**:
+    `yt.channel()` は `channels.list(mine=True)` ＝ **いまのトークンが指すチャンネル**を返し、
+    `cli.record_channel` はその数を `id` つきで同じ台帳へ追記します。
+    **`channel_growth` は両端しか使わないので、トークンが別のチャンネルへ替わった周が 1つ 在れば、
+    窓の両端が別のチャンネルになり、登録も総再生も「増え」として読まれます**
+    （§7 の収益の節の覆る条件 (1) の登録率・§7 (m) の「チャンネルの側が止まっているか」が、
+    どちらも別のチャンネルの数で引かれる）。**行そのものは正しいので、赤は出ません。**
+    ＝ **混ざりは黙って通り、数だけが別人になります**（`now_rows` の覆る条件 (2) と同じ形）。
+    **絞るのは「いちばん新しい id」**（＝ いま測っているチャンネル）で、古い id の行は**消しません**
+    —— 口が戻れば、その id の窓がまた読めます。**混ざったことは `channel_line` が `!!` で言います。**
+
+    **覆る条件**: (1) 2つ目のチャンネルを**こちらが本気で回し始めたら**（本を出す側になったら）、
+    「いちばん新しい id だけ」では周ごとに窓が入れ替わります ＝ そのときは id ごとに
+    別々の窓を返すこと（`channel_growth` の返しを id で割る）。
+    (2) 同じ周に 2つ の id が書かれる回が出たら（親が 2体 に別々のトークンを渡した側）、
+    絞りは「新しい id」ではなく**周ごとの多数**にすること。
     """
+    ids = channel_ids(rows)
+    last = ids[-1] if ids else None
     cs = [r for r in rows if r.get("event") == "channel"
-          and isinstance(r.get("views"), int) and isinstance(r.get("subs"), int)]
+          and isinstance(r.get("views"), int) and isinstance(r.get("subs"), int)
+          and (last is None or r.get("id") in (None, last))]
     return sorted(cs, key=_at)
 
 
@@ -5557,15 +5592,26 @@ def _bulk_words(g: dict) -> str:
 
 
 def channel_line(rows: list[dict]) -> str:
-    """`channel_growth` を1行にする（`status` と `trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
+    """`channel_growth` を1行にする（`status` と `trend` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。
+
+    **id が 2つ 以上 出たら、いちばん前で `!!` で言います**（2026-09-14 09:4x・`_channel_rows` の註）。
+    """
+    mixed = channel_ids(rows)
+    head = ("" if len(mixed) < 2 else
+            f"!! **台帳の `channel` の行に チャンネル id が {len(mixed)}つ**（{'・'.join(mixed)}）"
+            f" ＝ **下の数は いちばん新しい `{mixed[-1]}` の行だけ**から出しています"
+            f"（`trend.channel_ids` / `_channel_rows`）。"
+            f"**窓が別のチャンネルを跨ぐと、登録も総再生も「増え」に化けます** ——"
+            f"トークンがどのチャンネルを指しているかを先に見ること"
+            f"（`docs/GOAL.md` (4-e)・台帳 `data/owner_ask.jsonl` の `second_channel_token`）。 ")
     g = channel_growth(rows)
     if g["n"] < 2:
-        return (f"**チャンネルの数の点: {g['n']}件** —— 増えを数えるには 2点 要ります"
+        return head + (f"**チャンネルの数の点: {g['n']}件** —— 増えを数えるには 2点 要ります"
                 "（`cli.record_channel` がこの回から毎周 残します・**API 0単位**）。"
                 "**METHOD §1 の「登録者 25人」は 09/05 の手写しの 1点**で、"
                 "いまとの差が**いつ付いたか**は、まだ台帳に在りません。")
     if g["span_h"] is None or g["span_h"] < CHANNEL_MIN_SPAN_H:
-        return (f"**チャンネル 登録 {g['subs']}・総再生 {g['views']}**（点 {g['n']}件・"
+        return head + (f"**チャンネル 登録 {g['subs']}・総再生 {g['views']}**（点 {g['n']}件・"
                 f"窓 {g['span_h']:.2f}時間 ＜ {CHANNEL_MIN_SPAN_H:.1f}時間 ＝ **まだ読まないこと**）。")
     rate = ("測れていません（総再生の増えが 0）" if g["subs_per_view"] is None
             else f"**{g['subs_per_view'] * 100:.3f}%**（門 0.5%・§7 の収益の節の覆る条件 (1)）")
@@ -5723,7 +5769,7 @@ def channel_line(rows: list[dict]) -> str:
             f"**伸びを出せるのは読み直した側だけ**）"
             + ("・食い違い ＝ 測れていません（両方 0）。" if g["mismatch"] is None
                else f"・食い違い **{g['mismatch'] * 100:.0f}%**" + tail))
-    return (f"**チャンネル 登録 {g['subs']}（{g['d_subs']:+d}）・総再生 {g['views']}（{g['d_views']:+d}）**"
+    return head + (f"**チャンネル 登録 {g['subs']}（{g['d_subs']:+d}）・総再生 {g['views']}（{g['d_views']:+d}）**"
             f"（{g['laps']}周・点 {g['n']}件・窓 {g['span_h']:.1f}時間 ＝ **{g['views_per_h']:+.1f}回/時**）。"
             f"{rep}{step}{flat}登録率 ＝ {rate}。{cmp_}"
             + ("**この窓では、総再生が動かないことを「チャンネルが止まった」と読まないこと** ——"
