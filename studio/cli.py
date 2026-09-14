@@ -28,7 +28,7 @@ from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
-from . import analytics, critic, hear, render, reporting, script, trend, yt
+from . import analytics, critic, hear, render, reporting, script, stall, trend, yt
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
 IMAGES = ROOT / "assets" / "images"
@@ -1692,6 +1692,18 @@ def main(argv=None):
     if getattr(a, "id", None):
         a.id = script.norm_id(a.id)
     fn = globals()["cmd_" + a.cmd.replace("-", "_")]
+    # **停止の確認は、口を撃つ前・どの cmd でも**（2026-09-14 22:0x・受け取り帳 `6df66dd7`
+    #     「3分ごとに停止を確認していたら原因を全て潰してから再実行するようにして出せるまでやって」）。
+    #     **`cmd_status` の中に置かないこと** —— あの関数は 1行目が `yt.channel()` なので、
+    #     **口が閉じている周は、この印にたどり着く前に死にます**（09/14 18:2x〜20:2x の当の停止）。
+    #     ここは台帳だけ（API 0単位）なので、口が閉じていても読めます。
+    #     定義・数・「3分」の読み・覆る条件は `studio/stall.py` の 1か所（写しを持たない）。
+    try:
+        for _line in stall.lines():
+            print(_line)
+    except Exception as _exc:                                  # noqa: BLE001
+        # **確認が転んでも、その周を止めないこと**（入れるのは「止まっていたら動かす」側だけ）。
+        print(f"（停止の確認が転びました: {str(_exc)[:80]}）")
     # **口が開かなかったときの門は、ここ 1か所**（`auth_line` の註）。
     # 口ごとに `try` を置かないこと —— 置くと、次に足した口が黙って生のトレースバックへ戻ります。
     try:

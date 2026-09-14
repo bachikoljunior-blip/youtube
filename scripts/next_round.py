@@ -344,6 +344,66 @@ IDLE_WAIT_MAX_MIN = 360.0
 #: 印字に使う、上限の言葉（数は `quota.owner_rate_cap()` が毎回 目盛りから出す。写さない）。
 OWNER_CAP_WORDS = "「今までの最高速度の二分の一」"
 
+
+def stall_state(now: datetime | None = None, rows=None, rounds=None) -> dict:
+    """**止まっていたら、床を待たずに立て直す**（正本は `studio/stall.py`・API 0単位）。
+
+    オーナー原文（2026-09-14 19:44 JST・受け取り帳 `6df66dd7`）:
+    **「3分ごとに停止を確認していたら原因を全て潰してから再実行するようにして出せるまでやって」**
+    **「停止を確認したら、ね」**
+
+    停止の定義（数）と「3分」の読み、覆る条件は **`studio/stall.py` の docstring の 1か所**
+    です（**ここに写しを持たないこと** —— 写した瞬間に、門と印字が別の世界を回ります）。
+    ここがやるのは、その判定を親の間隔（`floor`）へつなぐことだけです。
+
+    **検査の中では、明示的に渡されない限り「停止していない」を返します。**
+    この関数は**本物の台帳**（`data/studio/ledger.jsonl`・`data/rounds.jsonl`）を読むので、
+    そうしないと**本当に止まっている日に、関係のない検査が丸ごと落ちます**
+    （`studio.common._ledger_blocked` と同じ族・門は `PYTEST_CURRENT_TEST`）。
+    機構そのものは `decide(stall=…)` に渡す形で撃たれています
+    （`tests/test_next_round_stall_retry.py`）。
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST") and rows is None and rounds is None:
+        return {"stalled": False, "signs": [], "since": None, "laps": 0,
+                "retry_min": None, "why": "検査の中（明示的に渡されていません）",
+                "shippable": None, "ship_words": ""}
+    try:
+        from studio import stall as _stall
+    except Exception as exc:                                   # noqa: BLE001
+        return {"stalled": False, "signs": [], "since": None, "laps": 0,
+                "retry_min": None, "shippable": None, "ship_words": "",
+                "why": f"studio/stall.py を読めませんでした（{str(exc)[:60]}）"}
+    try:
+        at = None if now is None else now.astimezone(_stall.JST)
+        return _stall.state(rows=rows, rounds=rounds, now=at)
+    except Exception as exc:                                   # noqa: BLE001
+        return {"stalled": False, "signs": [], "since": None, "laps": 0,
+                "retry_min": None, "shippable": None, "ship_words": "",
+                "why": f"studio/stall.py が答えませんでした（{str(exc)[:60]}）"}
+
+
+def stall_lines(st: dict) -> list[str]:
+    """`decide()` の返りから、親が印字する行（停止していなければ空）。
+
+    **白名簿（`CLAUDE.md`）はオーナーへ出す文の規則**で、この道具の画面はサブの本文と
+    同じ「親が読む所」です ＝ ここは出します（`gap_over_gate` の印字と同じ扱い）。
+    """
+    if not st.get("stall"):
+        return []
+    out = [f"  [!!] **停止を確認しました**（印 "
+           f"{'・'.join(st.get('stall_signs') or []) or '0件'}"
+           f"・停止から {st.get('stall_laps', 0)}周）"
+           " —— オーナー `6df66dd7`「3分ごとに停止を確認していたら原因を全て潰してから"
+           "再実行するようにして出せるまでやって」"]
+    out.append(f"       間隔: {st.get('stall_why', '')}")
+    for s in st.get("stall_crush") or []:
+        out.append(f"       潰す [{s['code']}]: {s['crush']}")
+    out.append(f"       出せるか: {st.get('stall_ship_words', '')}"
+               "（`studio.stall.shippable` ＝ 輪の出口。**出せるまで**）")
+    out.append("       **サブの本文は変えないこと**（何をどう潰すかはサブが決める・"
+               "オーナー 09/06「サブが判断する」）。親は印と間隔だけ")
+    return out
+
 #: **親の心拍の周期（分）。** 親が起きられるのは、この刻みの上だけです
 #: （Routine `trig_01GM4wKqD8aCfrQzsQbRoA4r`・cron `59 * * * *` ＝ 毎時1回。
 #:  2026-09-08 19:1x に `list_triggers` で撃って確かめた）。
@@ -1743,8 +1803,18 @@ def _floor_from_gauge() -> tuple[float, str]:
                             f"×{ratio:.1f}）")
 
 
-def decide(now: datetime | None = None, live: int | None = None) -> dict:
+def decide(now: datetime | None = None, live: int | None = None,
+           stall: dict | None = None) -> dict:
     """**次の周を立ててよいか。**
+
+    ## **止まっていたら、床を待たずに 3分 で立て直す**（2026-09-14 22:0x・受け取り帳 `6df66dd7`）
+
+    停止の定義（数）と「3分」の読みは **`studio/stall.py`** の 1か所（写しを持たないこと）。
+    ここでやるのは `floor` を下げることだけで、**上げる側には 1ミリも動きません**
+    （`min(floor, retry_min)` ＝ 止める仕掛けにはならない・`CLAUDE.md` 2026-08-31）。
+    `stall` を渡さなければ `stall_state()` が台帳から読みます（API 0単位）。
+    **縮めるのは `live == 0` の周だけ**（`live >= 1` の間隔は「二重に立てない」ための物・
+    盲の周はサブが落ちた周なので `live` は 0）。
 
     ## **0体 でも間隔は守る。ただし遊ばない —— 起こしを置いて待つ**（2026-09-03）
 
@@ -1827,6 +1897,40 @@ def decide(now: datetime | None = None, live: int | None = None) -> dict:
         live, live_src = live_read(now)
     base = {"floor_min": floor, "source": src,
             "live": live, "live_source": live_src}
+    # **停止を確認した周は、床を待たない**（2026-09-14 22:0x・受け取り帳 `6df66dd7`・上の節）。
+    # **下げる側にしか動きません**（`min`）＝ 止める仕掛けにはなりません。
+    # **止まっていない周は、印の中身を台帳へ書きません** —— 毎周 同じ空の列と同じ日本語を
+    # 積むと、`data/parent_wakes.jsonl` が「何も起きていない」で太ります
+    # （`_jsonable` の註「列を作らないほうが、嘘の列より安い」の側）。
+    # **毎周 残すのは 2つ の真偽だけ**（停止か・出せるか ＝ 次の回が数で読める最小）。
+    _st = stall_state(now=now) if stall is None else stall
+    base["stall"] = bool(_st.get("stalled"))
+    base["stall_shippable"] = _st.get("shippable")
+    if _st.get("stalled"):
+        base["stall_signs"] = [s.get("code") for s in (_st.get("signs") or [])]
+        base["stall_laps"] = _st.get("laps") or 0
+        base["stall_why"] = _st.get("why") or ""
+        base["stall_ship_words"] = _st.get("ship_words") or ""
+        base["stall_crush"] = [{"code": s.get("code"), "crush": s.get("crush")}
+                               for s in (_st.get("signs") or [])]
+        base["stall_retry_min"] = _st.get("retry_min")
+    # **3分 を使うのは 0体 の周だけです。** `live >= 1` の間隔は「二重に立てない」ための物で
+    # （下の 2026-08-31 の節）、そこを縮めると**走っているサブの隣にもう1体**立ちます ——
+    # そして盲の周（`blind_lap`）は**サブが落ちた周**なので、そのとき `live` は 0 です
+    # ＝ 潰したい側は 0体 の枝に全部 在ります。**`live` が渡されていない回（None）も縮めません**
+    # （数が無い回は COUNT ＝ `decide()` の 2026-09-02 の節と同じ理由）。
+    if _st.get("stalled") and _st.get("retry_min") and live == 0:
+        floor = min(floor, float(_st["retry_min"]))
+        base["floor_min"] = floor
+        base["stall_retry_applied"] = True
+        base["source"] = (f"{src}／**停止を確認 → 再実行の {floor:.0f}分**"
+                          f"（`studio/stall.py`・オーナー `6df66dd7`）")
+    elif _st.get("stalled") and _st.get("retry_min"):
+        base["stall_retry_applied"] = False
+        base["stall_why"] = (f"{base['stall_why']}。**ただしこの周は縮めません** —— "
+                             f"走っているサブが {live}体（間隔は「二重に立てない」ための物）")
+    elif _st.get("stalled"):
+        base["stall_retry_applied"] = False
     # **周から周の中央値を、毎行 残します**（2026-09-09 00:2x・§7 21:4x の覆る条件 (1)）。
     # あの条件は「中央値が `floor` の 1.25倍 を越えていたら」で判定するのに、数の出どころが
     # `data/rounds.jsonl` の**手数え**でした —— そこは 1周 2行 なので、素朴に数えると半分に出ます。
@@ -2327,6 +2431,10 @@ def main() -> int:
 
     d = decide(live=args.live)
     print(f"[next_round] 間隔 {d['floor_min']:.0f}分（{d['source']}）")
+    # **停止の印は、間隔のすぐ下に出すこと**（`stall_lines` の註・受け取り帳 `6df66dd7`）。
+    # 立たない回は 1行も出ません。
+    for line in stall_lines(d):
+        print(line)
     # **門を越えた窓は、出どころと一緒に印字する**（2026-09-11 11:2x・`respawn_rounds` の註）。
     # §7 (d) は「2つ 続いたら」なので、1つ では何も起きません ——
     # けれど **名指しが無いと、次の回は在りもしない上限を探しに行きます**（§7 21:4x の型）。
