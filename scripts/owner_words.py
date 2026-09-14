@@ -181,6 +181,10 @@ OTHER_IDS: dict[str, str] = {
 #:  (f-3) 在り処に挙げた節が消えたら、その id は `OTHER_IDS` へ落とすこと
 #:        （**在り処の無い `FILED_IDS` は `OTHER_IDS` と同じ物**）。
 FILED_IDS: dict[str, str] = {
+    "d88d0dcd": ("2026-09-14 フックが弱いと思うな。興味を引くような内容にしないと"
+                 " → 札: `docs/METHOD.md` §18 (K)（09/14 15:4x・`hourly` が 09/15 の本の コマ1 の 1文目 を"
+                 "「申告した人だけ」で置き換えた）・数は `trend.hook_shape`"
+                 " ＝ **次に台本を書く回は コマ1 を 名指し＋予告 で書かない**（§18 申し送り (6)）"),
     "6a67e8e7": ("2026-09-13 YouTube月収20万の達成期限3ヶ月にして"
                  " → 札: `docs/GOAL.md` の達成期限の節（09/13 21:0x・`hourly` の判定）"
                  "・`trend.REV_DEADLINE` / `rev_deadline`"),
