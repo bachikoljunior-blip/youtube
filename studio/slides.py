@@ -264,6 +264,63 @@ def board_layout(n_lines: int, show_bottom: int, g: Geom = SHORT) -> tuple[int, 
     return 42, max(46, room // max(n_lines, 1)), top
 
 
+def _slide_long_two_col(d, W, show, sub, tag, board, g):
+    """横（long）の上半分: 左列に板・右列に show と sub。字幕は呼び手が下に描く（縦と共通）。
+    列の下端は字幕 4行（44px）の箱の上端 734 より上（**700**）に収める。"""
+    col_top, col_bottom = 120, 700
+    mid = W // 2
+    # 左列: 板
+    left_w = mid - 110
+    for px in (48, 44, 40, 36):
+        bf = font(FONT_BOLD, px)
+        lh = int(px * 1.45)
+        if lh * len(board) + 60 <= col_bottom - col_top and \
+           max(d.textbbox((0, 0), "▶ " + ln, font=bf)[2] for ln in board) <= left_w - 80:
+            break
+    box_h = lh * len(board) + 60
+    top = col_top + (col_bottom - col_top - box_h) // 2
+    d.rounded_rectangle([50, top, 50 + left_w, top + box_h], radius=24, fill=(0, 0, 0, 140))
+    y = top + 30
+    for k, ln in enumerate(board):
+        last = k == len(board) - 1
+        fill = (255, 225, 120) if last else (235, 235, 235)
+        d.text((90, y), ("▶ " if last else "　 ") + ln, font=bf, fill=fill, stroke_width=3, stroke_fill=(0, 0, 0))
+        y += lh
+    # 右列: show（+sub）。列の幅に収まるまで字を下げる
+    x0, right_w = mid + 30, W - mid - 80
+    lines = show.split("\n") if show else []
+    size = 96
+    while size > 56:
+        fnt = font(FONT_BLACK, size)
+        if not lines or max(d.textbbox((0, 0), ln, font=fnt)[2] for ln in lines) <= right_w - 60:
+            break
+        size -= 8
+    fnt = font(FONT_BLACK, size)
+    sub_lines = wrap(sub, 18) if sub else []
+    sf = font(FONT_BOLD, 44)
+    block_h = int(len(lines) * size * 1.25) + (int(44 * 1.3 * len(sub_lines)) + 20 if sub_lines else 0)
+    top = col_top + (90 if tag else 0)
+    top = max(top, col_top + (col_bottom - col_top - block_h) // 2)
+    d.rounded_rectangle([x0, top - 40, x0 + right_w, min(col_bottom, top + block_h + 30)], radius=30, fill=(0, 0, 0, 110))
+    y = top
+    for ln in lines:
+        w = d.textbbox((0, 0), ln, font=fnt)[2]
+        d.text((x0 + (right_w - w) // 2, y), ln, font=fnt, fill=(255, 255, 255), stroke_width=6, stroke_fill=(0, 0, 0))
+        y += int(size * 1.25)
+    if sub_lines:
+        y += 20
+        for ln in sub_lines:
+            w = d.textbbox((0, 0), ln, font=sf)[2]
+            d.text((x0 + (right_w - w) // 2, y), ln, font=sf, fill=(255, 225, 120), stroke_width=4, stroke_fill=(0, 0, 0))
+            y += int(44 * 1.3)
+    if tag:
+        tf = font(FONT_BOLD, 40)
+        tw = d.textbbox((0, 0), tag, font=tf)[2]
+        tx, ty = x0 + (right_w - tw) // 2, top - 40 - 76
+        d.rounded_rectangle([tx - 32, ty - 8, tx + tw + 32, ty + 58], radius=30, fill=TAG_COLORS.get(tag, TAG_DEFAULT) + (255,))
+        d.text((tx, ty), tag, font=tf, fill=(255, 255, 255))
+
+
 def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out: Path,
           progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = (),
           form: str = "short") -> Path:
@@ -278,8 +335,17 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
         d.rectangle([60, 70, 60 + int((W - 120) * i / n), 82], fill=(255, 210, 60, 255))
     board = [b for b in board if b]
     show_bottom = 0
+    if g is LONG and board:
+        # **横（long）は 2列**（2026-09-14 22:4x・optimizer・Fable。長尺の 1本目 の sheet で踏んだ）:
+        # 縦の並び（show → 板 → 字幕）を 1920x1080 にそのまま当てると、板の上端が show の下（≈650）に来て
+        # `board_bottom`（660）を割り、板が字幕の箱（734〜1020）の上に重なって描かれました（34コマ 中 板 3行以上 の全部）。
+        # 横では **左に板・右に show と sub・下に字幕** を置く（字幕は共通の側）。縦の絵は 1バイトも動かしません。
+        # 覆る条件: (1) 板 5行 が 左列（幅 W/2-110）に収まらない本が出たら、行数ではなく字（ladder）を下げること。
+        # (2) オーナーが横の画面に言葉を出したら、その言葉が正本。
+        _slide_long_two_col(d, W, show, sub, tag, board, g)
+        show_bottom = -1   # 板は描いた（下の共通の枝を通らない）
     # 大きい字（行は書き手の \n で決まる。幅に収まるまで字を小さくする。語の途中で折らない）
-    if show:
+    if show and show_bottom == 0:
         lines = show.split("\n")
         size = 124 if not board else 104
         while size > 64:
@@ -304,7 +370,7 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
             d.rounded_rectangle([tx - 36, ty - 8, tx + tw + 36, ty + 64], radius=32, fill=TAG_COLORS.get(tag, TAG_DEFAULT) + (255,))
             d.text((tx, ty), tag, font=tf, fill=(255, 255, 255))
     # 板（まん中）: そのコマまでの前提と数の積み上がり。最後の行がいまのコマの行（黄色）
-    if board:
+    if board and show_bottom >= 0:
         px, lh, top = board_layout(len(board), show_bottom, g)
         bf = font(FONT_BOLD, px)
         box_h = lh * len(board) + 60
