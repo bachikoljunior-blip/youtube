@@ -418,10 +418,20 @@ def unclassified(rows: list[dict], ids: dict[str, str] | None = None) -> list[di
 #: `data/owner_ask.jsonl` の `second_channel_env` は取り下げ・derivation は JOURNAL 07:5x）。
 #: ＝ **1周 では足りません。言葉が「丸ごと 1周 を札なしで越えた」ことが要ります。**
 #:
-#: **数え方**: その言葉の刻より後に記録された周（`data/rounds.jsonl`・**役では数えない**）が
-#: `TURF_GATE_LAPS` 以上 あって、まだ札が無ければ `optimizer` が引き取ってよい。
+#: **数え方**: その言葉を**丸ごと 札なしで越えた周**（`laps_crossed`）が `TURF_GATE_LAPS` 以上 あって、
+#: まだ札が無ければ `optimizer` が引き取ってよい。**「刻より後に記録された周の数」ではありません**
+#: （2026-09-14 13:1x・optimizer・Opus に直した）—— **親は周を記録してから サブを立てる**ので
+#: （`docs/trigger_parent.md` 第1節・検査 `tests/test_parent_record_before_spawn.py`）、
+#: いちばん新しい周は**いま走っている周**で、その `hourly` はまだ札を付ける途中です。
+#: 生の数（`laps_since`）で門を読むと、**門が 1周 早く開き**、上の 7回目の二重と同じ形
+#: （同じ周の 2体 が同じ言葉を取る）が 2周 の門でも通ります。
+#: 実物: 言葉 `8e695b8e`（09/14 11:30）は 12:0x の周だけを丸ごと越えており（＝ 1周）、
+#: 13:0x の周の `hourly` はまだ走っていました。生の数は 2周 と言い、門を開けていました。
 #:
 #: **覆る条件**:
+#:  (t-0) この道具を**周の外**（親が畳んだあと・サブが 0体 の刻）で撃つ回が要るようになったら、
+#:        いちばん新しい周は「いま走っている周」ではないので、この -1 は 1周 の取りこぼしを足します
+#:        ＝ そのときは「いま走っている周が在るか」を `data/parent_wakes.jsonl` から見て引くこと。
 #:  (t-1) この門が 2周 でも二重が起きたら、足りないのは周の数ではなく**取り分の切り方**
 #:        （§5 の「オーナーの言葉が…どちらが取るか」の表）＝ そのとき表のほうを直すこと。
 #:  (t-2) `hourly` が 2周 越えても取らなかった言葉が **2件** 出たら、門は 1周 へ下げてよい
@@ -462,15 +472,27 @@ def laps_since(at: str, rounds: list[dict] | None = None) -> int:
                if datetime.fromisoformat(k).astimezone(JST) > t)
 
 
+def laps_crossed(at: str, rounds: list[dict] | None = None) -> int:
+    """その言葉が**丸ごと 札なしで越えた周**の数（`TURF_GATE_LAPS` の註が言う数え方）。
+
+    `laps_since` から**いま走っている周を 1つ 引いたもの**です —— 親は周を記録してから
+    サブを立てるので、いちばん新しい周のサブはまだ走っています（その周の `hourly` を
+    「取りこぼした」と数えないこと）。**門を読むのはこちら。**
+    """
+    return max(0, laps_since(at, rounds) - 1)
+
+
 def turf_line(at: str, rounds: list[dict] | None = None) -> str:
     """その言葉を**いまどちらの役が取ってよいか**を 1行 で言う（`TURF_GATE_LAPS` の註）。"""
-    n = laps_since(at, rounds)
+    n = laps_crossed(at, rounds)
+    raw = laps_since(at, rounds)
+    tail = f"（記録された周 {raw} のうち、いま走っている周 1つ は数えません）"
     if n >= TURF_GATE_LAPS:
-        return (f"**{n}周 札なし（門 {TURF_GATE_LAPS}周）＝ `optimizer` が引き取ってよい** —— "
-                "そのときは**申し送りに「取った」と書いてから**触ること（METHOD §5）")
-    return (f"**{n}周 札なし（門 {TURF_GATE_LAPS}周）＝ まだ `hourly` の持ち場です** —— "
+        return (f"**{n}周 丸ごと 札なし（門 {TURF_GATE_LAPS}周）＝ `optimizer` が引き取ってよい** —— "
+                f"そのときは**申し送りに「取った」と書いてから**触ること（METHOD §5）{tail}")
+    return (f"**{n}周 丸ごと 札なし（門 {TURF_GATE_LAPS}周）＝ まだ `hourly` の持ち場です** —— "
             "**開始時の窓に相手の押しが無いのは、取りこぼしの印ではありません**"
-            "（相手の押しは周の 3分後・§5）")
+            f"（相手の押しは周の 3分後・§5）{tail}")
 
 
 def run(days_back: int = 21, path: Path | None = None, ledger: Path | None = None) -> dict:

@@ -358,13 +358,30 @@ def _rounds(n: int, base: str = "2026-09-14T00:00:00+09:00") -> list[dict]:
 
 
 def test_札の無い言葉の持ち場は周で決まる() -> None:
-    """**きょうの状態は書かない**（§5 教訓の形 6つ目）—— 門の定数から引く。"""
+    """**きょうの状態は書かない**（§5 教訓の形 6つ目）—— 門の定数から引く。
+
+    **記録された周は、門より 1つ 多く要ります** —— いちばん新しい周は
+    **いま走っている周**で、丸ごと越えた数には入りません（`laps_crossed`）。
+    """
     base = "2026-09-14T00:00:00+09:00"
-    below = ow.turf_line(base, _rounds(ow.TURF_GATE_LAPS - 1, base))
-    at_gate = ow.turf_line(base, _rounds(ow.TURF_GATE_LAPS, base))
+    below = ow.turf_line(base, _rounds(ow.TURF_GATE_LAPS, base))
+    at_gate = ow.turf_line(base, _rounds(ow.TURF_GATE_LAPS + 1, base))
     assert "`hourly` の持ち場" in below
     assert "`optimizer` が引き取ってよい" in at_gate
     assert "申し送りに「取った」と書いてから" in at_gate
+
+
+def test_いま走っている周は丸ごと越えた数に入れない() -> None:
+    """**陽性対照**（2026-09-14 13:1x）—— 生の数（`laps_since`）で門を読むと
+    **門が 1周 早く開き**、同じ周の 2体 が同じ言葉を取る形（7回目の二重）が
+    2周 の門でも通ります。実物は `8e695b8e`（09/14 11:30・12:0x だけを丸ごと越えた）。
+    """
+    base = "2026-09-14T00:00:00+09:00"
+    rounds = _rounds(ow.TURF_GATE_LAPS, base)
+    assert ow.laps_since(base, rounds) == ow.TURF_GATE_LAPS        # 生は門に届いている
+    assert ow.laps_crossed(base, rounds) == ow.TURF_GATE_LAPS - 1  # 丸ごとは 1つ 少ない
+    assert "`hourly` の持ち場" in ow.turf_line(base, rounds)
+    assert ow.laps_crossed(base, []) == 0
 
 
 def test_門は1周ではない() -> None:
@@ -375,7 +392,7 @@ def test_門は1周ではない() -> None:
     """
     assert ow.TURF_GATE_LAPS >= 2, "1周 だと、周の 3分後 に来る相手の押しを待てない（§5）"
     base = "2026-09-14T00:00:00+09:00"
-    assert "`hourly` の持ち場" in ow.turf_line(base, _rounds(1, base))
+    assert "`hourly` の持ち場" in ow.turf_line(base, _rounds(2, base))
 
 
 def test_周の台帳は素で読む() -> None:
