@@ -694,9 +694,16 @@ def cmd_build(a):
     print(f"mp4: {r['mp4']}  {r['total']:.1f}秒  背景: {img.name if img else '無し（単色）'}")
     print("コマの秒数:", " ".join(f"{d:.1f}" for d in r["durations"]))
     print(f"目で見る: {r['sheet']}")
-    ok = r["total"] <= MAX_SECONDS
+    # **秒数の門は形ごと**（2026-09-14 14:2x・`script.FORMS`。`MAX_SECONDS` は `short` の値のまま ＝
+    # 縦の本の答えは 1つも変わりません）。長尺は下限も見ます（(4-g) 1 の「4〜10分」）。
+    form = script.form_of(s.form)
+    ok = r["total"] <= form.max_seconds
     if not ok:
-        print(f"  [!] {r['total']:.1f}秒 > {MAX_SECONDS}秒。say を削ること")
+        print(f"  [!] {r['total']:.1f}秒 > {form.max_seconds:.0f}秒（形 `{form.name}`）。say を削ること")
+    if form.min_seconds and r["total"] < form.min_seconds:
+        ok = False
+        print(f"  [!] {r['total']:.1f}秒 < {form.min_seconds:.0f}秒（形 `{form.name}` の下限）。"
+              "**足りないのは尺** —— 埋めるのは水増しではなく §3 の説明")
     ledger("built", a.id, seconds=round(r["total"], 1), image=bool(img), chars=s.total_chars(),
            scenes=[round(d, 1) for d in r["durations"]],
            sig=r["sig"])   # 同じ本文でも焼くたびに ±3% 揺れる（09/06 22:1x 実測）。コマ単位で比べるため。

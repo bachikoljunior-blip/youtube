@@ -16,8 +16,10 @@ def build(s: Script, image: Path | None = None) -> dict:
     durs = [t for _, t in audio]
     full = concat(wavs, d / "voice.wav")
     n = len(s.segments)
+    # **形は台本が持ちます**（既定 `short` ＝ 縦 1080x1920。`script.Script.form`・`docs/GOAL.md` (4-g) 2）。
+    # ここで渡し忘れると横の本が縦の絵で焼けるので、`slide()` の既定値ではなく **必ず渡す**。
     pngs = [slide(seg.show, seg.sub, seg.say, i, n, image, d / f"slide-{i:02d}.png",
-                  tag=seg.tag, board=seg.board)
+                  tag=seg.tag, board=seg.board, form=s.form)
             for i, seg in enumerate(s.segments, 1)]
     lst = d / "slides.txt"
     lines = []

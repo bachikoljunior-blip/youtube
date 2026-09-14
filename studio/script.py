@@ -40,6 +40,60 @@ MAX_TOTAL_CHARS = 480   # Chirp3-HD 1.2 で実測 5.16字/秒（09/05・458字�
 MAX_SECONDS = 95.0      # **秒数の上限の正本**（`studio/cli.MAX_SECONDS` はここを読む ＝ 門は1か所・§5 の教訓 7つ目）
 BUILD_JITTER = 0.03     # 同じ本でも焼くたびに揺れる幅（§2 の ±3%）。門はこのぶん手前に置く
 
+# ---- 形（form）。**縦のショートと、横の長尺**（2026-09-14 14:2x・optimizer・Opus が足した） -------------
+# オーナー 11:30 `8e695b8e`「できないと判断したならやり方が間違ってることを疑え」→ `docs/GOAL.md` (4-g)。
+# 収益化の門は 2つ あり、**ショートの再生は「4,000時間」の側に 1秒も数えられません**。
+# (4-g) 2「長尺の型を `studio/` に足すのは `optimizer` の持ち場」の当のもの（申し送りは JOURNAL 09/14 13:4x）。
+#
+# **足したのは形の枠だけで、書き方（§3）・hear・critique は 1つも変えていません**（(4-g) 1「同じ書き方」）。
+# **既定は `short`** ＝ 台本に `form` を書かなければ、公開ずみ 9本 と 1バイトも変わりません
+# （`Script.form` の既定値・`slides.SHORT`・検査 `tests/test_studio_form.py` の陰性対照）。
+#
+# **秒数の正本はここ 1か所**（§5 の教訓 7つ目）。`cli.MAX_SECONDS` も `chars_gate` も、この表から引きます。
+# 覆る条件:
+#  (1) 長尺を 3本 出して 48h の中位が この口の長尺の上端 25回 を越えなかったら、扉ではなく配りの側
+#      ＝ (4-g-1)。**そのときここは消さないこと** —— 消すのは枠ではなく「長尺を出す」判断のほう。
+#  (2) 長尺の build が `LONG_MAX_SECONDS` を越えたら、`BUILD_JITTER` は短い本の実測（±3%）なので、
+#      長い本では足りない ＝ その実測で引き直すこと（10分 の 3% は 18秒）。
+#  (3) `LONG_MIN_SECONDS`（4分）は (4-g) 1 の「4〜10分」の下端です。**オーナーが尺に言葉を出したら
+#      その言葉が正本**（(4-g-3)）＝ そのときはこの 2つ の数だけを直す。
+
+SHORT_MAX_SECONDS = MAX_SECONDS      # 95秒（上の正本の別名。形の表から引くときはこちら）
+LONG_MAX_SECONDS = 600.0             # 10分（(4-g) 1）
+LONG_MIN_SECONDS = 240.0             # 4分（(4-g) 1。**ショートには下限がありません**）
+
+
+class Form:
+    """形ごとの門。**数を 2度 書かないこと** —— 字数の代理は秒数から引きます。"""
+
+    __slots__ = ("name", "max_seconds", "min_seconds", "segments", "hashtag", "size")
+
+    def __init__(self, name, max_seconds, min_seconds, segments, hashtag, size):
+        self.name = name
+        self.max_seconds = max_seconds
+        self.min_seconds = min_seconds
+        self.segments = segments          # コマ数の (下, 上)
+        self.hashtag = hashtag            # title に要る札（"" ＝ 要らない・**長尺は #Shorts を禁じます**）
+        self.size = size                  # 画面の (W, H)。`slides` の幾何と同じ数（検査で挟む）
+
+    @property
+    def chars_proxy(self) -> int:
+        """**まだ1度も焼いていない本**の字数の代理。`MAX_TOTAL_CHARS`（95秒 の代理）を秒で伸ばしたもの。
+        焼いたことが在る本は `chars_gate()` がその本の実測 字/秒 で引き直します（そちらが本物）。"""
+        return int(MAX_TOTAL_CHARS * self.max_seconds / SHORT_MAX_SECONDS)
+
+
+SHORT = Form("short", SHORT_MAX_SECONDS, 0.0, (5, 16), "#Shorts", (1080, 1920))
+LONG = Form("long", LONG_MAX_SECONDS, LONG_MIN_SECONDS, (20, 90), "", (1920, 1080))
+FORMS = {f.name: f for f in (SHORT, LONG)}
+
+
+def form_of(name: str) -> Form:
+    """名から形へ。知らない名は `short`（**古い台本は `form` を持ちません**）。
+    知らない名そのものは `Script.problems()` が別に鳴らします（黙って落とさない）。"""
+    return FORMS.get(name or "short", SHORT)
+
+
 # **字/秒 は本ごとに違います**（2026-09-12 13:4x・hourly・Opus が台帳 `built` 105件・8本 で数えた。API 0単位）。
 # 実測（本ごとの最小 字/秒）: 09/08 **4.823** 〜 09/13 **5.552** ＝ **15%** 開いています。
 # 同じ本の中は狭い（09/13 は 10回 焼いて 5.427〜5.552 ＝ 2.3%・09/12 は 3回 で 0.9%）。
@@ -73,14 +127,19 @@ def built_rate(vid: str, rows: list[dict] | None = None) -> float | None:
     return min(rates) if rates else None
 
 
-def chars_gate(vid: str, rows: list[dict] | None = None) -> tuple[int, str]:
-    """字数の門と、その出どころの1行（助言文に出す）。"""
+def chars_gate(vid: str, rows: list[dict] | None = None, form: str = "short") -> tuple[int, str]:
+    """字数の門と、その出どころの1行（助言文に出す）。
+
+    **秒数は形から引きます**（2026-09-14 14:2x・`Form` の表。長尺は 600秒）。
+    既定の `short` は 2026-09-12 13:4x の形と 1字も変わりません（検査の陰性対照）。
+    """
+    f = form_of(form)
     rate = built_rate(vid, rows)
     if rate is None:
-        return MAX_TOTAL_CHARS, (f"{MAX_TOTAL_CHARS}まで ＝ **まだ1度も焼いていない本の代理**"
-                                 f"（`studio/script.MAX_SECONDS` {MAX_SECONDS:.0f}秒 の代理）")
-    gate = int(rate * MAX_SECONDS * (1 - BUILD_JITTER))
-    return gate, (f"{gate}まで ＝ **この本の実測 {rate:.3f}字/秒** × {MAX_SECONDS:.0f}秒 × "
+        return f.chars_proxy, (f"{f.chars_proxy}まで ＝ **まだ1度も焼いていない本の代理**"
+                               f"（`studio/script.MAX_SECONDS` {f.max_seconds:.0f}秒 の代理）")
+    gate = int(rate * f.max_seconds * (1 - BUILD_JITTER))
+    return gate, (f"{gate}まで ＝ **この本の実測 {rate:.3f}字/秒** × {f.max_seconds:.0f}秒 × "
                   f"{1 - BUILD_JITTER:.2f}（焼き直しの揺れ）。台帳 `built` から引いた")
 
 # 書き手が人間のふりをする言い方（収益化ポリシー: AI が人間の専門家を装って sensitive topic を語る形）
@@ -390,6 +449,9 @@ class Script(BaseModel):
     yomi: dict[str, str] = {}       # 読みを固定する語 → ひらがな（TTS と聞き取り検算の両方が使う）
     kana_in_voice: list[str] = []   # Neural2 系のとき、TTS に渡す文の中で仮名に置き換える語（yomi の語。hear で TTS の誤読が出た語だけ）
     image_prompt: str = ""          # 背景画像の注文文（GPT Image 2.0。文字を入れない）
+    # **形**（`short` ＝ 縦 1080x1920・95秒 まで／`long` ＝ 横 1920x1080・4〜10分）。
+    # 既定は `short` ＝ **書かなければ今までと同じ**（`script.FORMS`・`docs/GOAL.md` (4-g) 2）。
+    form: str = "short"
     segments: list[Segment]
     notes: str = ""                 # 出典・前提・計算の根拠（人が読む）
 
@@ -478,7 +540,11 @@ class Script(BaseModel):
                 img = f"{image.name}:{image.stat().st_size}"
             except OSError:
                 img = f"{image.name}:?"
-        body = f"{body}\x1d{self.voice}\x1d{self.rate}\x1d{yomi}\x1d{kana}\x1d{img}"
+        # **形は「short でないときだけ」足します**（2026-09-14 14:2x・optimizer・Opus）——
+        # 足し方を変えると公開ずみ 9本 の指紋が全部 動き、焼き直し待ちが偽で 9本 立ちます。
+        # `short` の指紋は 1字も変わらず、`long` は別の絵で焼くので必ず別の指紋になります。
+        form = "" if self.form == "short" else f"\x1d{self.form}"
+        body = f"{body}\x1d{self.voice}\x1d{self.rate}\x1d{yomi}\x1d{kana}\x1d{img}{form}"
         return f"{BUILD_SIG_VERSION}:{hashlib.sha256(body.encode('utf-8')).hexdigest()[:12]}"
 
 
@@ -486,8 +552,12 @@ class Script(BaseModel):
         out = []
         if not re.fullmatch(r"[a-z0-9-]+", self.id):
             out.append("id は英小文字・数字・ハイフンだけ")
-        if not (5 <= len(self.segments) <= 16):
-            out.append(f"コマ数 {len(self.segments)}（5〜16）")
+        f = form_of(self.form)
+        if self.form not in FORMS:
+            out.append(f"form「{self.form}」は {'／'.join(FORMS)} のどれかに")
+        lo, hi = f.segments
+        if not (lo <= len(self.segments) <= hi):
+            out.append(f"コマ数 {len(self.segments)}（{lo}〜{hi}・形 `{f.name}`）")
         for i, s in enumerate(self.segments, 1):
             if len(s.say) > MAX_SAY:
                 out.append(f"コマ{i} say が {len(s.say)}字（{MAX_SAY}まで）")
@@ -510,13 +580,23 @@ class Script(BaseModel):
                     out.append(f"コマ{i} board の行「{ln}」が {len(ln)}字（{MAX_BOARD_CHARS}まで）")
                 if TEN.search(ln):
                     out.append(f"コマ{i} board に「{TEN.search(ln).group()}」（点・小数）。整数で言い換える")
-        gate, why = chars_gate(self.id)
+        gate, why = chars_gate(self.id, form=self.form)
         if self.total_chars() > gate:
             out.append(f"合計 {self.total_chars()}字（{why} ＝ build が測る秒数の上限"
                        f"（`studio/cli.MAX_SECONDS`）に当たる字数。**60秒の門ではありません**"
                        f" —— §2 は 60〜95秒。削るのは秒数であって、分かる説明に要る長さではない）")
-        if "#Shorts" not in self.title and "#shorts" not in self.title:
-            out.append("title に #Shorts が無い")
+        # **下限は長尺にだけ在ります**（(4-g) 1 の「4〜10分」の下端）。字数は秒数の代理なので、
+        # ここで見るのは代理の側 —— 本当の秒数は build が測って `cli.cmd_build` が鳴らします。
+        if f.min_seconds and self.total_chars() < int(MAX_TOTAL_CHARS * f.min_seconds / SHORT_MAX_SECONDS):
+            floor = int(MAX_TOTAL_CHARS * f.min_seconds / SHORT_MAX_SECONDS)
+            out.append(f"合計 {self.total_chars()}字（形 `{f.name}` の下限 {floor}字 ＝ "
+                       f"{f.min_seconds:.0f}秒 の代理。**足りないのは尺** —— 埋めるのは水増しではなく §3 の説明）")
+        if f.hashtag and f.hashtag.lower() not in self.title.lower():
+            out.append(f"title に {f.hashtag} が無い")
+        # **長尺に #Shorts を付けないこと** —— 付けると YouTube はショートの棚へ入れ、
+        # 4,000時間 の扉（(4-g) の (b)）に 1秒も数えられません（この形を足した当の理由）。
+        if not f.hashtag and "#shorts" in self.title.lower():
+            out.append(f"形 `{f.name}` の title に #Shorts が在る（長尺はショートの棚に入れない ＝ `docs/GOAL.md` (4-g)）")
         if len(self.title) > 100:
             out.append("title が 100字 を超える")
         alltext = "".join(s.say for s in self.segments)

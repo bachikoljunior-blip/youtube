@@ -25,6 +25,51 @@ SUB_BOTTOM = H - 470       # 字幕の下端
 SUB_CHARS = 16
 
 
+# ---- 形ごとの幾何（2026-09-14 14:2x・optimizer・Opus。`docs/GOAL.md` (4-g) 2 の「長尺の型」） ----------
+# **縦（short）の数は 1つも変えていません** —— 上の W/H・SUB_BOTTOM・SUB_CHARS・BOARD_* は
+# そのまま `SHORT` の中身で、公開ずみ 9本 の絵は 1画素も動きません（検査の陰性対照）。
+# 横（long）は 1920x1080:
+#   下の余白      ショートの UI（下 420px）が無いので 60px だけ空ける
+#   字幕の字数    幅が 1.78倍 なので 1行 16字 → 28字（54px で 28字 ＝ 1512px ＜ 1920-100）
+#   板の置き場    縦が 1080 しかないので、字幕 4行（約 340px）の上に 300〜660 を割く
+# **梯子（字数, px）は縦と同じ形**: 4行 に収まるまで字を小さくし、それでも溢れたら字で折る。
+# 覆る条件:
+#  (1) 横の本を焼いて字幕が 4行 を溢れたら、直すのは `sub_ladder` の字数（幅は測れる ＝ sheet で見る）。
+#  (2) 板が 5行 のコマで `board_layout` が最小の字にも収まらなくなったら、横では板の行数を 4行 に絞ること
+#      （`script.MAX_BOARD_LINES` を形ごとにする ＝ そのときに足す。**先に足さない**）。
+#  (3) 縦の数が 1つでも動いたら、それは long のためではありません ＝ その回が理由を JOURNAL に書くこと。
+
+
+class Geom:
+    """1つの形の画面の数。**`slide()` はここからしか寸法を読みません**（写しを持たない）。"""
+
+    __slots__ = ("w", "h", "sub_bottom", "sub_ladder", "board_top_min", "board_bottom",
+                 "show_center", "show_top_with_board", "thumb")
+
+    def __init__(self, w, h, sub_bottom, sub_ladder, board_top_min, board_bottom,
+                 show_center, show_top_with_board, thumb):
+        self.w = w
+        self.h = h
+        self.sub_bottom = sub_bottom
+        self.sub_ladder = sub_ladder            # ((1行の字数, px), …)。先に当たったものを使う
+        self.board_top_min = board_top_min
+        self.board_bottom = board_bottom
+        self.show_center = show_center          # 板が無いコマの show のまん中
+        self.show_top_with_board = show_top_with_board
+        self.thumb = thumb                      # contact_sheet の1枚 (w, h)
+
+
+SHORT = Geom(1080, 1920, 1920 - 470, ((16, 54), (18, 48), (20, 44)), 600, 1080, 700, 150, (270, 480))
+LONG = Geom(1920, 1080, 1080 - 60, ((28, 54), (32, 48), (36, 44)), 300, 660, 400, 40, (480, 270))
+GEOMS = {"short": SHORT, "long": LONG}
+
+
+def geom_of(form: str) -> Geom:
+    """形の名から幾何へ。知らない名は縦（`script.form_of` と同じ向き）。"""
+    return GEOMS.get(form or "short", SHORT)
+
+
+
 def font(path: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(path, size, index=0)
 
@@ -164,7 +209,8 @@ def _wrap_chars(text: str, n: int) -> list[str]:
     return _hang(["".join(ln) for ln in lines])
 
 
-def background(image: Path | None) -> Image.Image:
+def background(image: Path | None, g: Geom = SHORT) -> Image.Image:
+    W, H = g.w, g.h
     if image and image.exists():
         im = Image.open(image).convert("RGB")
         # cover-fit
@@ -183,12 +229,12 @@ def background(image: Path | None) -> Image.Image:
     return im
 
 
-def draw_text_block(d: ImageDraw.ImageDraw, lines: list[str], fnt, top: int, fill, stroke=(0, 0, 0), stroke_w=0, gap=1.25) -> int:
+def draw_text_block(d: ImageDraw.ImageDraw, lines: list[str], fnt, top: int, fill, stroke=(0, 0, 0), stroke_w=0, gap=1.25, width: int = W) -> int:
     y = top
     for ln in lines:
         bbox = d.textbbox((0, 0), ln, font=fnt)
         w = bbox[2] - bbox[0]
-        d.text(((W - w) // 2, y), ln, font=fnt, fill=fill, stroke_width=stroke_w, stroke_fill=stroke)
+        d.text(((width - w) // 2, y), ln, font=fnt, fill=fill, stroke_width=stroke_w, stroke_fill=stroke)
         y += int(fnt.size * gap)
     return y
 
@@ -204,11 +250,12 @@ BOARD_LEFT = 110
 SHOW_TOP_WITH_BOARD = 150    # 板が在るコマの show の上端
 
 
-def board_layout(n_lines: int, show_bottom: int) -> tuple[int, int, int]:
+def board_layout(n_lines: int, show_bottom: int, g: Geom = SHORT) -> tuple[int, int, int]:
     """板の (font px, 行の高さ px, 上端 y)。行が多いほど字を小さくし、字幕の上端より上に収める。
-    返り値を検査で挟む（`tests/test_studio_slides_board.py`）。"""
-    top = max(BOARD_TOP_MIN, show_bottom + 50)
-    room = BOARD_BOTTOM - top - 60
+    返り値を検査で挟む（`tests/test_studio_slides_board.py`）。
+    **`g` は形ごとの幾何**（既定 `SHORT` ＝ 縦。ここの既定値が動くと公開ずみの絵が動きます）。"""
+    top = max(g.board_top_min, show_bottom + 50)
+    room = g.board_bottom - top - 60
     for px in (60, 54, 48, 42):
         lh = int(px * 1.45)
         if lh * max(n_lines, 1) <= room:
@@ -218,8 +265,12 @@ def board_layout(n_lines: int, show_bottom: int) -> tuple[int, int, int]:
 
 
 def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out: Path,
-          progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = ()) -> Path:
-    im = background(image)
+          progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = (),
+          form: str = "short") -> Path:
+    g = geom_of(form)
+    W, H = g.w, g.h
+    SUB_BOTTOM = g.sub_bottom
+    im = background(image, g)
     d = ImageDraw.Draw(im, "RGBA")
     # 進み具合
     if progress and n > 1:
@@ -237,12 +288,13 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
                 break
             size -= 8
         fnt = font(FONT_BLACK, size)
-        block_h = int(len(lines) * size * 1.25) + (int(56 * 1.25 * len(wrap(sub, 16))) + 20 if sub else 0)
-        top = SHOW_TOP_WITH_BOARD + (90 if tag else 0) if board else 700 - block_h // 2
+        sub_n = g.sub_ladder[0][0]
+        block_h = int(len(lines) * size * 1.25) + (int(56 * 1.25 * len(wrap(sub, sub_n))) + 20 if sub else 0)
+        top = g.show_top_with_board + (90 if tag else 0) if board else g.show_center - block_h // 2
         d.rounded_rectangle([40, top - 50, W - 40, top + block_h + 40], radius=30, fill=(0, 0, 0, 110))
-        y = draw_text_block(d, lines, fnt, top, (255, 255, 255), stroke_w=6)
+        y = draw_text_block(d, lines, fnt, top, (255, 255, 255), stroke_w=6, width=W)
         if sub:
-            y = draw_text_block(d, wrap(sub, 16), font(FONT_BOLD, 56), y + 20, (255, 225, 120), stroke_w=4)
+            y = draw_text_block(d, wrap(sub, sub_n), font(FONT_BOLD, 56), y + 20, (255, 225, 120), stroke_w=4, width=W)
         show_bottom = top + block_h + 40
         # 札: show の上に小さい色つきの丸札
         if tag:
@@ -253,7 +305,7 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
             d.text((tx, ty), tag, font=tf, fill=(255, 255, 255))
     # 板（まん中）: そのコマまでの前提と数の積み上がり。最後の行がいまのコマの行（黄色）
     if board:
-        px, lh, top = board_layout(len(board), show_bottom)
+        px, lh, top = board_layout(len(board), show_bottom, g)
         bf = font(FONT_BOLD, px)
         box_h = lh * len(board) + 60
         d.rounded_rectangle([50, top, W - 50, top + box_h], radius=24, fill=(0, 0, 0, 140))
@@ -267,28 +319,33 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
     if say:
         # 64字 までは 16字×4行・54px。それ以上は 18字×4行・48px（say の上限 70字 が収まる）
         # 語で折ると行が増えるので、4行に収まる字数まで 16 → 18 → 20 と広げ、それでも溢れたら字で折る
-        for chars, px in ((SUB_CHARS, 54), (18, 48), (20, 44)):
+        for chars, px in g.sub_ladder:
             lines = wrap(say, chars)
             if len(lines) <= 4:
                 break
         else:
-            chars, px = (SUB_CHARS, 54) if len(say) <= SUB_CHARS * 4 else (18, 48)
+            head, nxt = g.sub_ladder[0], g.sub_ladder[1]
+            chars, px = head if len(say) <= head[0] * 4 else nxt
             lines = _wrap_chars(say, chars)[:4]
         fnt = font(FONT_BOLD, px)
         lh = int(px * 1.35)
         box_h = lh * len(lines) + 50
         top = SUB_BOTTOM - box_h
         d.rounded_rectangle([50, top, W - 50, SUB_BOTTOM], radius=24, fill=(0, 0, 0, 165))
-        draw_text_block(d, lines, fnt, top + 25, (255, 255, 255), gap=1.35)
+        draw_text_block(d, lines, fnt, top + 25, (255, 255, 255), gap=1.35, width=W)
     im.convert("RGB").save(out, "PNG", optimize=True)
     return out
 
 
 def contact_sheet(pngs: list[Path], out: Path, cols: int = 4) -> Path:
-    thumbs = [Image.open(p).resize((270, 480)) for p in pngs]
+    """1枚の大きさは**実物の縦横から決めます**（形を引数で渡さない ＝ 渡し忘れる道を作らない）。
+    縦 1080x1920 は 270x480・横 1920x1080 は 480x270（`Geom.thumb`）。"""
+    with Image.open(pngs[0]) as p0:
+        tw, th = (SHORT if p0.height >= p0.width else LONG).thumb
+    thumbs = [Image.open(p).resize((tw, th)) for p in pngs]
     rows = (len(thumbs) + cols - 1) // cols
-    sheet = Image.new("RGB", (cols * 270, rows * 480), (30, 30, 30))
+    sheet = Image.new("RGB", (cols * tw, rows * th), (30, 30, 30))
     for k, t in enumerate(thumbs):
-        sheet.paste(t, ((k % cols) * 270, (k // cols) * 480))
+        sheet.paste(t, ((k % cols) * tw, (k // cols) * th))
     sheet.save(out)
     return out
