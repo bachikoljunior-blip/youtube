@@ -803,6 +803,56 @@ def tail_rate(exp_len: int, gap_len: int, dur: float, band: tuple[float, float])
 _PROMPT = "ひらがなだけでかきます。すうじもひらがなでかきます。"
 
 
+PLAIN_COVER = 0.7
+
+
+def plain_probe(h: "Hearer", wav: Path, missing: str, yomi: dict[str, str],
+                cover: float = PLAIN_COVER) -> dict:
+    """**漢字を禁じないで、コマを丸ごと聞き直す**（2026-09-15 19:4x・optimizer・Fable・ultracode）。
+
+    `tail_probe` と `head_probe` は、**同じ漢字禁止の口**で末尾／頭だけを聞き直します
+    ＝ 切り落としの原因がその禁止そのものなら、**聞き直しても同じ所で切れます**。
+    この口は禁止を外した側（`transcribe_plain`）で、**落ちた span が音に在るか**だけを見ます。
+
+    **撃って数にした**（2026-09-15 19:4x・`2026-09-16-65sai-hokenryo-moto`・37コマ・長尺 7.3分）:
+
+        コマ37（8.1秒・42字）  禁じる   「ねんきんとぜいきんのこういう ケーサンをまいにちだしています」
+                              禁じない 「年金と税金のこういう計算を毎日出しています **登録しておくと明日の文が届きます**」
+        コマ1 （12.5秒・66字） 禁じる   3文目（「はたらく人は保険料をはらい、年金がふえます」）が**丸ごと無い**
+                              禁じない 3文とも在る
+        コマ17・23            禁じる   「ケースアンすると」「1647,000 yen」「30マウェンの1マウエンにつき915yen」
+                              禁じない 「計算すると払った164万7000円を…」（**片仮名と生の数字への崩れも禁止の側**）
+
+    **＝ 漢字を禁じると、長いコマで末尾が落ち、数が片仮名とラテン文字へ崩れます。**
+    ショート（1コマ 4〜6秒）では出ず、長尺（1コマ 8〜15秒）で出ます ——
+    **この本は 37コマ 中 17コマ が `!!`、うち 7コマ が「予定の一部 → 空」**でした。
+    **その 7コマ は台本の誤りでも TTS の誤読でもありません**（上の 2つ を撃って確かめた）。
+
+    **禁止そのものは外しません** —— 外すと、同じ漢字に戻される誤読（額→ひたい）が
+    また素通りします（この file の冒頭の実測）。**両方を撃って、落ちた側だけをこちらで裏を取ります。**
+
+    **一致の数は変えません**（`tail_probe` と同じ ＝ 決めるのは Fable・§4 (2)）。
+    変えるのは印字だけで、**「音に在る／無い」を言い切れる行が 1本 増えます。**
+
+    **覆る条件**:
+     (1) この口が「音に在る」と言ったコマで、**あとから本物の誤読が見つかったら**（オーナーか hear の別の口）、
+        `cover` の 0.7 が緩すぎる ＝ 0.9 へ上げること。
+     (2) 長尺 3本 続けて `plain` が 1コマも立たなかったら、切り落としは禁止の側ではなくなった
+        ＝ この段ごと畳んでよい。
+     (3) `transcribe_plain` が漢字を返さなくなったら（模型が変わった）、この口は `transcribe` と同じ物を見ます
+        ＝ そのときは口ではなく模型の側を見ること。
+    """
+    heard = h.transcribe_plain(wav)
+    got = loose(heard_kana(heard, yomi))
+    need = loose(missing)
+    if not need:
+        return {"heard": heard, "got": got, "cover": 0.0, "ok": False}
+    m = difflib.SequenceMatcher(None, need, got, autojunk=False)
+    hit = sum(b.size for b in m.get_matching_blocks())
+    c = hit / len(need)
+    return {"heard": heard, "got": got, "cover": round(c, 2), "ok": c >= cover}
+
+
 def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = True) -> list[dict]:
     """コマごとに {i, say, heard, exp, got, diffs}。diffs が空なら一致。
 
@@ -860,6 +910,9 @@ def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = Tru
             # 末尾/頭で鳴ったコマには、**そのコマの文の字数**を並べる（§15 の申し送り (1)・
             # 切り落としが見ているのはコマの長さではなく文の長さ・`script.sentence_lens` の註）
             row["sent"] = sentence_lens(seg.say)
+            # **漢字を禁じない側で、落ちた span の裏を取る**（`plain_probe` の註・2026-09-15 19:4x）。
+            # `tail_probe`／`head_probe` は同じ禁止の口なので、原因が禁止そのものだと同じ所で切れます。
+            row["plain"] = plain_probe(h, wav, gap or head, s.yomi)
         if gap:   # 末尾が丸ごと無い ＝ 段を上げても分けられない型。末尾だけを聞き直して 切り落とし と 誤読 を分ける
             row["tail"] = tail_probe(h2, wav, gap, s.yomi)
             row["voice"] = tail_voice(hw, wav, prompt)

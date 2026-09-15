@@ -766,6 +766,15 @@ def cmd_hear(a):
             if r.get("sent"):   # 切り落としが見ているのは**文の長さ**（§15 の申し送り (1)・script.sentence_lens の註）
                 print(f"      文 {r['sent']}・いちばん長い文 {max(r['sent'])}字"
                       "（**割るのはいちばん長い文** —— コマの字数ではありません・METHOD §4 (2)）")
+            pl = r.get("plain")
+            if pl:  # **漢字を禁じない側**で丸ごと聞き直した答え（studio/hear.plain_probe の註・2026-09-15 19:4x）。
+                    # `tail`／`head` は同じ禁止の口なので、原因が禁止そのものだと同じ所で切れます
+                print(f"      禁じない聞き取り: {pl['heard'][:70]}")
+                print(f"      → **落ちた所は音に在る**（一致 {pl['cover']}）＝ "
+                      "漢字を禁じた聞き取りが長いコマで切り落とした側 ＝ **台本も TTS も直す所はありません**"
+                      if pl["ok"] else
+                      f"      → 禁じない側でも落ちた所が見つからない（一致 {pl['cover']}）＝ "
+                      "**TTS か台本の側を疑う根拠**")
             t = r.get("tail")
             if t:   # 末尾が丸ごと無い型。末尾 5秒 だけを聞き直した答え（studio/hear.tail_probe の註）
                 print(f"      末尾5秒: {t['heard']}")
