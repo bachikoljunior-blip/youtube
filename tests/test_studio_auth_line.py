@@ -10,6 +10,8 @@
  (1) `main()` の `if not token_rejected(e): raise` を外すと `test_口と関係ない失敗は握りつぶさない` が落ちる。
  (2) `token_rejected` を常に真にすると同じ検査が落ちる。
  (3) `main()` の `print` を消すと `test_analytics_が拒まれたら_3行_と返り_2_になる` が落ちる。
+ (4) `main()` の前置き（`stall`／`budget`）が増えても落ちないこと ＝ 中身で見る
+     （2026-09-16 04:2x。`startswith` は**停止の印が在る周だけ**赤くなり、それは口が閉じている周でした）。
 """
 import pytest
 
@@ -38,7 +40,12 @@ def test_analytics_が拒まれたら_3行_と返り_2_になる(capsys, monkeyp
         _Refresh("('invalid_grant: Bad Request', {})")))
     assert cli.main(["analytics"]) == 2
     out = capsys.readouterr().out
-    assert out.startswith("!! 口が拒まれました")          # 文言は `yt.token_rejected_words` の 1か所
+    # **`startswith` で見ないこと**（2026-09-16 04:2x に踏んで直した）——
+    #   `main()` は口を撃つ前に `stall.lines()`（09/14 22:0x）と `budget.lines()`（09/16 03:4x）を
+    #   印字するので、**台帳に停止の印が在る周だけ**この検査が赤くなっていました
+    #   ＝ **口が閉じている周（この検査が守っている当の周）に限って落ちる**形。
+    #   見るのは「その段落が出たか」であって「先頭に出たか」ではありません。
+    assert "!! 口が拒まれました" in out                   # 文言は `yt.token_rejected_words` の 1か所
     assert "YT_REFRESH_TOKEN_2" in out                   # 置く物（オーナーの手）まで出ていること
     assert out.count("!! 口が拒まれました") == 1          # 同じ段落を 2度 印字しない
 

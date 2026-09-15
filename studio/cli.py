@@ -15,6 +15,7 @@
     python -m studio.cli trend --by-day-count   # 「その日に何本 出したか」ごとの 48時間 再生（API 0単位・§7 の覆る条件）
     python -m studio.cli comments               # 視聴者が書いたコメント（自分の自動コメントは除く。API 1単位）
     python -m studio.cli peers [--force]        # 同じニッチの他人のチャンネルと並べる（約30単位・台帳が24時間 以内なら 0単位）
+    python -m studio.cli demand [--seeds …]     # 人が実際に打っている語（検索窓の補完・**日枠 0単位**・題材と題はここから）
     python -m studio.cli reporting [--setup]    # 一括レポート（Reporting API・Data API 0単位・Analytics より 2日 早い）
     python -m studio.cli reply <comment_id> --text "…"   # 視聴者のコメント1件に手で書いた返信（50単位・台帳 replied）
 """
@@ -30,7 +31,7 @@ from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
-from . import analytics, critic, hear, peers, render, reporting, script, stall, trend, yt
+from . import analytics, budget, critic, demand, hear, peers, render, reporting, script, stall, trend, yt
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
 IMAGES = ROOT / "assets" / "images"
@@ -1978,6 +1979,25 @@ def cmd_peers(a):
     return 0
 
 
+def cmd_demand(a):
+    """人が打っている語を数える（`studio/demand.py` の註がこの口の正本・**日枠 0単位**）。
+
+    この口が在る理由は 1つ です: **この口の長尺に browse／suggested の扉は開いていません**
+    （`analytics_traffic` 09/05〜09/12 の 7日 で `RELATED_VIDEO` **3回**・`YT_SEARCH` 182回）。
+    出る所が検索しかないなら、**題と説明欄の字は、人が打つ字と同じでなければ出ません。**
+    **判定はしません** —— 並べるだけ（`demand.lines` の註・GOAL (4-j-5) と同じ扱い）。
+    """
+    seeds = [s for s in (a.seeds or "").split(",") if s.strip()] or list(demand.SEEDS)
+    tails = demand.TAILS[:a.tails] if a.tails else demand.TAILS
+    hits = demand.harvest(seeds, tails=tails)
+    ranked = demand.score(hits)
+    gap = demand.gaps(ranked, demand.covered(ledger_rows()), top=a.top)
+    row = demand.record(seeds, ranked, gap, pulls=len(seeds) * len(tails))
+    for line in demand.lines(row):
+        print(line)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1997,6 +2017,8 @@ def main(argv=None):
     an = sub.add_parser("analytics"); an.add_argument("--force", action="store_true")
     sub.add_parser("comments")
     pe = sub.add_parser("peers"); pe.add_argument("--force", action="store_true")
+    de = sub.add_parser("demand"); de.add_argument("--seeds", default="")
+    de.add_argument("--tails", type=int, default=0); de.add_argument("--top", type=int, default=60)
     rpt = sub.add_parser("reporting"); rpt.add_argument("--setup", action="store_true")
     rp = sub.add_parser("reply"); rp.add_argument("comment_id"); rp.add_argument("--text", required=True)
     rp.add_argument("--dry-run", action="store_true")
@@ -2021,6 +2043,16 @@ def main(argv=None):
     except Exception as _exc:                                  # noqa: BLE001
         # **確認が転んでも、その周を止めないこと**（入れるのは「止まっていたら動かす」側だけ）。
         print(f"（停止の確認が転びました: {str(_exc)[:80]}）")
+    # **きょうの日枠を、口を撃つ前に数える**（2026-09-16 03:4x・optimizer・Fable 5.1・ultracode）。
+    #     この周の最初の `status` が 403 quotaExceeded で落ちた —— 台帳を数えたら 5本 の予約だけで 8,250単位。
+    #     **測れない周は `trend` に数が 1つ も入らず、GOAL (4-i) の枝の判定が止まります。**
+    #     `stall` と同じ場所に置くのは、**口が閉じていても読める**（台帳だけ ＝ 0単位）から。
+    #     **止めません・判定しません**（`studio/budget.py` の註）—— 数を出すだけ。
+    try:
+        for _line in budget.lines(ledger_rows()):
+            print(_line)
+    except Exception as _exc:                                  # noqa: BLE001
+        print(f"（日枠の数えが転びました: {str(_exc)[:80]}）")
     # **口が開かなかったときの門は、ここ 1か所**（`auth_line` の註）。
     # 口ごとに `try` を置かないこと —— 置くと、次に足した口が黙って生のトレースバックへ戻ります。
     try:
