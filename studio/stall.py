@@ -84,6 +84,7 @@ import datetime as dt
 import json
 from pathlib import Path
 
+from . import budget
 from .common import JST, ROOT, ledger_rows, now_jst
 
 ROUNDS_JSONL = ROOT / "data" / "rounds.jsonl"
@@ -189,7 +190,9 @@ def signs(rows: list[dict] | None = None, rounds: list[dict] | None = None,
     """**停止の印を、数と一緒に全部 返す**（API 0単位・台帳だけ）。
 
     1つの印 ＝ `{code, words, crush, owner, since}`。`owner=True` は
-    「潰すのにオーナーの手が要る」＝ その周に 3分 を使わない側（上の読み）。
+    「**その周に 3分 を使わない**」側（上の読み）。**「オーナーの手が要る」とは同じではありません** ——
+    `mouth_gap` は `dry`（きょうの日枠を使い切った）のとき `owner=True` のまま
+    **「オーナーの手は要りません・16:00 JST に戻ります」**と言います（2026-09-16 04:3x・`dry` の枝の註）。
     """
     rows = ledger_rows() if rows is None else rows
     now = now or now_jst()
@@ -204,14 +207,51 @@ def signs(rows: list[dict] | None = None, rounds: list[dict] | None = None,
         gap = (now - ch[-1]).total_seconds() / 3600.0
         inside = len([x for x in laps if x > ch[-1]])
         if gap >= STALL_MOUTH_H or inside >= STALL_MOUTH_LAPS:
+            # **日枠を先に見る**（2026-09-16 04:2x・optimizer・Fable 5.1・ultracode）。
+            #   `channel` を書くのは `status` だけで、`status` は **日枠が尽きた周には撃てません**（403）。
+            #   ＝ この印は「口が壊れた」と「きょうのぶんを使い切った」を**同じ字**で出していました。
+            #   実際この周（09/16 03:3x）に立ち、潰し手として **`YT_REFRESH_TOKEN` の取り直し ＝ オーナーの手**
+            #   を名指しました。**口は壊れていません**（台帳に 09/15 16:00 から 8,979/10,000）。
+            #   オーナーへの訊きは数が限られている側なので、**偽の 1件 の値段が高い**（GOAL (4-a)）。
+            #   **印は消しません**（口は実際に閉じている）—— 変えるのは **owner** と **潰し手**だけ。
+            #   **覆る条件**: (1) 日枠が余っているのに `status` が 403 で落ちる周が出たら、
+            #   分けているものが違う ＝ そのときは `budget` ではなく `token_rejected` の側で読むこと。
+            #   (2) `budget.spent` は**過小**（`budget` の覆る条件 (1)）なので、
+            #   「余っている」と言われても落ちることがあります ＝ この枝は「尽きている」側にしか効かせないこと。
+            # **推計ではなく、落ちた事実で読む**（`cli.quota_exceeded` の註）——
+            #   この周の `budget.spent` は 1,021単位 余っていると言い、それでも `status` は 403 でした
+            #   ＝ 台帳に `units` を書かない口の分だけ過小（`budget` の覆る条件 (1)）。
+            #   見るのは「いまの日枠の窓の中で、いちばん新しい `channel` より後に `quota_exceeded` が在るか」。
+            spent = budget.spent(rows, now)
+            head = budget.window_start(now)
+            qx = sorted(x for x in (_at(r) for r in rows if r.get("event") == "quota_exceeded") if x)
+            dry = bool(qx) and qx[-1] >= head and qx[-1] > ch[-1]
+            if dry:
+                nxt = budget.window_start(now) + dt.timedelta(days=1)
+                crush = (f"**口は壊れていません** —— きょうの日枠を使い切っています"
+                         f"（{spent['total']:,}/{budget.DAY_UNITS:,}・残り {spent['left']:,}）。"
+                         f"戻るのは **{nxt:%m/%d %H:%M} JST**。**オーナーの手は要りません**（訊きを置かないこと）。"
+                         f"それまでは台帳だけで撃てる仕事（`trend`・`critique`・`build`・`hear`・`demand`）へ回すこと")
+            else:
+                crush = ("`YT_REFRESH_TOKEN` を取り直す ＝ **オーナーの手**"
+                         "（`python scripts/owner_ask.py` に訊きを置く）。"
+                         "こちらは台帳だけで撃てる仕事（`trend`・`critique`・`build`）へ回すこと")
             out.append({
-                "code": "mouth_gap", "since": ch[-1], "owner": True,
+                # **`owner` は `True` のまま**（2026-09-16 04:3x に踏んで戻した）——
+                #   `owner=False` にしたら `crushable` に入り、印字が
+                #   「床を待たずに **3分** 後に再実行（上限 8周）」へ変わりました。
+                #   **日枠は 3分 では戻りません（16:00 JST まで 12時間）** ＝ 8周 撃っても 1ミリも潰せず、
+                #   この module の冒頭が警告している当の形（「枠を食って 31時間 止まる側へ倒れます」）。
+                #   ＝ **`owner` が持っているのは「その周に 3分 を使うか」**で、
+                #   **「オーナーに訊きを置くか」は `dry` が持ちます**（`crush` の文がそう言う）。
+                #   **覆る条件**: 3つ目の状態（潰せるが、いますぐではない）を持つ印が 2つ目 出たら、
+                #   `owner` の bool を捨てて `when`（`now`／`later`／`owner`）にすること。
+                "code": "mouth_gap", "since": ch[-1], "owner": True, "dry": dry,
                 "words": (f"口が開いた印（`channel`）が **{gap:.2f}h・その間に始まった周 {inside}周** "
                           f"空いています（門 {STALL_MOUTH_H:.1f}h か {STALL_MOUTH_LAPS}周 ＝ "
-                          f"実測 142窓 中 3窓 だけが当たり、その 3つ が知っている停止の全部）"),
-                "crush": ("`YT_REFRESH_TOKEN` を取り直す ＝ **オーナーの手**"
-                          "（`python scripts/owner_ask.py` に訊きを置く）。"
-                          "こちらは台帳だけで撃てる仕事（`trend`・`critique`・`build`）へ回すこと"),
+                          f"実測 142窓 中 3窓 だけが当たり、その 3つ が知っている停止の全部）"
+                          + ("・**ただし日枠が尽きています**（下）" if dry else "")),
+                "crush": crush,
             })
 
     # (B) 口が拒まれた（`channel` より後ろに `token_rejected` が在る）
@@ -305,6 +345,15 @@ def state(rows: list[dict] | None = None, rounds: list[dict] | None = None,
     out["laps"] = len([x for x in lap_starts(rounds) if x > since])
     crushable = [s for s in sg if not s["owner"]]
     if not crushable:
+        # **`dry`（日枠を使い切った）の印が在る周は、「訊きを置く」と言わないこと**
+        #   （2026-09-16 04:3x）—— `crush` の行が「オーナーの手は要りません」と言っている隣で
+        #   この行が「訊きを置く」と言えば、**同じ周が自分と食い違います**（撃って踏んだ）。
+        #   3分 を使わない点は同じなので、変えるのは文だけです。
+        if any(s.get("dry") for s in sg):
+            out["why"] = ("潰せる原因が機械の側に 1つもありません（**きょうの日枠を使い切っています**）"
+                          " ＝ **床のまま・訊きは置かない**（戻るのは 16:00 JST。3分 で撃ち直しても"
+                          "日枠は 1単位 も戻らず、枠を食って 31時間 止まる側へ倒れます）")
+            return out
         out["why"] = ("潰せる原因が機械の側に 1つもありません（口はオーナーの手）"
                       " ＝ **床のまま・訊きを置く**（3分 で立て直しても 1ミリも潰せず、"
                       "枠を食って 31時間 止まる側へ倒れます）")

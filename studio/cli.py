@@ -65,6 +65,32 @@ def token_rejected(e: BaseException) -> bool:
             or "口が拒まれました" in str(e))
 
 
+def quota_exceeded(e: BaseException) -> bool:
+    """**きょうの日枠を使い切った例外か**（2026-09-16 04:2x・optimizer・Fable 5.1・ultracode）。
+
+    **口が拒まれた（token）のと、きょうのぶんを使い切った（日枠）のは別のこと**ですが、
+    **台帳の上では 1つ の字で出ていました** —— `channel` を書くのは `status` だけで、
+    `status` は日枠が尽きた周には撃てないので、`stall` の `mouth_gap` が立ち、
+    その潰し手は **`YT_REFRESH_TOKEN` の取り直し ＝ オーナーの手**を名指します。
+    **この周（09/16 03:3x）に実際そうなりました。口は壊れていません。**
+    オーナーへの訊きは数が限られている側なので、**偽の 1件 の値段が高い**（GOAL (4-a)）。
+
+    **なぜ `budget` の残りで読まないか**: 読めないからです。この周の `budget.spent` は
+    **1,021単位 残っている**と言い、それでも `status` は 403 でした ＝ 台帳に `units` を
+    書かない口の分だけ**過小**（`budget` の覆る条件 (1)）。**推計ではなく、落ちた事実で読むこと。**
+
+    **覆る条件**: (1) `quotaExceeded` 以外の理由で 403 が出る回が出たら（`forbidden` など）、
+    その `reason` をここで読み分けること。(2) Google が文言を変えたら型ではなく `reason` で引くこと
+    （いまも `reason` を先に見て、文言は保険）。
+    """
+    reason = ""
+    for d in (getattr(e, "error_details", None) or []):
+        if isinstance(d, dict) and d.get("reason"):
+            reason = str(d["reason"])
+    m = str(e)
+    return reason == "quotaExceeded" or "quotaExceeded" in m or "exceeded your" in m
+
+
 def image_for(vid: str) -> Path | None:
     for ext in ("jpg", "png"):
         p = IMAGES / f"{vid}-bg.{ext}"
@@ -2065,6 +2091,16 @@ def main(argv=None):
             ledger("token_rejected", "-", cmd=a.cmd, how="svc")
         raise
     except Exception as e:  # noqa: BLE001
+        # **日枠を使い切った周は、台帳に 1行 残す**（`quota_exceeded` の註）——
+        #   これが無いと `stall.mouth_gap` が「口が壊れた ＝ オーナーの手」を名指します。
+        if quota_exceeded(e):
+            ledger("quota_exceeded", "-", cmd=a.cmd)
+            # **`budget.lines` をここで もう一度 印字しないこと** —— `main()` の前置きで
+            #   同じ周に すでに出ています（§6「同じ周に同じ段落を 2度 印字しない」・撃って踏んだ）。
+            print("!! きょうの日枠（YouTube Data API・10,000単位/日）を使い切っています ＝ "
+                  "**口は壊れていません・オーナーの手は要りません**。戻るのは 16:00 JST。"
+                  "それまでは台帳だけで撃てる仕事（`trend`・`critique`・`build`・`hear`・`demand`）へ")
+            return 2
         if not token_rejected(e):
             raise
         # **文言は `yt.token_rejected_words` の 1か所**（同じ周の `hourly` 18:5x）。ここでは読み分けない。
