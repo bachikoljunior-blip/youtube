@@ -211,13 +211,31 @@ def drift_fields(rd: dict, s) -> list[str]:
     比べ方は `meta_drift` の註のまま（tags は YouTube が並べ替えて返すので集合で・`upload` と同じ切り詰めを当てる）。
     """
     out = []
-    if rd.get("title") != s.title:
+    if _trim(rd.get("title")) != _trim(s.title):
         out.append("題")
-    if rd.get("description") != s.description:
+    if _trim(rd.get("description")) != _trim(s.description):
         out.append("説明欄")
     if set(rd.get("tags") or []) != {t[:30] for t in s.tags[:15]}:
         out.append("tags")
     return out
+
+
+def _trim(x: str | None) -> str:
+    """**YouTube は題と説明欄の前後の空白を落として返します**（2026-09-16 00:5x・optimizer・Fable・ultracode）。
+
+    実測（長尺 8本目 `avMVePkF758`・09/17 21:00）: 渡した説明欄 **1,677字**・返ってきた **1,676字**・
+    **差は末尾の改行 1字 だけ**（`live.strip() == mine.strip()` が True）。
+    それまでこの比べは**生の文字列**だったので、**末尾に改行の在る台本は必ず食い違い**、
+    `verify_meta` が `update_meta` を **2回（100単位）撃って 120秒 待ち**、
+    それでも直らず「次の回が見ること」と書き残していました
+    —— **直せない差を直しに行っていた**（この repo でいちばん多い壊れ方の、値段の側）。
+
+    **覆る条件**: (1) YouTube が前後の空白を保つようになったら、この正規化は要りません
+    （末尾の改行だけを台本から落とすほうが安い）。
+    (2) 前後**以外**の空白（連続する改行の潰しなど）で食い違う本が出たら、`strip()` では足りない
+    ＝ そのときは**送る側**（`yt.upload` / `yt.update_meta`）で正規化してから比べること。
+    """
+    return (x or "").strip()
 
 
 def meta_mark(drift: list[str] | None) -> str:
