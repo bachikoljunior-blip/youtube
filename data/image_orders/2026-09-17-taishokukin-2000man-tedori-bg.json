@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-17-taishokukin-2000man-tedori-bg",
+ "asked_at": "2026-09-15T19:31:17+09:00",
+ "for": "2026-09-17 の本（2026-09-17-taishokukin-2000man-tedori・形 long）の背景",
+ "prompt": "日本の60代前半の男性が、自宅のダイニングテーブルで退職金の支払明細と電卓を並べて静かに計算している様子。窓からのやわらかい昼の光。写実的な写真風。文字やロゴは入れない。横長。",
+ "avoid": "文字・ロゴ・実在の人物・透かし",
+ "size": "1920x1080",
+ "format": "jpg",
+ "out": "assets/images/2026-09-17-taishokukin-2000man-tedori-bg.jpg",
+ "status": "pending"
+}
