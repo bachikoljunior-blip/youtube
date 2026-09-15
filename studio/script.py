@@ -656,6 +656,33 @@ class Script(BaseModel):
     def warnings(self) -> list[str]:
         """止めない。書き手（Fable）が読んで決める材料（オーナー 09/06「点って言ってるとこ」「漢字の読み変なのいっぱい」）。"""
         out = []
+        # **`yomi` が声に届いていない本を名指しする**（2026-09-16 04:4x・optimizer・Fable 5.1・ultracode）。
+        #   `customPronunciations` が効くのは Chirp3 系だけで、**Neural2 は 200 で受けて無視します**
+        #   （`studio/tts.py` 冒頭の実測・09/07 14:3x）。Neural2 の本で音に効くのは
+        #   **`kana_in_voice` に挙げた語だけ**です（`tts.voice_text`）。
+        #   **この回に台帳の 20本 を数えたら、18本 が Neural2 で、17本 の `kana_in_voice` が 空**でした
+        #   —— いちばん多い本で `yomi` **221語**が、音に 1ミリも効いていません。
+        #   **「読みが正しいこと」はオーナーの固定（固定その3・09/02）**で、そこが
+        #   **書いたつもりで配線されていない**形は、この repo でいちばん多い壊れ方（言っている所と、している所が別）。
+        #   **実物**: 9本目（`2026-09-18-fuyou-shinkokusho`）は `yomi` に
+        #   「扶養親族等申告書 → ふようしんぞくとうしんこくしょ」と書いてあるのに、
+        #   コマ2（フック）が「ふようしんぞく〈など〉しんこくしょ」と鳴っていました（`hear` の `plain_probe` で確かめた）。
+        #   **止めません**（`problems()` へ入れない ＝ 焼けなくなる）。**読んで決めるのは書き手**。
+        #   **覆る条件**: (1) Neural2 でも `customPronunciations` が効くようになったら（撃って確かめて）この行を消すこと。
+        #   (2) 声を Chirp3-HD へ戻したら、この行は自動で黙ります（`tts.uses_custom_pronunciations`）。
+        #   (3) `kana_in_voice` に全語を入れる形（`tts.FORCE_ALL_KANA`）を既定にしたら、この行は要りません。
+        from .tts import uses_custom_pronunciations
+        if self.yomi and not uses_custom_pronunciations(self.voice):
+            dead = [w for w in self.yomi if w not in (self.kana_in_voice or [])]
+            if dead:
+                out.append(
+                    f"`yomi` の **{len(dead)}語 が音に効いていません** —— 声 `{self.voice}` は "
+                    f"`customPronunciations` を 200 で受けて無視します（`studio/tts.py` 冒頭の実測）。"
+                    f"Neural2 で音に効くのは **`kana_in_voice` に挙げた語だけ**です"
+                    f"（いま {len(self.kana_in_voice or [])}語）。**止めません** —— "
+                    f"読みが割れて困る語だけ `kana_in_voice` へ入れ、`build` と `hear` をやり直すこと"
+                    f"（全部を仮名にすると、辞書に無い仮名の並びで抑揚が崩れます）。"
+                    f"例: {'・'.join(list(dead)[:5])}")
         # **狙い（15分）に届いていない長尺は、ここで言う**（2026-09-15 21:0x）。
         # **`problems()` へ入れないこと** —— `cli.cmd_build` は `problems()` が 1行でも在ると
         # **焼く前に止まります** ＝ 既に焼いた長尺 7本（320〜487秒）が全部 焼き直せなくなり、
