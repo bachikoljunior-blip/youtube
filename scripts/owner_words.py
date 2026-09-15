@@ -237,6 +237,14 @@ FILED_IDS: dict[str, str] = {
                  "**道具の側は 09/14 21:3x**（optimizer）: `studio/` の **40行**が"
                  "「判定は `hourly`」と印字していた ＝ **立つ先が居ないので どの判定も永久に開かない** →"
                  "「判定は立ったサブ（いま 1体）」へ一斉に（`studio/trend.py` の頭の註が門）"),
+    "75061584": ("2026-09-15 すぐ結果出ないんだったらその後のプランを場合分けしてプランすることを批判的にみても"
+                 "それがいいと思うんだったらそうして"
+                 " → 札: `docs/GOAL.md` (4-i) 場合分けの計画（09/15 06:5x・optimizer・Fable が批判的に見て「やる」）"
+                 "・枝を選ぶ門は `trend.plan_branch`（毎周 印字）・枝ごとの手は (4-i) の A／B／C"),
+    "9f3f9382": ("2026-09-15 サブで立てるのと変わらないなら、セッションじゃなくてサブを立てて"
+                 " → 札: 親の手続き `docs/trigger_parent.md` 第1節（サブは Agent ツール・`isolation: worktree`）"
+                 "・立ったサブ（optimizer）は `create_session` を撃たない（09/15 14:xx・optimizer・Fable が読んだ ＝ "
+                 "この周から 1体 も session を立てていない・`data/rounds.jsonl` に session の行は無い）"),
     "67d63788": ("2026-09-14 いれたよ"
                  " → 札: 口（`YT_REFRESH_TOKEN`）が **20:2x に開いた**"
                  "（`status`／`measure`／`comments` が通る・METHOD §7「いまの数」の 口（API） の行）"),

@@ -8,8 +8,9 @@
     python -m studio.cli critique <id>          # 分かりやすさの批判（Sonnet）
     python -m studio.cli crosscheck <id>        # 声と 説明欄・notes の食い違い（Sonnet・§4 (0)）
     python -m studio.cli order-image <id>       # 背景画像を注文（外の ChatGPT セッションが焼く）
-    python -m studio.cli schedule <id> --at 10:00 [--replace <videoId>]   # きょうの枠へ予約（当日だけ）
-    python -m studio.cli measure                # 公開ずみの本の再生・高評価を台帳へ
+    python -m studio.cli schedule <id> --at 10:00 [--replace <videoId>]   # きょうの枠へ予約（`YYYY-MM-DD HH:MM` なら その日・2本目 以降は --force）
+    python -m studio.cli reschedule <id> --at "YYYY-MM-DD HH:MM" [--force]  # 予約ずみの本の刻だけ動かす（50単位・上げ直さない・`LONG_SLOTS`）
+    python -m studio.cli measure              # 公開ずみの本の再生・高評価を台帳へ
     python -m studio.cli trend [--days 3]       # 台帳から「齢 → 再生」の並び（API 0単位・§7 の判定はこれで）
     python -m studio.cli trend --by-day-count   # 「その日に何本 出したか」ごとの 48時間 再生（API 0単位・§7 の覆る条件）
     python -m studio.cli comments               # 視聴者が書いたコメント（自分の自動コメントは除く。API 1単位）
@@ -603,6 +604,9 @@ def cmd_status(a):
     for v in yt.scheduled_all():
         if yt.when(v).date() > now_jst().date():
             print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['title'][:40]}{lineup_mark(v, sids)}")
+    lsl = long_slot_line(vids, now_jst())
+    if lsl:
+        print("  " + lsl)
     print("直近 公開 10本:")
     lrows = ledger_rows()
     for v in yt.published()[:10]:
@@ -1035,6 +1039,100 @@ def cmd_schedule(a):
     ledger("scheduled", a.id, video_id=vid, publish_at=at.isoformat(timespec="minutes"), replaced=a.replace or None,
            title=s.title)
     verify_meta(vid, s)
+    return 0
+
+
+# ---- 長尺の枠（1日に複数）と、予約の刻を動かす口。**2026-09-15 14:xx・optimizer・Fable 5.1（ultracode）が足した** ----
+# **なぜ**（固定 2「期限内にできるか → できる以外なら やり方を疑え」で、この回が疑った先）:
+#   長尺は 1周（90分）に 1本 焼けて閉じる（09/15 は 03:2x・09:4x・12:4x の 3周 が 1本ずつ）のに、
+#   出す枠は「19:00 に 1日 1本」だった。閉じた本が 09/18・09/19 の枠で **3〜4日 座っていた**
+#   （`FLLHpj27v7s`・`4MpH3QliNi4`）＝ 固定その2 の 3「本数を積まず、次に出る 1本 を良くし続ける」の逆で、
+#   **良くし終えた本を積んでいた**。扉(b)（4,000時間）は時計で、届く本が多いほど早い。
+#   「1日1本」は 09/14 06:1x に床から外れている（GOAL 固定その2 の節）。(4-e) の「本数は上げない」は
+#   **ショートのフィードの弾力性**の数で、長尺には 1本 の実測も無い。
+#   **覆る条件**: (1) 1日 2本 以上 出した日の長尺の 48h 中位が、1日 1本 の日の中位の **半分 未満**
+#   （どちらも 3本 以上）なら、フィードの側に上限が在る ＝ 1日 1本 へ戻す。(2) オーナーが本数・時刻に言葉を出したら、その言葉が正本。
+#   (3) 判定（`trend.plan_branch`・最初の 3本）は publish_at 順なので、刻を動かすと「最初の 3本」の顔ぶれが変わる
+#   —— それでよい（どの 3本 でも「この口で長尺が配られるか」の問いは同じ）。
+LONG_SLOTS = ("12:00", "19:00", "21:00")
+# 予約を置ける最小の先（YouTube 側の処理は済んでいる前提 ＝ `readiness`。上げ直しではなく刻だけ動かす）。
+LONG_SLOT_LEAD_H = 2.0
+# 同じ枠に「本が在る」と見る幅（分）。
+LONG_SLOT_NEAR_MIN = 60
+
+
+def next_long_slots(taken: list[dt.datetime], now: dt.datetime, n: int = 3) -> list[dt.datetime]:
+    """`LONG_SLOTS` のうち、いまから `LONG_SLOT_LEAD_H` 以上 先で、`taken`（予約ずみ・公開ずみの刻）の
+    ±`LONG_SLOT_NEAR_MIN`分 に本が無い刻を、早い順に `n` 個。**API 0単位**（刻の計算だけ）。"""
+    out: list[dt.datetime] = []
+    floor = now + dt.timedelta(hours=LONG_SLOT_LEAD_H)
+    near = dt.timedelta(minutes=LONG_SLOT_NEAR_MIN)
+    for d in range(0, 8):
+        day = (now + dt.timedelta(days=d)).date()
+        for hhmm in LONG_SLOTS:
+            hh, mm = map(int, hhmm.split(":"))
+            at = dt.datetime(day.year, day.month, day.day, hh, mm, tzinfo=JST)
+            if at < floor:
+                continue
+            if any(abs(at - t) < near for t in taken):
+                continue
+            out.append(at)
+            if len(out) >= n:
+                return out
+    return out
+
+
+def long_slot_line(vids: list[dict], now: dt.datetime) -> str:
+    """`status` の 1行: 次に長尺を置く枠（空いている順に 3つ）。**API 0単位**（`all_videos` は status がもう引いている）。"""
+    taken = [yt.when(v) for v in vids if v.get("publish_at") or v.get("published_at")]
+    taken = [t for t in taken if t > now - dt.timedelta(days=1)]
+    slots = next_long_slots(taken, now)
+    if not slots:
+        return ""
+    return ("次の長尺の枠（空いている順・`LONG_SLOTS`・閉じた本は座らせず ここへ `schedule --force`／`reschedule`）: "
+            + "・".join(f"{s:%m/%d %H:%M}" for s in slots))
+
+
+def cmd_reschedule(a):
+    """予約ずみの本の **刻だけ** 動かす（`videos.update` 50単位・上げ直さない・ID そのまま）。
+
+    `schedule --replace` は 1,600単位（insert）で、本文が動いていないのに刻だけ変えるには高い。
+    台帳には `scheduled` の行を 1本 足す（同じ video_id・新しい publish_at・`moved_from` に前の刻）
+    ＝ `long_videos`／`_script_video_ids`／`meta_drift` は「同じ台本 id の最後の行」を読むので、そのまま通る。
+    """
+    s = script.load(a.id)
+    rows = ledger_rows()
+    last = next((r for r in reversed(rows) if r.get("event") == "scheduled" and r.get("id") == a.id
+                 and r.get("video_id")), None)
+    if not last:
+        print(f"{a.id} は台帳に予約が無い（`schedule` が先）")
+        return 1
+    vid = last["video_id"]
+    at = parse_at(a.at)
+    if at is None:
+        print(f"--at の形が読めない: {a.at!r}（HH:MM ＝ きょう／YYYY-MM-DD HH:MM ＝ その日）")
+        return 1
+    if at <= now_jst() + dt.timedelta(minutes=5):
+        print(f"{a.at} はもう過ぎている（いま {now_jst():%m/%d %H:%M}）。--at を後ろへ")
+        return 1
+    live = next((v for v in yt.all_videos() if v["id"] == vid), None)
+    if live is None or live["privacy"] == "public":
+        print(f"{vid} は予約のまま残っていない（{'無い' if live is None else 'もう public'}）＝ 動かせない")
+        return 1
+    lineup = yt.today_lineup(date=at.date())
+    others = [v for v in lineup if v["id"] != vid]
+    if others and not a.force:
+        print(f"{at:%m/%d} の枠にはもう本がある（1日1本）。長尺の 2本目 以降なら --force:")
+        for v in others:
+            print(f"  {yt.when(v):%H:%M} {v['privacy']} {v['id']} {v['title'][:40]}")
+        return 1
+    if a.dry_run:
+        print(f"[dry-run] {vid} の刻を {yt.when(live):%m/%d %H:%M} → {at:%m/%d %H:%M} JST へ")
+        return 0
+    yt.reschedule(vid, at)
+    print(f"動かした: {vid}  {yt.when(live):%m/%d %H:%M} → {at:%m/%d %H:%M} JST（50単位・ID そのまま）")
+    ledger("scheduled", a.id, video_id=vid, publish_at=at.isoformat(timespec="minutes"), replaced=None,
+           moved_from=last.get("publish_at"), title=s.title)
     return 0
 
 
@@ -1706,6 +1804,8 @@ def main(argv=None):
     sc = sub.add_parser("schedule"); sc.add_argument("id"); sc.add_argument("--at", required=True)
     sc.add_argument("--replace", default=""); sc.add_argument("--force", action="store_true")
     sc.add_argument("--dry-run", action="store_true")
+    rs = sub.add_parser("reschedule"); rs.add_argument("id"); rs.add_argument("--at", required=True)
+    rs.add_argument("--force", action="store_true"); rs.add_argument("--dry-run", action="store_true")
     sub.add_parser("measure")
     tr = sub.add_parser("trend"); tr.add_argument("--days", type=float, default=3)
     tr.add_argument("--by-day-count", action="store_true")
