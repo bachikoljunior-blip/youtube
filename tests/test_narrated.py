@@ -114,11 +114,27 @@ def test_文ごとに当てる():
 # ---- 実データ ------------------------------------------------------------
 
 def _books() -> list[tuple[str, list[str], list[dict]]]:
+    """控えの本（`<video_id>.json` ＋ `<video_id>.plan.json` の組）だけを返す。
+
+    **2026-09-15 21:5x に直した**（optimizer・Fable 5.1・ultracode）。
+    この glob は `.plan.json` しか外していませんでしたが、**2026-09-02 から
+    `<video_id>.script.json` が同じ部屋に置かれるようになり**（commit `991132f0`）、
+    そちらは `video_id` の欄を持たないので **`KeyError: 'video_id'` で 3件 落ちていました**
+    （13日 赤のまま ＝ この回が自分の変更を確かめるときに、まずここを疑って時間を使った側）。
+    **落ちていたのは道具ではなく、この検査の拾い方です。**
+
+    **空振りで緑にしないこと** —— 下の `test_控えの本を1冊は拾っている` が、
+    この関数が 0冊 を返したら落ちます（`src/alerts.py` の「一覧が当たりを含まないまま育つ」側へ倒さない）。
+    **覆る条件**: 控えの部屋に 3つ目 の種類の `.json` が置かれたら、ここは「欄で拾う」側
+    （`video_id` を持つ物だけ）なので**そのまま通ります**。拾い方を名前に戻さないこと。
+    """
     out = []
     for meta_path in sorted(Q.glob("*.json")):
-        if meta_path.name.endswith(".plan.json"):
+        if meta_path.name.endswith((".plan.json", ".script.json")):
             continue
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if "video_id" not in meta:        # 名前ではなく欄で拾う（覆る条件・上）
+            continue
         plan_path = Q / f"{meta['video_id']}.plan.json"
         if not plan_path.exists():
             continue
@@ -410,3 +426,16 @@ def test_台本の段でも掛かっている():
     absent = [p for p in said_nowhere if hit in p]
     assert absent, said_nowhere
     assert "98万7654" in absent[0], absent
+
+
+def test_控えの本を1冊は拾っている():
+    """**空振りの陰性対照**（2026-09-15 21:5x）。
+
+    `_books()` が 0冊 を返すと、上の 3件 は「赤が 0件」で**緑になります** ——
+    計器が死んでいても同じ字が出る形（`scripts/retention.py` の `length_of` が
+    見出しだけ出して 1本も描かずに正常終了し、7日 気づかれなかった当のもの）。
+    """
+    books = _books()
+    assert len(books) >= 1, "控えの部屋から 1冊も拾えていません ＝ 上の実データの検査は空振りです"
+    vid, narr, plan = books[0]
+    assert len(vid) == 11 and isinstance(plan, list)
