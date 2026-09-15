@@ -147,3 +147,50 @@ def test_これから焼く長尺は全部持っている():
         got.append((p.stem, not _msg(s)))
     assert got, "まだ上げていない長尺の台本が 1本も無い（この検査が空回りしている）"
     assert all(ok for _, ok in got), [n for n, ok in got if not ok]
+
+
+# ---- A/B の側（置き場だけが違う 2群）--------------------------------------
+
+def _ab_rows(tmp_path, early: bool, form: str = "long"):
+    """長尺 1本。出口の一手は**両群とも**持たせる ＝ 測るのは置き場だけ。"""
+    segs = [{"say": "あ" * 20} for _ in range(20)]
+    if early:
+        segs[1] = {"say": "登録しておくと、とどきます。"}   # 累計 ≒ 6%
+    segs[-1] = {"say": "登録しておくと、あすの分がとどきます。"}
+    (tmp_path / "a.json").write_text(json.dumps({
+        "id": "a", "date": "2026-09-20", "title": "て", "takeaway": "て",
+        "form": form, "segments": segs}, ensure_ascii=False))
+    return [
+        {"event": "scheduled", "id": "a", "video_id": "V1", "at": "2026-09-20T00:00:00+09:00"},
+        {"event": "analytics_video", "id": "V1", "views": 1000, "subs_gained": 5,
+         "at": "2026-09-22T00:00:00+09:00"},
+    ]
+
+
+def test_A_Bは前の一手の在る側と無い側を分ける(tmp_path):
+    from studio import trend
+    yes = trend.early_cta_cohorts(_ab_rows(tmp_path, True), scripts=tmp_path)
+    assert yes["with"]["n"] == 1 and yes["without"]["n"] == 0
+    no = trend.early_cta_cohorts(_ab_rows(tmp_path, False), scripts=tmp_path)
+    assert no["with"]["n"] == 0 and no["without"]["n"] == 1
+
+
+def test_A_Bはショートを数に入れない(tmp_path):
+    """窓は長尺の retention から引いてある ＝ ショートを混ぜると別の数を測ります。"""
+    from studio import trend
+    c = trend.early_cta_cohorts(_ab_rows(tmp_path, True, form="short"), scripts=tmp_path)
+    assert c["with"]["n"] == 0 and c["without"]["n"] == 0
+
+
+def test_A_Bは3本たまるまで向きを読ませない(tmp_path):
+    from studio import trend
+    c = trend.early_cta_cohorts(_ab_rows(tmp_path, True), scripts=tmp_path)
+    assert c["ready"] is False
+    assert "たまるまで" in trend.early_cta_line(_ab_rows(tmp_path, True), scripts=tmp_path)
+
+
+def test_行は毎周印字される側に在る():
+    """`trend.lines` から外れたら、この A/B は誰も見ません（出口の A/B と同じ検査）。"""
+    import inspect
+    from studio import trend
+    assert "early_cta_line(rows)" in inspect.getsource(trend.lines)

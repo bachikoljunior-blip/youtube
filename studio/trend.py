@@ -2444,6 +2444,7 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     out.append(rev_deadline_line(rows))
     out.append(sub_rate_line(rows))
     out.append(cta_line(rows))
+    out.append(early_cta_line(rows))
     # **場合分けの計画の、いま生きている枝**（GOAL (4-i)・オーナー 09/15 06:26 `75061584`）。
     #  門は `plan_branch` の 1か所 —— GOAL の字は写しで、数はここが持つ。
     out.append(plan_branch_line(rows, now=now))
@@ -3042,6 +3043,94 @@ def cta_line(rows: list[dict], scripts=None) -> str:
                 + (f"・要る登録 {c['need_per_day']:.1f}人/日" if c.get("need_per_day") else "")
                 + "。**一手は 2026-09-15 に初めて入りました**（それまで 253本 とも 0件 ＝ "
                   "`script.CTA_FROM` の註・`docs/JOURNAL.md` 2026-09-15 02:xx）。")
+    return out
+
+
+def early_cta_cohorts(rows: list[dict], scripts=None) -> dict:
+    """**長尺だけ**を、前の一手（`script.early_cta_ratio` が窓の中）の在る／無いで分ける。
+
+    2026-09-16 08:5x（optimizer・Fable 5.1・ultracode）に足した。**API 0単位。**
+
+    **なぜ、この A/B が ただで手に入るか**: 前の一手の門を入れた回に、
+    **もう上げてある長尺 6本 には入っていませんでした**（動画は差し替えられない ＝
+    再アップロードで 1本 1,650単位・6本 で 9,900）。**それを揃えに行かず、そのまま出します** ——
+    同じ週・同じチャンネル・同じ作り・同じ尺で、**置き場だけが違う 2群**になるからです。
+    `retention.json` から引いた **2.9〜12.5倍** は、ここで実測の裏が取れます。
+
+    **出口の一手は両群とも持っています**（`CTA_FROM` 以降）＝ **この列が測るのは置き場だけ。**
+
+    返り: `{"with", "without", "need", "ready", "reach"}`。側は `{"n","views","subs","rate"}`。
+
+    **覆る条件**:
+     (1) 在る側が **3本**（`CTA_RUN_NEED`）たまって、無い側の **2倍** に届かないなら、
+         倍率は retention から素直には掛からない ＝ 疑うのは窓ではなく**文言**
+         （前に置くと押しつけになる側・`script.EARLY_CTA_FROM` の覆る条件 (1)）。
+     (2) 在る側の**最後まで見た割合**が無い側の中央を **5ポイント** 下回ったら、
+         前の一手が尺を食っている ＝ `sub` だけにすること（出口の A/B の (2) と同じ形）。
+     (3) 長尺が 1本も 30回 に届かないうちは、この行は配りを測っていて、置き場を測っていません
+         （`docs/GOAL.md` (4-g-1)）。
+    """
+    from .script import (SCRIPTS, EARLY_CTA_HI, EARLY_CTA_LO, Script,
+                         early_cta_ratio)
+    from pathlib import Path as _P
+    base = _P(scripts) if scripts is not None else SCRIPTS
+    vids = _script_video_ids(rows)
+    latest: dict[str, dict] = {}
+    for r in sorted((r for r in rows if r.get("event") == "analytics_video"),
+                    key=lambda r: r["at"]):
+        latest[r["id"]] = r
+    sides: dict[bool, list[dict]] = {True: [], False: []}
+    for p in sorted(base.glob("*.json")):
+        vid = vids.get(p.stem)
+        if not vid or vid not in latest:
+            continue
+        try:
+            sc = Script.model_validate_json(p.read_text())
+        except Exception:
+            continue
+        # **長尺だけ** —— 窓は長尺の retention から引いてあります（ショートは別の数）。
+        if not sc.segments or sc.form != "long":
+            continue
+        r = latest[vid]
+        if (r.get("views") or 0) < CTA_MIN_VIEWS:
+            continue
+        ratio = early_cta_ratio(sc.segments)
+        sides[ratio is not None and EARLY_CTA_LO <= ratio <= EARLY_CTA_HI].append(r)
+
+    def _side(got: list[dict]) -> dict:
+        v = sum(int(x.get("views") or 0) for x in got)
+        sb = sum(int(x.get("subs_gained") or 0) for x in got)
+        return {"n": len(got), "views": v, "subs": sb, "rate": (sb / v) if v else None}
+
+    w, wo = _side(sides[True]), _side(sides[False])
+    d = rev_deadline(rows)
+    return {"with": w, "without": wo, "need": d.get("sub_rate_need_b"),
+            "ready": w["n"] >= CTA_RUN_NEED, "reach": (0.187, 0.809)}
+
+
+def early_cta_line(rows: list[dict], scripts=None) -> str:
+    """`early_cta_cohorts` を1行に（`trend` が毎周 印字する ＝ **METHOD へ写さないこと**）。"""
+    c = early_cta_cohorts(rows, scripts)
+    w, wo = c["with"], c["without"]
+    lo, hi = c["reach"]
+    out = ("**長尺の「前の一手」の A/B（置き場だけが違う 2群）**"
+           "（`trend.early_cta_cohorts`・台帳＋台本・**API 0単位**）: "
+           f"在る **{w['n']}本**・再生 {w['views']:,}・登録 +{w['subs']}"
+           + (f" ＝ **{w['rate'] * 100:.3f}%**" if w["rate"] is not None else " ＝ 率は測れません")
+           + f"／無い **{wo['n']}本**・再生 {wo['views']:,}・登録 +{wo['subs']}"
+           + (f" ＝ **{wo['rate'] * 100:.3f}%**" if wo["rate"] is not None else " ＝ 率は測れません")
+           + ". ")
+    if not c["ready"]:
+        out += (f"**在る側が {CTA_RUN_NEED}本 たまるまで、この行から向きを読まないこと**"
+                f"（いま {w['n']}本）。")
+    elif w["rate"] is not None and wo["rate"]:
+        out += f"**倍率 {w['rate'] / wo['rate']:.1f}倍**（覆る条件 (1) は 2倍・3本）。"
+    out += (f"**届く人の見込みは {lo:.1%}〜{hi:.1%} 対 出口 6.5%**"
+            f"（＝ 2.9〜12.5倍・`data/retention.json` の長尺 4本 の中央値・"
+            "数え直す口は `python scripts/cta_reach.py`）。"
+            "**もう上げてある長尺 6本 には入っていません**（差し替えは 1本 1,650単位）＝ "
+            "**揃えずに、そのまま無い側として数えています**（`script.EARLY_CTA_FROM` の註・"
+            "`docs/JOURNAL.md` 2026-09-16 08:2x）。")
     return out
 
 
