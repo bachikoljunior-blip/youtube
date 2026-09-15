@@ -1078,10 +1078,19 @@ def cmd_order_image(a):
             print(f"  !! 注文は {prev['size']} ・いまの形 `{form.name}` は {size}"
                   " ＝ **届く絵は cover-fit で切り取られます**（`cmd_order_image` の註）")
         return 0
+    # **`avoid` に「人の顔」を入れてあります**（2026-09-16 07:0x・optimizer・Fable 5.1・ultracode）。
+    # `studio/thumb.py` の註が「**こちらは顔を使いません**」と決めている（CLAUDE.md の根幹 ＝
+    # 写真の人物を載せると、その人が話しているように読める）のに、**注文の側にその字がありませんでした**
+    # —— 09/16 の 10本目 のサムネを焼いて目で見たら、背景に窓口の職員と相談者の顔が写っています
+    # （0.62 まで落ちており字が 9割 を覆うので、その本は焼き直していません）。
+    # **場面（窓口・書類・封筒）は残せるので、失う物はありません。**
+    # **覆る条件**: 顔なしの本 3本 の `video_thumbnail_impressions_ctr`（`reporting.py`）が
+    # 顔ありの本を下回ったら、この字を外すこと。derivation は JOURNAL 2026-09-16 07:0x。
     order = {"id": oid, "asked_at": now_jst().isoformat(timespec="seconds"),
              "for": f"{s.date} の本（{s.id}・形 {form.name}）の背景",
              "prompt": s.image_prompt or "落ち着いた紺色の背景に、机の上の書類と電卓。写実的。文字は入れない。",
-             "avoid": "文字・ロゴ・実在の人物・透かし", "size": size, "format": "jpg",
+             "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+             "size": size, "format": "jpg",
              "out": f"assets/images/{oid}.jpg", "status": "pending"}
     p.write_text(json.dumps(order, ensure_ascii=False, indent=1), encoding="utf-8")
     print("注文を置いた:", p, "（外の毎時セッションが焼く。届いたら build し直す）")
