@@ -1,11 +1,11 @@
 {
- "id": "2026-09-17-teikibin-nai-okane-6tsu-bg",
- "asked_at": "2026-09-15T23:54:04+09:00",
- "for": "2026-09-17 の本（2026-09-17-teikibin-nai-okane-6tsu・形 long）の背景",
- "prompt": "日本の60代の夫婦が、自宅のダイニングテーブルでねんきん定期便のハガキを二人で広げて見ている様子。窓からのやわらかい昼の光。写実的な写真風。文字やロゴは入れない。横長。",
- "avoid": "文字・ロゴ・実在の人物・透かし",
- "size": "1920x1080",
- "format": "jpg",
- "out": "assets/images/2026-09-17-teikibin-nai-okane-6tsu-bg.jpg",
- "status": "pending"
+  "id": "2026-09-17-teikibin-nai-okane-6tsu-bg",
+  "asked_at": "2026-09-15T23:54:04+09:00",
+  "for": "2026-09-17 の本（2026-09-17-teikibin-nai-okane-6tsu・形 long）の背景",
+  "prompt": "日本の60代の夫婦が、自宅のダイニングテーブルでねんきん定期便のハガキを二人で広げて見ている様子。窓からのやわらかい昼の光。写実的な写真風。文字やロゴは入れない。横長。",
+  "avoid": "文字・ロゴ・実在の人物・透かし",
+  "size": "1920x1080",
+  "format": "jpg",
+  "out": "assets/images/2026-09-17-teikibin-nai-okane-6tsu-bg.jpg",
+  "status": "done"
 }
