@@ -30,6 +30,22 @@ def ask(prompt: str, model: str = "sonnet", timeout: int = 300) -> str:
     return json.loads(r.stdout)["result"]
 
 
+def budget(prompt: str, floor: int = 300, cap: int = 1200) -> int:
+    """**`claude -p` の待ち時間は、渡す字の長さで伸ばす**（2026-09-16 00:2x・optimizer・Fable・ultracode）。
+
+    それまで `crosscheck` も `critique` も **300秒 の定数**でした。90秒のショート（約480字）では
+    余りますが、**§2 が 09/15 21:0x に長尺の狙いを 15〜30分 へ広げた**ので、5,500字 の本を渡すと
+    `crosscheck` が **300秒 で TimeoutExpired** になります（この回の 8本目・実測。`critique` は 5周 とも通った
+    ＝ **落ちるのは、説明欄と notes まで渡す `crosscheck` の側から**）。
+    **字の長さに比例して伸ばします**（1,000字 ＝ +100秒・上限 1,200秒）。
+
+    **覆る条件**: (1) この式で 30分 の本（約9,000字）が落ちたら、比を上げるのではなく
+    **渡す物を減らす**こと（notes は 声と説明欄 の突き合わせには要らない列が多い）。
+    (2) 上限（1,200秒）に当たる本が 2本 出たら、1周 1本 の形のほうが先に壊れています（§5 の速さ）。
+    """
+    return min(cap, max(floor, floor + len(prompt) // 10))
+
+
 def _json(text: str):
     m = re.search(r"\{.*\}", text, re.S)
     return json.loads(m.group()) if m else {"raw": text}
@@ -159,7 +175,7 @@ def critique(s: Script) -> dict:
          "JSON {\"items\": [{\"where\": \"コマ番号か引用\", \"why\": \"...\", \"fix\": \"直し方の案\", \"severity\": \"real|nitpick\"}], "
          "\"understand\": 1〜5, \"takeaway\": \"1文\"} だけを返してください。\n\n---\n")
     p += critique_screen(s)
-    return _json(ask(p, "sonnet", 300))
+    return _json(ask(p, "sonnet", budget(p)))
 
 
 def critique_screen(s: Script) -> str:
@@ -238,7 +254,7 @@ def crosscheck(s: Script) -> dict:
     for i, seg in enumerate(s.segments, 1):
         p += f"コマ{i}: {seg.say}\n"
     p += f"\n【説明欄】\n{s.description}\n\n【制作メモ notes】\n{s.notes}\n"
-    return _json(ask(p, "sonnet", 300))
+    return _json(ask(p, "sonnet", budget(p)))
 
 
 # ---------------------------------------------------------------------------
