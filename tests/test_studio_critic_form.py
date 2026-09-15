@@ -66,12 +66,12 @@ def test_長尺の問いにショートの字が残らない(monkeypatch, fn):
     p = _prompt(monkeypatch, fn, _script("long", n=25))
     head = p.split("---")[0]
     assert "ショート" not in head and "60秒" not in head and "60〜90秒" not in head
-    assert "4〜10分" in head or "長尺" in head
+    assert "5〜30分" in head or "長尺" in head
 
 
 def test_長尺のcritiqueは尺を長尺として言う(monkeypatch):
     p = _prompt(monkeypatch, critic.critique, _script("long", n=25))
-    assert "これは 4〜10分 の長尺です。" in p
+    assert "これは 5〜30分 の長尺です。" in p
     # **判定の文は 1字も足していない**（長尺でも正しいかは `hourly`・§5）。
     assert "全部を説明しないこと自体は欠陥ではありません。" in p
 

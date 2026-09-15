@@ -14,6 +14,7 @@
     python -m studio.cli trend [--days 3]       # 台帳から「齢 → 再生」の並び（API 0単位・§7 の判定はこれで）
     python -m studio.cli trend --by-day-count   # 「その日に何本 出したか」ごとの 48時間 再生（API 0単位・§7 の覆る条件）
     python -m studio.cli comments               # 視聴者が書いたコメント（自分の自動コメントは除く。API 1単位）
+    python -m studio.cli peers [--force]        # 同じニッチの他人のチャンネルと並べる（約30単位・台帳が24時間 以内なら 0単位）
     python -m studio.cli reporting [--setup]    # 一括レポート（Reporting API・Data API 0単位・Analytics より 2日 早い）
     python -m studio.cli reply <comment_id> --text "…"   # 視聴者のコメント1件に手で書いた返信（50単位・台帳 replied）
 """
@@ -29,7 +30,7 @@ from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
-from . import analytics, critic, hear, render, reporting, script, stall, trend, yt
+from . import analytics, critic, hear, peers, render, reporting, script, stall, trend, yt
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
 IMAGES = ROOT / "assets" / "images"
@@ -1819,6 +1820,70 @@ def _reporting_one(a, js: list, rtype: str, store) -> int:
     return 0
 
 
+def mine_shape(rows: list[dict]) -> dict:
+    """うちの本の形（**API 0単位**・`data/views.jsonl` と台帳だけ）。`peers.lines` の右端に出す。"""
+    mx: dict[str, list[int]] = {}
+    for fn in (ROOT / "data" / "views.jsonl", ROOT / "data" / "studio" / "ledger.jsonl"):
+        if not fn.exists():
+            continue
+        for line in fn.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            vid = d.get("id", "")
+            if not (isinstance(vid, str) and re.fullmatch(r"[A-Za-z0-9_-]{11}", vid)):
+                continue
+            cur = mx.setdefault(vid, [0, 0])
+            if isinstance(d.get("views"), int):
+                cur[0] = max(cur[0], d["views"])
+            if isinstance(d.get("likes"), int):
+                cur[1] = max(cur[1], d["likes"])
+    secs = [r["seconds"] for r in rows if r.get("event") == "built" and isinstance(r.get("seconds"), (int, float))]
+    views = [v for v, _ in mx.values()] or [0]
+    tv = sum(views) or 1
+    import statistics as _st
+    return {"n": len(mx), "views_median": int(_st.median(views)), "views_max": max(views),
+            "like_rate": 100 * sum(l for _, l in mx.values()) / tv,
+            "secs_median": int(_st.median(secs)) if secs else 0}
+
+
+def cmd_peers(a):
+    """同じニッチの他人のチャンネルと、うちを並べる（`studio/peers.py` の註がこの口の正本）。"""
+    last = peers.last_pull()
+    if not a.force and peers.fresh_enough(last):
+        row = last
+        print(f"（台帳の行を読みました・API 0単位・門 {peers.PEERS_MIN_H:.0f}時間・引き直すなら `--force`）")
+    else:
+        ids = peers.corpus_channels()
+        if not ids:
+            print("!! `data/niche_corpus.jsonl` にチャンネルが 1つ もありません ——**0 と読まないこと**")
+            return 1
+        row = peers.pull(yt.svc(), ids)
+        peers.save(row)
+        ledger("peers", "channel", units=row["units"], scanned=row["scanned"], kept=len(row["channels"]))
+    mine = mine_shape(ledger_rows())
+    try:
+        ch = yt.svc().channels().list(part="snippet,statistics", mine=True).execute()["items"][0]
+        created = ch["snippet"].get("publishedAt", "")
+        subs = int(ch["statistics"].get("subscriberCount", 0) or 0)
+        age = max((now_jst() - dt.datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone(JST)).days, 1)
+        mine.update({"subs": subs, "age_days": age, "subs_per_day": subs / age})
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"（うちのチャンネルの齢が読めませんでした: {str(exc)[:60]}）")
+    for line in peers.lines(row, mine):
+        print(line)
+    for c in row.get("channels", [])[:3]:
+        print(f"  ↳ {c['title'][:22]} の上位:")
+        for t in c.get("top", [])[:3]:
+            print(f"      {t['views']:>9,}回 {t['secs']:>5}秒  {t['title'][:46]}")
+    print("**この口は判定しません**（`studio/peers.py` の覆る条件 (4)）——"
+          "尺・再生・いいね率を並べるだけで、因果は撃って確かめる側（`docs/GOAL.md` (4-j)）。")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1837,6 +1902,7 @@ def main(argv=None):
     tr.add_argument("--by-day-count", action="store_true")
     an = sub.add_parser("analytics"); an.add_argument("--force", action="store_true")
     sub.add_parser("comments")
+    pe = sub.add_parser("peers"); pe.add_argument("--force", action="store_true")
     rpt = sub.add_parser("reporting"); rpt.add_argument("--setup", action="store_true")
     rp = sub.add_parser("reply"); rp.add_argument("comment_id"); rp.add_argument("--text", required=True)
     rp.add_argument("--dry-run", action="store_true")

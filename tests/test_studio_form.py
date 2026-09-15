@@ -52,21 +52,21 @@ def test_shortの門は前のまま():
 
 def test_longの秒数は4分から10分():
     assert script.LONG.min_seconds == script.LONG_MIN_SECONDS == 240.0
-    assert script.LONG.max_seconds == script.LONG_MAX_SECONDS == 600.0
+    assert script.LONG.max_seconds == script.LONG_MAX_SECONDS == 1800.0
 
 
 def test_字数の代理は秒数から引く():
     """**2度 書かないこと** —— 代理は `MAX_TOTAL_CHARS`（95秒 の代理）を秒で伸ばしたもの。"""
-    assert script.LONG.chars_proxy == int(script.MAX_TOTAL_CHARS * 600.0 / 95.0)
+    assert script.LONG.chars_proxy == int(script.MAX_TOTAL_CHARS * 1800.0 / 95.0)
     assert script.chars_gate("まだ焼いていない本", form="long")[0] == script.LONG.chars_proxy
     # 助言文は、その形の秒数を言う（`short` の 95秒 を言い残さない）
-    assert "600秒" in script.chars_gate("まだ焼いていない本", form="long")[1]
+    assert "1800秒" in script.chars_gate("まだ焼いていない本", form="long")[1]
 
 
 def test_longの字数の門はその本の実測から引く():
-    rows = [{"event": "built", "id": "t-form", "chars": 3000, "seconds": 600.0}]   # 5.0字/秒
+    rows = [{"event": "built", "id": "t-form", "chars": 9000, "seconds": 1800.0}]   # 5.0字/秒
     gate, why = script.chars_gate("t-form", rows, form="long")
-    assert gate == int(5.0 * 600.0 * (1 - script.BUILD_JITTER))
+    assert gate == int(5.0 * 1800.0 * (1 - script.BUILD_JITTER))
     assert "実測" in why
 
 
@@ -161,3 +161,19 @@ def test_cmd_build_の秒数の門は形から引く():
     src = inspect.getsource(cli.cmd_build)
     assert "form.max_seconds" in src and "form.min_seconds" in src
     assert 'r["total"] <= MAX_SECONDS' not in src      # 写しへ戻っていないこと
+
+
+def test_狙い15分に届かない長尺は_止めずに注意だけ():
+    """**`problems()` へ入れないこと** —— `cli.cmd_build` は `problems()` が 1行でも在ると焼く前に止まり、
+    既に焼いた長尺 7本（320〜487秒）が全部 焼き直せなくなります（2026-09-15 21:0x に 1度 そこへ入れて移した）。
+
+    **陽性対照**: `LONG_TARGET_SECONDS` を 0 にすると、この検査の 3行目（注意が出ること）が落ちます。
+    """
+    from studio import script as sc
+    short_long = sc.Script(id="t-aim", date="2026-09-20", title="t", takeaway="t",
+                           description="d", tags=[], form="long",
+                           segments=[sc.Segment(say="あ" * 40, board=["い"]) for _ in range(20)])
+    aim = int(sc.MAX_TOTAL_CHARS * sc.LONG_TARGET_SECONDS / sc.SHORT_MAX_SECONDS)
+    assert short_long.total_chars() < aim
+    assert any("狙い" in w for w in short_long.warnings())            # 言う
+    assert not any("狙い" in p for p in short_long.problems())        # **止めない**

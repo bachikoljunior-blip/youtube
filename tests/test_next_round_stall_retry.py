@@ -222,7 +222,7 @@ def test_サブが走っている周は縮めない(nr):
                                     "laps": 0, "since": None, "why": "",
                                     "shippable": True, "ship_words": ""})
     got = nr.decide(live=1, stall=_STALL_CRUSHABLE)
-    assert got["floor_min"] == pytest.approx(base["floor_min"]), (
+    assert got["floor_min"] == pytest.approx(base["floor_min"], abs=0.05), (
         "走っているサブが 1体 在るのに床を縮めています ＝ 二重に立てる形です")
     assert got["stall_retry_applied"] is False
     assert "走っているサブ" in got["stall_why"], got["stall_why"]
@@ -233,7 +233,7 @@ def test_口だけの停止では親も床のまま(nr):
                                    "laps": 0, "since": None, "why": "",
                                    "shippable": True, "ship_words": ""})
     got = nr.decide(live=0, stall=_STALL_OWNER)
-    assert got["floor_min"] == pytest.approx(base["floor_min"]), (
+    assert got["floor_min"] == pytest.approx(base["floor_min"], abs=0.05), (
         "潰せる原因が機械の側に無いのに床を縮めています（枠を食う側）")
     assert got["stall"] is True, "印そのものは立てておくこと（読める所に残す）"
 

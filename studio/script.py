@@ -57,10 +57,26 @@ BUILD_JITTER = 0.03     # 同じ本でも焼くたびに揺れる幅（§2 の �
 #      長い本では足りない ＝ その実測で引き直すこと（10分 の 3% は 18秒）。
 #  (3) `LONG_MIN_SECONDS`（4分）は (4-g) 1 の「4〜10分」の下端です。**オーナーが尺に言葉を出したら
 #      その言葉が正本**（(4-g-3)）＝ そのときはこの 2つ の数だけを直す。
+#
+# ---- 2026-09-15 21:0x に上限を 10分 → 30分 へ、狙いを 15分 に置いた（optimizer・Fable 5.1・ultracode）
+# 「4〜10分」は `docs/GOAL.md` (4-g) 1 が **他人を 1チャンネルも数えないまま**置いた数でした。
+# 同じニッチの速い 6チャンネルを数えたら（`studio/peers.py`・28単位）、**尺の中央値は 891〜2,200秒**
+# （14.9〜36.7分）で、上位の本は 835〜3,568秒。**うちの 320〜487秒 は この族の 1/3〜1/7** です。
+# 扉(b) の通貨は時間なので、尺は再生数と同じ重みの掛け算（25分×40% ＝ 10分/回 対 7分×45% ＝ 3.2分/回 ＝ 3.1倍）。
+#
+# **下限（240秒）は動かしていません** —— 既に焼いた長尺 7本 は 320〜487秒 で、下限を上げると
+# **その 7本 が lint を通らなくなり、絵が届いた本を焼き直せなくなります**（`schedule --replace` の道）。
+# 代わりに `LONG_TARGET_SECONDS`（15分）を置き、**届いていない本には lint が「注意」を 1行 出すだけ**
+# にしました（止めない ＝ 走っている本を壊さない）。
+# **`words`（`critic` に渡す尺の言い方）は「5〜30分」に広げてあります** —— いま台本は 5分 の側と
+# 30分 の側が混ざっており、片側の数を書くと `critic` がもう片側を**別の尺の本として読みます**
+# （09/14 17:5x に踏んだ当のもの）。**次の回へ: 5分 の長尺が 1本も残らなくなったら「15〜30分」に締めること。**
+# 覆る条件は `docs/GOAL.md` (4-j-2)（尺を伸ばした本 3本 の 1回あたり視聴分が伸びなければ、伸ばした尺は捨てる）。
 
 SHORT_MAX_SECONDS = MAX_SECONDS      # 95秒（上の正本の別名。形の表から引くときはこちら）
-LONG_MAX_SECONDS = 600.0             # 10分（(4-g) 1）
-LONG_MIN_SECONDS = 240.0             # 4分（(4-g) 1。**ショートには下限がありません**）
+LONG_MAX_SECONDS = 1800.0            # 30分（2026-09-15 21:0x・`peers` の族の中央値 891〜2,200秒）
+LONG_MIN_SECONDS = 240.0             # 4分（**止める床**。既に焼いた 7本 を通すために動かしていない）
+LONG_TARGET_SECONDS = 900.0          # 15分（**狙い**。届かない本は lint が注意を出すだけ・止めない）
 
 
 class Form:
@@ -94,8 +110,8 @@ class Form:
 
 SHORT = Form("short", SHORT_MAX_SECONDS, 0.0, (5, 16), "#Shorts", (1080, 1920),
              {"lead": "60秒のショート動画", "span": "60〜90秒", "kind": "ショート"})
-LONG = Form("long", LONG_MAX_SECONDS, LONG_MIN_SECONDS, (20, 90), "", (1920, 1080),
-            {"lead": "4〜10分の解説動画", "span": "4〜10分", "kind": "長尺"})
+LONG = Form("long", LONG_MAX_SECONDS, LONG_MIN_SECONDS, (20, 200), "", (1920, 1080),
+            {"lead": "5〜30分の解説動画", "span": "5〜30分", "kind": "長尺"})
 FORMS = {f.name: f for f in (SHORT, LONG)}
 
 
@@ -640,6 +656,19 @@ class Script(BaseModel):
     def warnings(self) -> list[str]:
         """止めない。書き手（Fable）が読んで決める材料（オーナー 09/06「点って言ってるとこ」「漢字の読み変なのいっぱい」）。"""
         out = []
+        # **狙い（15分）に届いていない長尺は、ここで言う**（2026-09-15 21:0x）。
+        # **`problems()` へ入れないこと** —— `cli.cmd_build` は `problems()` が 1行でも在ると
+        # **焼く前に止まります** ＝ 既に焼いた長尺 7本（320〜487秒）が全部 焼き直せなくなり、
+        # 絵が届いた本を差し替える道（`schedule --replace`）が死にます。**この周に 1度 そこへ入れて、
+        # `lint` の `[!]` で気づいて移しました**（`cmd_build` を撃つ前に見つかった側）。
+        f_ = form_of(self.form)
+        if f_.name == "long":
+            aim = int(MAX_TOTAL_CHARS * LONG_TARGET_SECONDS / SHORT_MAX_SECONDS)
+            if self.total_chars() < aim:
+                out.append(f"合計 {self.total_chars()}字 ＝ 狙い {aim}字"
+                           f"（{LONG_TARGET_SECONDS / 60:.0f}分）に届いていません（**止めません**）。"
+                           f"同じニッチの速い 6チャンネルの尺の中央値は 14.9〜36.7分"
+                           f"（`studio/peers.py`・`docs/METHOD.md` §2 21:0x・`docs/GOAL.md` (4-j)）")
         for i, s in enumerate(self.segments, 1):
             # 「点」と小数は problems() の TEN が止める（hourly 09/06 14:4x）。ここは読みの側だけ
             if BARE_YEAR.search(s.say):
