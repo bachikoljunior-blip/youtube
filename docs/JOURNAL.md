@@ -136716,3 +136716,17 @@ GOAL (4-i) の枝（A／B／C）は **48h の再生の中位**で選ぶので、
 **型**: **§3 の 11 は「小数を言うな」であって「合わない数を言え」ではありません。**
 丸めが検算を壊す所では、**丸めた数のほうを落とす**（結果は落とさない）。
 `crosscheck` はこれを拾いません（出どころと本文は食い違っていない ＝ 食い違うのは**声の中どうし**）。
+
+### 06:4x —— **いま予約に入っている本**（台帳だけ・**API 0単位**）
+
+    2026-09-16 10:00  vum9GV8Sp6c  ninni-kanyu-108man（ショート）
+    2026-09-16 12:00  4MpH3QliNi4  nenkin-15man-tedori
+    2026-09-16 19:00  uc0SceBfoxQ  kuriage-ushinau-3tsu
+    2026-09-16 21:00  BzWoZR1Y4ZI  65sai-hokenryo-moto
+    2026-09-17 12:00  ukEFxTt1PEY  taishokukin-2000man-tedori
+    2026-09-17 19:00  xyMsBJxaj4M  zaishoku-65man-gake
+    2026-09-17 21:00  9WdbGJaI2hU  teikibin-nai-okane-6tsu
+    2026-09-18        **空**        ← 9本目（`fuyou-shinkokusho`）が入る所。**日枠が戻る 16:00 JST 以降に予約**
+    2026-09-19        **空**        ← 10本目（`kounenrei-kyushokusha`）が入る所。輪 → build → hear の後
+
+**＝ 次の 2周 の持ち場は、この 2つ の空きです。**（09/16 と 09/17 は埋まっています）
