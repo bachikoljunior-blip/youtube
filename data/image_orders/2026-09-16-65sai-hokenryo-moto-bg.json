@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-16-65sai-hokenryo-moto-bg",
+ "asked_at": "2026-09-15T14:47:50+09:00",
+ "for": "2026-09-16 の本（2026-09-16-65sai-hokenryo-moto・形 long）の背景",
+ "prompt": "日本の60代後半の男性が、会社のデスクで給与明細と年金の通知書を並べて電卓を手に静かに計算している様子。窓からのやわらかい昼の光。写実的な写真風。文字やロゴは入れない。横長。",
+ "avoid": "文字・ロゴ・実在の人物・透かし",
+ "size": "1920x1080",
+ "format": "jpg",
+ "out": "assets/images/2026-09-16-65sai-hokenryo-moto-bg.jpg",
+ "status": "pending"
+}
