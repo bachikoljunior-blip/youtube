@@ -6051,3 +6051,27 @@
 {"views_live": 202, "views_ledger": 196, "over": 6, "age_h": 15.2, "src": "status", "at": "2026-09-16T01:09:30+09:00", "id": "Ws32ZrBAuFQ", "event": "views_over"}
 {"views_live": 7, "views_ledger": 4, "over": 3, "age_h": 135.2, "src": "status", "at": "2026-09-16T01:09:30+09:00", "id": "2YZ_4FXC-XI", "event": "views_over"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-16T01:09:30+09:00", "id": "FLLHpj27v7s", "event": "zero_probe"}
+{"subs": 29, "views": 89610, "videos": 276, "at": "2026-09-16T01:28:00+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-16T01:28:00+09:00", "id": "vum9GV8Sp6c", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-16T01:28:00+09:00", "id": "4MpH3QliNi4", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": ["題"], "at": "2026-09-16T01:28:01+09:00", "id": "uc0SceBfoxQ", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": ["題"], "at": "2026-09-16T01:28:01+09:00", "id": "BzWoZR1Y4ZI", "event": "ready_checked"}
+{"views_live": 202, "views_ledger": 196, "over": 6, "age_h": 15.5, "src": "status", "at": "2026-09-16T01:28:01+09:00", "id": "Ws32ZrBAuFQ", "event": "views_over"}
+{"views_live": 7, "views_ledger": 4, "over": 3, "age_h": 135.5, "src": "status", "at": "2026-09-16T01:28:01+09:00", "id": "2YZ_4FXC-XI", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-16T01:28:01+09:00", "id": "FLLHpj27v7s", "event": "zero_probe"}
+{"script": "2026-09-15-kurisage-ushinau-3tsu", "units": 50, "form": "peer", "chip": null, "band": null, "why": "peers 6ch の上位 6枚 と同じ形（チップ/巨大2-3行/赤帯）", "at": "2026-09-16T01:40:36+09:00", "id": "PyVf22V74Ks", "event": "rethumb"}
+{"script": "2026-09-16-kuriage-ushinau-3tsu", "units": 50, "form": "peer", "chip": "60歳から年金", "band": null, "why": "peers 6ch の上位 6枚 と同じ形（チップ/巨大2-3行/赤帯）", "at": "2026-09-16T01:40:42+09:00", "id": "uc0SceBfoxQ", "event": "rethumb"}
+{"script": "2026-09-17-zaishoku-65man-gake", "units": 50, "form": "peer", "chip": "65歳すぎて働く方へ", "band": "在職老齢年金の崖", "why": "peers 6ch の上位 6枚 と同じ形（チップ/巨大2-3行/赤帯）", "at": "2026-09-16T01:40:45+09:00", "id": "xyMsBJxaj4M", "event": "rethumb"}
+{"script": "2026-09-18-minou-ushinau-3tsu", "units": 50, "form": "peer", "chip": null, "band": null, "why": "peers 6ch の上位 6枚 と同じ形（チップ/巨大2-3行/赤帯）", "at": "2026-09-16T01:40:50+09:00", "id": "FLLHpj27v7s", "event": "rethumb"}
+{"script": "2026-09-19-nenkin-15man-tedori", "units": 50, "form": "peer", "chip": null, "band": null, "why": "peers 6ch の上位 6枚 と同じ形（チップ/巨大2-3行/赤帯）", "at": "2026-09-16T01:40:58+09:00", "id": "4MpH3QliNi4", "event": "rethumb"}
+{"script": "2026-09-16-65sai-hokenryo-moto", "units": 50, "form": "peer", "chip": "65歳すぎて働く方へ", "band": null, "why": "peers 6ch の上位 6枚 と同じ形（チップ/巨大2-3行/赤帯）", "at": "2026-09-16T01:41:05+09:00", "id": "BzWoZR1Y4ZI", "event": "rethumb"}
+{"script": "2026-09-17-taishokukin-2000man-tedori", "units": 50, "form": "peer", "chip": "退職金2000万円", "band": "税金は40万5700円", "why": "peers 6ch の上位 6枚 と同じ形（チップ/巨大2-3行/赤帯）", "at": "2026-09-16T01:41:12+09:00", "id": "ukEFxTt1PEY", "event": "rethumb"}
+{"script": "2026-09-17-teikibin-nai-okane-6tsu", "units": 50, "form": "peer", "chip": "60代の夫婦へ", "band": "申請しないと382万円が来ません", "why": "peers 6ch の上位 6枚 と同じ形（チップ/巨大2-3行/赤帯）", "at": "2026-09-16T01:41:18+09:00", "id": "9WdbGJaI2hU", "event": "rethumb"}
+{"subs": 29, "views": 89610, "videos": 276, "at": "2026-09-16T01:47:52+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-16T01:47:53+09:00", "id": "vum9GV8Sp6c", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-16T01:47:53+09:00", "id": "4MpH3QliNi4", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-16T01:47:53+09:00", "id": "uc0SceBfoxQ", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-16T01:47:53+09:00", "id": "BzWoZR1Y4ZI", "event": "ready_checked"}
+{"views_live": 202, "views_ledger": 196, "over": 6, "age_h": 15.8, "src": "status", "at": "2026-09-16T01:47:53+09:00", "id": "Ws32ZrBAuFQ", "event": "views_over"}
+{"views_live": 7, "views_ledger": 4, "over": 3, "age_h": 135.8, "src": "status", "at": "2026-09-16T01:47:53+09:00", "id": "2YZ_4FXC-XI", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-16T01:47:53+09:00", "id": "FLLHpj27v7s", "event": "zero_probe"}

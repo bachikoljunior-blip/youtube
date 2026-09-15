@@ -223,7 +223,11 @@ def pull(svc, ids: list[str] | None = None, now: dt.datetime | None = None) -> d
                             "likes": int(s.get("likeCount", 0) or 0),
                             "comments": int(s.get("commentCount", 0) or 0)})
         c["shape"] = shape(got)
-        c["top"] = [{"views": g["views"], "secs": iso_secs(g["dur"]), "title": g["title"]}
+        # `id` を足したのは 2026-09-16 02:0x（optimizer・Fable・ultracode）。
+        # **サムネを見るため**です —— 21:0x は題の形だけを写しましたが、一覧で先に目に入るのは絵の側で、
+        # `studio/thumb.py` は peers が在る前（09/15 00:xx）に**手もとの理屈だけ**で描いた形のままでした。
+        # サムネの URL は `https://i.ytimg.com/vi/<id>/maxresdefault.jpg`（**API 0単位**・公開）。
+        c["top"] = [{"id": g["id"], "views": g["views"], "secs": iso_secs(g["dur"]), "title": g["title"]}
                     for g in sorted(got, key=lambda g: -g["views"])[:6]]
     return {"at": (now or now_jst()).isoformat(timespec="seconds"),
             "scanned": len(rows), "units": units, "channels": picked}

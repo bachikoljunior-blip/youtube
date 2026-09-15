@@ -580,8 +580,17 @@ def test_帯の途中なら残りの枠だけ使う() -> None:
 
 
 def test_未来の日は丸ごと使える() -> None:
+    """**日付を焼き込まないこと**（2026-09-16 02:5x・optimizer・Fable・ultracode が直した）。
+
+    ここは `"2026-09-15"` と書いてあり、**その日が来た瞬間に赤**になりました
+    （実測: 09/16 JST の周で `'2026-09-16@9:00' != '2026-09-15@9:00'` ＝
+    「未来の日」が未来でなくなり、`_band_walk` が翌日へ送った）。
+    この repo で 3度目 の**時計で落ちる検査**なので、日付は毎回 今日から作ります。
+    """
+    from datetime import timedelta
+
     from scripts.batch_build import _band_walk
 
-    got = _band_walk(2, "2026-09-15", first_day_taken=set(),
-                     taken_by_day={"2026-09-15": set()}, lanes_n=1)
-    assert got == ["2026-09-15@9:00", "2026-09-15@9:30"]
+    day = (datetime.now(JST) + timedelta(days=3)).strftime("%Y-%m-%d")
+    got = _band_walk(2, day, first_day_taken=set(), taken_by_day={day: set()}, lanes_n=1)
+    assert got == [f"{day}@9:00", f"{day}@9:30"]

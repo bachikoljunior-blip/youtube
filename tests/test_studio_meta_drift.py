@@ -69,3 +69,49 @@ def test_台帳に無い本は比べない(tmp_path, monkeypatch):
     _script(tmp_path, monkeypatch)
     assert cli.meta_drift("OLD", _rd(), ROWS) is None
     assert cli.meta_mark(None) == ""
+
+
+# --- `retitled` の本は、行の向きが逆（2026-09-16 01:4x・optimizer・Fable・ultracode） ---
+#
+# 21:0x の題の A/B は live が新・台本が旧。そこへ `update_meta(<videoId>, s.title, ...)` を撃つと
+# **台本の旧の題が live を上書きして A/B が 1本 消えます**（同じ消え方を `schedule --replace` の側で
+# 16:1x が実物で踏んだ）。`status` の行だけが、まだその手を指していました。
+
+RETITLED = ROWS + [{"event": "retitled", "id": "VID",
+                    "old_title": "題A #Shorts", "new_title": "【対象】新しい題"}]
+
+
+def test_retitledの本は_台本を直せと言う_update_metaを指さない(tmp_path, monkeypatch):
+    _script(tmp_path, monkeypatch)                      # 台本の題は 題A #Shorts（旧）
+    d = cli.meta_drift("VID", _rd(title="【対象】新しい題"), RETITLED)
+    assert d == ["題"]
+    m = cli.meta_mark(d, "VID", RETITLED, script_title="題A #Shorts")
+    # 撃てる形（コピーできる呼び出し）で出さないこと ＝ これを撃つと A/B が戻る
+    assert "update_meta(<videoId>" not in m
+    assert "戻ります" in m                              # 名前は出すが、警告としてだけ
+    assert "台本" in m and "【対象】新しい題" in m
+
+
+def test_台本を直したあとは_この行そのものが出ない(tmp_path, monkeypatch):
+    _script(tmp_path, monkeypatch)
+    # 台本の題を新しい題に書き換えた後は live と一致 ＝ drift が空
+    assert cli.meta_drift("VID", _rd(title="題A #Shorts"), RETITLED) == []
+
+
+def test_陽性対照_retitledを見ないと逆の手を指す(tmp_path, monkeypatch):
+    """`vid` を渡さない（＝ 台帳を見ない）と、昔の行がそのまま出る ＝ 門が効いている印。"""
+    _script(tmp_path, monkeypatch)
+    assert "update_meta" in cli.meta_mark(["題"])
+
+
+def test_陽性対照_説明欄だけの食い違いは_retitledの本でも従来どおり(tmp_path, monkeypatch):
+    _script(tmp_path, monkeypatch, desc="説明欄B")
+    d = cli.meta_drift("VID", _rd(), RETITLED)
+    assert d == ["説明欄"]
+    assert "update_meta" in cli.meta_mark(d, "VID", RETITLED, script_title="題A #Shorts")
+
+
+def test_script_title_of_は台帳から台本の題を引く(tmp_path, monkeypatch):
+    _script(tmp_path, monkeypatch)
+    assert cli.script_title_of("VID", ROWS) == "題A #Shorts"
+    assert cli.script_title_of("OLD", ROWS) is None

@@ -203,6 +203,23 @@ def meta_drift(video_id: str, rd: dict, rows: list[dict] | None = None) -> list[
     return drift_fields(rd, s)
 
 
+def script_title_of(video_id: str, rows: list[dict] | None = None) -> str | None:
+    """その video に紐づく**台本の題**（台帳 `scheduled` の `video_id` → `id` → `script.load`）。
+
+    `meta_mark` が「live が新・台本が旧」の形を見分けるために使う（`meta_drift` と同じ引き方）。
+    台帳に無い ID（旧作り）や台本ファイルが無ければ None。
+    """
+    rows = ledger_rows() if rows is None else rows
+    sid = next((r.get("id") for r in reversed(rows)
+                if r.get("event") == "scheduled" and r.get("video_id") == video_id), None)
+    if not sid:
+        return None
+    try:
+        return script.load(sid).title
+    except FileNotFoundError:
+        return None
+
+
 def drift_fields(rd: dict, s) -> list[str]:
     """上がっている snippet（`yt.readiness` の返り）と、手もとの台本の食い違い（欄の名前）。
 
@@ -264,11 +281,34 @@ def retitled_title(vid: str, rows: list[dict] | None = None) -> str | None:
     return out
 
 
-def meta_mark(drift: list[str] | None) -> str:
+def meta_mark(drift: list[str] | None, vid: str | None = None,
+              rows: list[dict] | None = None, script_title: str | None = None) -> str:
+    """食い違いの行。**`retitled` の本は、向きが逆です。**
+
+    2026-09-16 01:4x（optimizer・Fable・ultracode）に向きを足した。**踏みかけたから**です ——
+    21:0x の題の A/B（`videos.update` 4本）は **live が新・台本が旧**の形で、
+    そこへこの行が出していた `update_meta(<videoId>, s.title, ...)` は
+    **台本の旧の題を live へ押し戻す手** ＝ **撃った瞬間に A/B が 1本 消えます**
+    （同じ消え方を `schedule --replace` の側で 16:1x が実物で踏み、`retitled_title` の門で塞いだ。
+    **`status` の行だけが、まだ逆を指していました** ＝ 同じ穴の 2つ目の口）。
+
+    ＝ 台帳 `retitled` に `new_title` が在り、それが台本の題と違うなら、
+    直す先は **live ではなく台本**です（`retitled_title` の門と同じ 1つの直し方）。
+
+    **覆る条件**: (1) わざと旧の題へ戻す回は、台帳に `retitled` を 1行 足してから撃つこと
+    （`retitled_title` の覆る条件 (2) と同じ ＝ 台帳がいつも「いま在るべき題」を持つ形を崩さない）。
+    (2) 台本の外で変える欄が説明欄・tags にも出たら、この分岐も欄ごとに広げること。
+    """
     if drift is None:
         return ""
     if not drift:
         return "台本と一致（題・説明欄・tags）"
+    was = retitled_title(vid, rows) if vid else None
+    if was is not None and "題" in drift and _trim(was) != _trim(script_title or ""):
+        return (f"!! 台本と食い違い: {'・'.join(drift)} —— **この本は台帳 `retitled` の本です"
+                "（live が新しい題・台本が旧）。`update_meta` を撃つと A/B が黙って戻ります**"
+                f"\n             台帳の題: {was}"
+                "\n             → 直すのは台本の `title`（`data/studio/scripts/<id>.json`）。**API 0単位**")
     return (f"!! 台本と食い違い: {'・'.join(drift)} → `yt.update_meta(<videoId>, s.title, s.description, s.tags)`"
             "（50単位・ID も予約もそのまま）。本文（声・画面）も変えたなら `schedule --replace`")
 
@@ -640,7 +680,7 @@ def cmd_status(a):
             mark = "処理 済" if rd["ok"] else f"!! 処理 {rd['upload']}/{rd['processing']} 失敗 {rd['failure'] or rd['rejection']}"
             print(f"           {mark}（upload {rd['upload']}・processing {rd['processing']}）")
             drift = meta_drift(v["id"], rd)
-            mm = meta_mark(drift)
+            mm = meta_mark(drift, v["id"], script_title=script_title_of(v["id"]))
             if mm:
                 print(f"           {mm}")
             # 印字だけにしないこと（`record_ready` の註 ＝ 同じ族の 4つ目）。**追加 0単位。**
