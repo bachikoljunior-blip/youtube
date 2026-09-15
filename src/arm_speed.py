@@ -651,13 +651,54 @@ def planned(doc: dict | None = None) -> dict:
 
 
 def ceilings(doc: dict | None = None) -> dict[str, dict]:
-    """**測ってしまった天井**を腕ごとに返す（`{"per_video": {...}}`）。"""
+    """**測ってしまった天井**を腕ごとに返す（`{"per_video": {...}}`）。
+
+    **`per_video` の天井は、書き置き（`config/hypotheses.yaml` の `ceiling.value`）ではなく
+    `rule_per_video.ceiling_at_rule()` の生の値を返します**（2026-09-16 02:3x・optimizer・Fable・ultracode）。
+
+    **なぜ**: この天井は「伸びきった本の最大 ÷ 密度」なので、**標本の齢で毎日 動きます。**
+    書き置きは必ず遅れ、`tests/test_ceiling_drift.py` が赤くなり、
+    **4日で 5回・その後も**「書き置きの数を live に合わせて書き直す」だけの回が続きました
+    （yaml の 4990行 の上に、その 5回 が全部 残っています）。
+    そこの註が「**次にここが赤くなった回は、値を直す前に `ceiling.value` を消せるかを見ること。
+    `ceilings()` が書き置きを見なくなったら `test_ceiling_drift` ごと消してよい**」と書いており、
+    **この回がその当のもの**です（6回目 に「また 1行 直す」を選ばなかった側）。
+
+    書き置きは**落ちたときの控え**として残します（`data/views.jsonl` が読めない回・
+    検査が `doc` を渡してくる回は、生の値が出ないので書き置きが勝ちます）。
+    `value_stored` に元の数を入れて返すので、**どちらが使われたかは呼び手から見えます。**
+
+    **覆る条件**: (1) `ceiling_at_rule()` が `per_video` 以外の腕にも要るようになったら、
+    この分岐を腕ごとの表へ広げること（いま `ceiling` を持つ前提は 1件 だけ）。
+    (2) 生の値が書き置きの **2倍** を越える回が出たら、動いたのは標本の齢ではない ＝
+    そのときは止めずに、`ceiling_at_rule()` の母集団（1〜2本/日 の日）を疑うこと。
+    derivation は `docs/JOURNAL.md` 2026-09-16 02:3x。
+    """
     out: dict[str, dict] = {}
     for h in (_load() if doc is None else doc).get("hypotheses") or []:
         c = h.get("ceiling") if isinstance(h, dict) else None
         if isinstance(c, dict) and c.get("lever") and c.get("value") is not None:
-            out[c["lever"]] = {**c, "from": h.get("claim", "")}
+            row = {**c, "from": h.get("claim", "")}
+            if c["lever"] == "per_video" and doc is None:
+                live = _live_per_video_ceiling()
+                if live is not None:
+                    row["value_stored"] = c["value"]
+                    row["value"] = live
+            out[c["lever"]] = row
     return out
+
+
+def _live_per_video_ceiling() -> float | None:
+    """`rule_per_video.ceiling_at_rule()` の点推定（読めなければ None）。**API 0単位。**
+
+    遅延 import です —— `rule_per_video` は `arm_speed` を呼ぶので、頭で入れると輪になります。
+    """
+    try:
+        from . import rule_per_video
+        c = rule_per_video.ceiling_at_rule()
+        return float(c["value"]) if c and c.get("value") else None
+    except Exception:  # noqa: BLE001 — 天井が読めないのは「控えを使う」だけの話（止めない）
+        return None
 
 
 def _median(xs: list[float]) -> float | None:

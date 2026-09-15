@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src import form_record, rule_per_video
+from src import arm_speed, form_record, rule_per_video
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -90,11 +90,28 @@ def test_ショートの記録が_hypotheses_の天井と一致する():
         f"形ごとに数えたショートの記録 {best} と別の本です。"
         "**天井の出どころが2つに割れています**"
     )
-    assert recorded == round(float(at_rule["value"])), (
-        f"hypotheses.yaml の天井 {recorded} と、記録 {best} から規則の密度へ"
-        f"直した数 {float(at_rule['value']):,.0f} がずれています。"
-        "どちらかが古い —— 記録が更新されたなら yaml を書き換えること"
-        "（`python -c \"from src import rule_per_video as r; print(r.ceiling_at_rule())\"`）"
+    # **2026-09-16 02:3x（optimizer・Fable・ultracode）に、ここは完全一致をやめました。**
+    #
+    # この天井は「伸びきった本の最大 ÷ 密度」なので**標本の齢で毎日 動きます**。
+    # yaml の書き置きは必ず遅れ、この行と `test_ceiling_drift` が **4日で 5回・その後も**
+    # 赤くなり、そのたび「yaml の 1行 を live に書き直す」だけの回が使われていました
+    # （yaml 4990行 の上に 5回ぶんの註が残っています）。
+    # **`arm_speed.ceilings()` が live を返すようになった**ので、yaml の `value` は
+    # **控え（live が読めない回だけ使う数）**になりました ＝ 一致させる意味がありません。
+    #
+    # **ここが見張るのは 2つ**（どちらも「古い数が根拠に化けない」ための門）:
+    #  (1) **実際に使われる数が live であること**（書き置きが勝っていないこと）
+    #  (2) 控えが桁で外れていないこと（×2 を越えたら、動いたのは齢ではない ＝ 母集団を疑う側）
+    live = round(float(at_rule["value"]))
+    used = arm_speed.ceilings().get("per_video") or {}
+    assert round(float(used.get("value"))) == live, (
+        f"`arm_speed.ceilings()` が返した {used.get('value')} が、いま計算した天井 {live:,} と違います。"
+        " 書き置きが勝っています ＝ `ceilings()` の per_video の分岐を見ること"
+    )
+    assert 0.5 <= recorded / live <= 2.0, (
+        f"控え（hypotheses.yaml の {recorded:,}）が、いまの天井 {live:,} の ×2 の外です。"
+        " 動いたのは標本の齢ではありません —— `ceiling_at_rule()` の母集団を疑うこと"
+        "（`arm_speed.ceilings` の覆る条件 (2)）"
     )
 
 

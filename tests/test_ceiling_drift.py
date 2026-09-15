@@ -59,6 +59,54 @@ def test_the_strict_gate_already_exists_and_is_stricter():
         "（tests/test_form_record.py が同じずれで落ちます）")
 
 
+# --- **2026-09-16 02:3x（optimizer・Fable・ultracode）: 上の門は恒真になりました** ---
+#
+# この file の冒頭の「覆る条件」が、その当のものです ——
+# 「`plan()` が `arm_speed.ceilings()` ではなく `ceiling_at_rule()` を直接 読むように
+#  なったら、この検査は要らなくなります（ずれが原理的に 0 になる）」。
+# **`ceilings()` そのものが live を返すようになった**ので、`ceiling_drift()` の
+# `stored` も live になり、上の比べは**必ず通ります**（＝ もう何も見張っていない）。
+#
+# **恒真な門は、消すのではなく向きを変えました** —— 見張る中身が
+# 「2つが一致すること」から「**live のほうが勝つこと**」に移っただけです。
+# （消してしまうと、次に誰かが `ceilings()` を書き置きへ戻したとき、
+#  `test_form_record` の 1件 しか鳴りません。**陽性対照つきの門をここに残します。**）
+
+def test_使われる天井は_書き置きではなく生の計算(monkeypatch):
+    """`arm_speed.ceilings()["per_video"]["value"]` が live であること（陽性対照つき）。"""
+    from src import arm_speed
+
+    c = arm_speed.ceilings().get("per_video")
+    live = rule_per_video.ceiling_at_rule()
+    if not c or not (live and live.get("value")):
+        pytest.skip("天井が測れていません（素材が足りない回）")
+    assert round(float(c["value"])) == round(float(live["value"]))
+    assert c.get("value_stored") is not None, "控え（yaml の値）が見えなくなっています"
+
+    # 陽性対照: live が読めない回は、控えへ落ちること（落ちなければ天井が消える）
+    monkeypatch.setattr(arm_speed, "_live_per_video_ceiling", lambda: None)
+    fallback = arm_speed.ceilings().get("per_video")
+    assert fallback and float(fallback["value"]) == float(c["value_stored"])
+    assert "value_stored" not in fallback
+
+
+def test_陽性対照_liveが動けば_返る数も動く(monkeypatch):
+    """live を別の数に差し替えたら、`ceilings()` の返りもその数になること。
+
+    **控えと live がたまたま同じ数でも引ける対照**にしてあります（`value` を
+    yaml へ書き戻した回は必ず同じ数になるので、実データの差に頼る対照は skip で消えます
+    —— 2026-09-16 02:4x に実際に消えて、書き直しました）。
+    """
+    from src import arm_speed
+
+    if not arm_speed.ceilings().get("per_video"):
+        pytest.skip("per_video の天井が yaml にありません")
+    monkeypatch.setattr(arm_speed, "_live_per_video_ceiling", lambda: 12345.0)
+    c = arm_speed.ceilings()["per_video"]
+    assert float(c["value"]) == 12345.0, "live が勝っていません（書き置きが返っています）"
+    assert float(c["value_stored"]) != 12345.0
+
+
 def test_the_two_numbers_are_always_named_apart():
     """**ずれていない回でも、2つが別物だと印字すること。**"""
     lines = rule_per_video.drift_lines(
