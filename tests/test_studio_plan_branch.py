@@ -134,3 +134,17 @@ def test_門の数はGOALではなくここが持つ():
     assert trend.LONG_GATE_48H_VIEWS == 25
     assert trend.LONG_GATE_HOURS_PER_VIDEO == 100.0
     assert trend.LONG_JUDGE_N == 3
+
+
+def test_4本目は判定に混ぜない(台):
+    """GOAL (4-i) (p2): 判定は最初の 3本 だけ。4本目 の 48h が門の上でも下でも、枝は 3本 で決まる。"""
+    dirp, rows, pubs = 台
+    _script(dirp, "s4")
+    v4 = T0 + dt.timedelta(days=3)
+    rows = rows + [_sched("s4", "V4", v4)]
+    for vid, pub in pubs.items():
+        rows += _pts(vid, pub, {40.0: 5, 50.0: 6})          # 3本 とも門の下
+    rows += _pts("V4", v4, {40.0: 5000, 50.0: 6000})        # 4本目 だけ 1,000回 超
+    out = _run(rows, dirp)
+    assert out["branch"] == "B"
+    assert len(out["per"]) == 3

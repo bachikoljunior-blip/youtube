@@ -7264,7 +7264,11 @@ def plan_branch(rows: list[dict], now: dt.datetime | None = None,
         `lo` でも同じ枝になるかを `stable` が言う ＝ 偽なら次の周まで枝を確定しない。
     """
     env = os.environ if env is None else env
-    longs = long_videos(rows, scripts_dir)
+    # **判定は最初の `LONG_JUDGE_N` 本だけ**（GOAL (4-i) (p2)「4本目 を混ぜない」。2026-09-15 10:0x・optimizer・Fable
+    # が 4本目（09/18 19:00）を書いた周に足した —— それまでは `long_videos` の全部で中位を取っており、4本目 の 48h
+    # （09/20 19:00）が入った周から中位の分母が 4 になって、3本 で下した枝が動いた）。`long_videos` は publish_at 順。
+    # 覆る条件: 枝 A に入って長尺が毎日になったら、判定の窓を「最初の 3本」から「直近 7日」へ（GOAL (4-i) a3 の門）。
+    longs = long_videos(rows, scripts_dir)[:LONG_JUDGE_N]
     ser = series(rows)
     hours: dict[str, float] = {}
     for r in rows:
