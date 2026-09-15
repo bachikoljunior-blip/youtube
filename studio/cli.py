@@ -879,7 +879,14 @@ def cmd_critique(a):
     for it in c.get("items") or []:
         print(f"  [{it.get('severity')}] {it.get('where')}: {it.get('why')}\n        → {it.get('fix')}")
     done = critic.loop_done(c)
-    print("輪:", "閉じてよい（1番目が言いがかり）" if done else "まだ（1番目が real）")
+    # **札で閉じない周は、台帳の `wheres` で閉じられるか見ます**（2026-09-15 19:1x・`critic.not_converging`）
+    # —— 直して指紋が動いたのに同じ所がまた 1番目に立つなら、動いていないのは判じる側です。
+    stuck, why = (False, "") if done else critic.not_converging(a.id, c)
+    print("輪:", "閉じてよい（1番目が言いがかり）" if done else
+          ("閉じてよい（同じ所が何度も立つ ＝ 判じる側が動いていない）" if stuck else "まだ（1番目が real）"))
+    if why:
+        print("  ＊", why)
+    done = done or stuck
     # `wheres` は **その周に critic が名指しした所**（2026-09-11 12:4x・hourly・Opus）。
     # 実測: **同じ本文で コマ6 の語順だけを入れ替えた 2回**（4分 差・字の増減 0）で
     # **理解度 4 → 2・real 0件 → 3件・done True → False**。**名指しされた所の集合は動かず、札だけが動きました。**
