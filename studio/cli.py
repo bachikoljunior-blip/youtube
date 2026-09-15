@@ -238,6 +238,32 @@ def _trim(x: str | None) -> str:
     return (x or "").strip()
 
 
+def retitled_title(vid: str, rows: list[dict] | None = None) -> str | None:
+    """**その本の題を、台本の外で変えたか**（台帳 `retitled` の `new_title`。無ければ None）。
+
+    2026-09-16 01:0x（optimizer・Fable・ultracode）に足した。**実物で踏んだから**です ——
+    09/15 21:0x の回が題の A/B で `videos.update` を 4本 に撃ちましたが、**台本の `title` は旧のまま**でした。
+    09/16 の `schedule --replace`（絵の差し替え）は `s.title` を渡すので、
+    **`uyHgqwwtQvw`（→ `ukEFxTt1PEY`）の新しい題が、黙って旧の題に戻りました**
+    （`status` の予約の行で気づいた ＝ **判定 09/17 の A/B が 4本 → 3本 に欠けるところでした**）。
+
+    **＝ 台本の外で変えた物は、焼き直しで消えます。** `cmd_schedule` の `--replace` は、
+    ここが台本と食い違う本を**上げません**（逃げ道は作っていません ＝ 直し方が 1つ
+    「台本の `title` を書き換える」しか無いので。上の `build_sig` の門と同じ形）。
+
+    **覆る条件**: (1) 台本の外で変える欄が題のほかにも出たら（説明欄・tags）、この関数ごと
+    「台帳の `retitled` と台本を突き合わせる」形に広げること。
+    (2) わざと旧の題へ戻す回が出たら、その回は台帳に `retitled` を 1行 足してから撃つこと
+    （＝ 台帳がいつも「いま在るべき題」を持つ形を崩さない）。
+    """
+    rows = ledger_rows() if rows is None else rows
+    out = None
+    for r in rows:
+        if r.get("event") == "retitled" and r.get("id") == vid:
+            out = r.get("new_title")
+    return out
+
+
 def meta_mark(drift: list[str] | None) -> str:
     if drift is None:
         return ""
@@ -1067,6 +1093,16 @@ def cmd_schedule(a):
         for v in others:
             print(f"  {yt.when(v):%H:%M} {v['privacy']} {v['id']} {v['title'][:40]}")
         return 1
+    if a.replace:
+        was = retitled_title(a.replace)
+        if was is not None and _trim(was) != _trim(s.title):
+            print(f"!! 差し替える {a.replace} は、台帳で題を変えてある本です（`retitled`）。"
+                  "**このまま上げると、台本の古い題で上がって A/B が黙って戻ります**")
+            print(f"  台帳の題: {was}")
+            print(f"  台本の題: {s.title}")
+            print("  → 台本の `title` を台帳の題に書き換えてから撃ち直すこと"
+                  "（旧の題は台帳 `retitled` の `old_title` に在る ＝ 0単位で戻せます）")
+            return 1
     if a.dry_run:
         print(f"[dry-run] 上げる: {mp4.name} → 公開 {at:%m/%d %H:%M} JST・差し替え {a.replace or '無し'}・題「{s.title}」")
         return 0
