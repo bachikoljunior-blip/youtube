@@ -775,6 +775,16 @@ def cmd_hear(a):
                       if pl["ok"] else
                       f"      → 禁じない側でも落ちた所が見つからない（一致 {pl['cover']}）＝ "
                       "**TTS か台本の側を疑う根拠**")
+            sp = r.get("spans")
+            if sp:  # 落ちていない差（入れ替え・差し込み）を span ごとに裏取りした答え（studio/hear.plain_spans の註）
+                print(f"      禁じない聞き取り: {sp['heard'][:70]}")
+                for x in sp["spans"]:
+                    print(f"        [{x['kind']}] 予定「{x['e']}」聞こえた「{x['g']}」 → "
+                          + ("音は台本どおり（禁じた側の取りこぼし／作り話）"
+                             if x["ok"] else "**禁じない側でも食い違う ＝ TTS か台本を疑う根拠**"))
+                print("      → **このコマに直す所はありません**（差は全部 禁じた側のもの）"
+                      if sp["ok"] else
+                      "      → **1つ以上 残っています**（上の `**` の行）。決めるのは Fable")
             t = r.get("tail")
             if t:   # 末尾が丸ごと無い型。末尾 5秒 だけを聞き直した答え（studio/hear.tail_probe の註）
                 print(f"      末尾5秒: {t['heard']}")

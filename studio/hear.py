@@ -853,6 +853,61 @@ def plain_probe(h: "Hearer", wav: Path, missing: str, yomi: dict[str, str],
     return {"heard": heard, "got": got, "cover": round(c, 2), "ok": c >= cover}
 
 
+def plain_spans(h: "Hearer", wav: Path, diffs: list, yomi: dict[str, str]) -> dict:
+    """**差の span ごとに、禁じない側で裏を取る**（2026-09-15 20:2x・optimizer・Fable・ultracode）。
+
+    `plain_probe` は「丸ごと落ちた span」だけを見ます。**落ちていない差**（入れ替え・差し込み）は、
+    そちらでは見られません —— そして長尺の `!!` の大半はそちらです。
+
+    **コマ全体を一致率で見てはいけません** —— 1語 だけ本物の誤読があっても率は 0.95 に出るので、
+    **`hear` が在る理由そのものを潰します**。だから span ごとに、向きを分けて見ます:
+
+        予定に在って聞こえなかった span   → **禁じない側が「予定」と「禁じた側」のどちらに近いか**
+                                          （一致率で「在るか」を見ると、本物の誤読も 0.7 を越えます）
+        予定に無くて聞こえた span（差し込み）→ **禁じない側に無ければ**、禁じた側の作り話
+
+    **撃って数にした**（2026-09-17-taishokukin-2000man-tedori・37コマ・5つ の `!!`）:
+
+        コマ28  禁じる「ごじゅ**ぱせんと**ぶんのいち」  禁じない「50分の1ほど」   ＝ 差し込み（`%` は禁止の側の字）
+        コマ31  禁じる「よんひゃくはち**じゅ**まんよんせんえん（480万）」
+                禁じない「**408万4千円**」                                  ＝ 取りこぼし（**金額は台本どおり**）
+        コマ33・34  どちらも禁じない側は台本どおり
+        コマ37  出口の一手が丸ごと落ちた（`plain_probe` の側）
+
+    **＝ 2本・22件 の `!!` のうち、台本か TTS を直す所は 0件 でした**（6本目 17件・7本目 5件）。
+
+    **一致の数は変えません**（決めるのは Fable・§4 (2)）。**同音の別語は分けられません** ——
+    禁じない側は漢字で返るので、「控除」が「工場」と書かれても**音は同じ** ＝ この口は「音に在る」と言います。
+    **それでよい**: ここで見ているのは**音**で、字ではありません（字の側は `crosscheck` と lint）。
+
+    **覆る条件**:
+     (1) この口が「音に在る」と言ったコマで、あとから本物の誤読が見つかったら、span ごとではなく
+        **モーラごと**に見ること（`near_spans` と同じ粒）。
+     (2) 長尺 3本 続けて 1件も「禁じない側にも無い」が出なければ、`!!` の印字そのものを
+        この口の答えで分けてよい（いまは印字を足すだけ・数は変えない）。
+    """
+    heard = h.transcribe_plain(wav)
+    got = loose(heard_kana(heard, yomi))
+    rows, ok = [], True
+    for e, g in diffs:
+        e2, g2 = loose(e or ""), loose(g or "")
+        if e2:
+            # 予定に在って聞こえなかった span。**「予定の字が在るか」では決めません** ——
+            # 一致率は、本物の誤読（ごじゅう**ぶん**のいち → ごじゅっ**ぷん**のいち）でも
+            # 0.7 を越えます（ほとんどの字は同じなので）＝ **`hear` が在る理由そのものを潰します**。
+            # 訊くのは「**禁じない側は、予定と 禁じた側の どちらに近いか**」です。
+            a = difflib.SequenceMatcher(None, e2, got, autojunk=False).ratio()
+            b = difflib.SequenceMatcher(None, g2, got, autojunk=False).ratio() if g2 else 0.0
+            r = {"e": e, "g": g, "kind": "落ち", "cover": round(a, 2), "ok": a > b}
+        elif g2:    # 予定に無くて聞こえた（差し込み）→ 禁じない側に無ければ 禁じた側の作り話
+            r = {"e": e, "g": g, "kind": "差し込み", "cover": 0.0, "ok": g2 not in got}
+        else:
+            continue
+        ok = ok and r["ok"]
+        rows.append(r)
+    return {"heard": heard, "got": got, "spans": rows, "ok": bool(rows) and ok}
+
+
 def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = True) -> list[dict]:
     """コマごとに {i, say, heard, exp, got, diffs}。diffs が空なら一致。
 
@@ -913,6 +968,9 @@ def check(s: Script, wavs: list[Path], size: str = "small", escalate: bool = Tru
             # **漢字を禁じない側で、落ちた span の裏を取る**（`plain_probe` の註・2026-09-15 19:4x）。
             # `tail_probe`／`head_probe` は同じ禁止の口なので、原因が禁止そのものだと同じ所で切れます。
             row["plain"] = plain_probe(h, wav, gap or head, s.yomi)
+        elif diffs:
+            # 落ちていない差（入れ替え・差し込み）も、span ごとに禁じない側で裏を取る（`plain_spans` の註）
+            row["spans"] = plain_spans(h, wav, diffs, s.yomi)
         if gap:   # 末尾が丸ごと無い ＝ 段を上げても分けられない型。末尾だけを聞き直して 切り落とし と 誤読 を分ける
             row["tail"] = tail_probe(h2, wav, gap, s.yomi)
             row["voice"] = tail_voice(hw, wav, prompt)
