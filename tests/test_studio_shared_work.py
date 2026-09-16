@@ -53,3 +53,41 @@ def test_workはworktreeの中を指していない():
     """**この検査が、戻したときに鳴る側です。**"""
     assert ".claude" not in common.WORK.parts or os.environ.get("STUDIO_WORK"), \
         f"`work/` が worktree の中を指しています: {common.WORK}"
+
+
+# ---- 掃き（共有にした以上、掃く物が要る） ----
+
+def test_古い焼きは掃く(tmp_path, monkeypatch):
+    """**実測 7本 で 992MB・空き 9.1GB ＝ 1週間 で埋まります**（2026-09-16 16:5x）。"""
+    import time
+    monkeypatch.setattr(common, "WORK", tmp_path)
+    old = tmp_path / "2026-09-01-furui"
+    old.mkdir()
+    (old / "2026-09-01-furui.mp4").write_bytes(b"x")
+    import os
+    t = time.time() - 10 * 86400
+    os.utime(old / "2026-09-01-furui.mp4", (t, t))
+    new = tmp_path / "2026-09-20-atarashii"
+    new.mkdir()
+    (new / "2026-09-20-atarashii.mp4").write_bytes(b"x")
+    assert common.prune_work() == ["2026-09-01-furui"]
+    assert not old.exists() and new.exists(), "新しいほうを消さないこと"
+
+
+def test_mp4の無い作りかけは_ディレクトリの刻で見る(tmp_path, monkeypatch):
+    monkeypatch.setattr(common, "WORK", tmp_path)
+    d = tmp_path / "2026-09-20-tochuu"
+    d.mkdir()
+    assert common.prune_work() == [], "焼いている途中を掃かないこと"
+
+
+def test_置き場が無くても落ちない(tmp_path, monkeypatch):
+    monkeypatch.setattr(common, "WORK", tmp_path / "nai")
+    assert common.prune_work() == []
+
+
+def test_buildが毎回掃く():
+    """**誰も憶えなくてよい形にすること**（選ばれない手は撃たれない ＝ この repo の型）。"""
+    import inspect
+    from studio import cli
+    assert "prune_work" in inspect.getsource(cli.cmd_build)

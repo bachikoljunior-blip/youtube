@@ -43,6 +43,45 @@ def _shared_root(root: Path) -> Path:
 
 #: 生成物（gitignore）。**周をまたいで共有します**（`_shared_root` の註）。
 WORK = Path(os.environ.get("STUDIO_WORK") or (_shared_root(ROOT) / "work"))
+
+#: `work/<id>` を何日 残すか。**共有にした以上、掃く物が要ります**（2026-09-16 16:5x に足した）。
+#: 共有へ直した直後に数えたら **7本 で 992MB**（1本 約140MB ＝ mp4・wav・150枚の png）で、
+#: **空きは 9.1GB** でした ＝ **1週間 で埋まります。**
+#: 3日 にしたのは、いちばん先の枠が **公開の 2〜3日 前**に焼かれるから
+#: （この回の実物: 09/16 に焼いた `2026-09-19-...`）。**公開ずみの本の焼きは、二度と要りません。**
+#: **覆る条件**: (1) 焼き直しを求められた本が「掃かれていて無い」回が出たら、日数を伸ばすこと
+#: （`build_sig` が食い違えば焼き直すだけなので、**落ちるのは時間だけで、本は落ちません**）。
+#: (2) 先の枠へ 4日 以上 前から置く形にしたら、この日数もそこへ合わせること。
+WORK_KEEP_DAYS = 3
+
+
+def prune_work(keep_days: int | None = None, now: float | None = None) -> list[str]:
+    """**古い `work/<id>` を掃く。**掃いた id を返す（`cmd_build` が毎回 呼ぶ ＝ 誰も憶えなくてよい）。
+
+    見るのは**その中の mp4 の刻**（無ければディレクトリの刻）。**触られた物は残ります。**
+    """
+    import shutil
+    import time
+    keep = WORK_KEEP_DAYS if keep_days is None else keep_days
+    now = time.time() if now is None else now
+    if not WORK.is_dir():
+        return []
+    gone = []
+    for d in sorted(WORK.iterdir()):
+        if not d.is_dir():
+            continue
+        mp4 = d / f"{d.name}.mp4"
+        try:
+            age = now - (mp4 if mp4.exists() else d).stat().st_mtime
+        except OSError:
+            continue
+        if age > keep * 86400:
+            try:
+                shutil.rmtree(d)
+                gone.append(d.name)
+            except OSError:
+                pass
+    return gone
 DATA = ROOT / "data" / "studio"  # 台帳（commit する）
 LEDGER = DATA / "ledger.jsonl"
 #: **本物の台帳の道を、読み込みのときに凍らせる**（`_ledger_blocked` の註）。

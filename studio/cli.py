@@ -32,6 +32,7 @@ from pathlib import Path
 from googleapiclient.errors import HttpError
 
 from . import analytics, budget, critic, demand, hear, peers, render, reporting, script, stall, trend, yt
+from . import common
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
 IMAGES = ROOT / "assets" / "images"
@@ -843,6 +844,10 @@ def cmd_build(a):
     stale = loop_stale(s.id, s.loop_sig())
     if stale:
         print("  [?]", stale)
+    # **掃くのは焼く前**（2026-09-16 16:5x）—— 共有にした以上、誰かが掃かないと埋まります
+    # （実測 7本 で 992MB・空き 9.1GB ＝ 1週間）。`common.WORK_KEEP_DAYS` の註。
+    for gone in common.prune_work():
+        print(f"  古い焼きを掃いた: {gone}（{common.WORK_KEEP_DAYS}日 より前）")
     img = image_for(a.id)
     pimgs = part_images_for(s)
     r = render.build(s, img, pimgs)
