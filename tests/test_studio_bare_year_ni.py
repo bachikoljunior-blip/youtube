@@ -101,7 +101,12 @@ def test_いま在る台本は全部この門を通る():
     """
     bad = {}
     for f in sorted(sc.SCRIPTS.glob("*.json")):
-        hit = [w for w in sc.load(f.stem).warnings() if "「年" in w]  # 門の字面だけ（1文の長さの警告が「20年以上」を含んで鳴った・09/10 19:5x）
+        # **この門の字面だけで拾うこと。**「年」の 1字 で拾うと、他の警告が巻き込まれます ——
+        # 09/10 19:5x に 1文の長さの警告が「20年以上」を含んで鳴り、
+        # **2026-09-16 15:5x に 2度目**（`script.unit_aliases` の「同じ量を 2通りの単位で…
+        # コマ9「年」対 コマ12「か月」」＝ オーナー 09/16 `be77dee9` の門）。
+        # ＝ **部分一致の見張りは、増える側に弱い。** 門の名（`裸の「年」`）で当てます。
+        hit = [w for w in sc.load(f.stem).warnings() if "裸の「年」" in w]
         if hit:
             bad[f.stem] = hit
     assert not bad, f"「年」の門で鳴っている台本が在る: {bad}"
