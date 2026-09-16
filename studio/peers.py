@@ -68,6 +68,11 @@ SHORT_SECS = 180
 
 PEERS = DATA / "peers.jsonl"
 CORPUS = DATA.parent / "niche_corpus.jsonl"
+#: corpus の 218チャンネル の `statistics`（`channels.list` 5単位 で引いて落とした台帳）。
+#: **これが在るかぎり `capacity_by_size` は API 0単位** です。
+NICHE_CHANNELS = DATA.parent / "niche_channels.jsonl"
+#: 登録者の帯（`capacity_by_size` の唯一の出どころ）。**うちは 29人 ＝ いちばん下の帯**。
+SUB_BANDS = ((0, 1_000), (1_000, 10_000), (10_000, 100_000), (100_000, 10 ** 9))
 
 
 def corpus_channels() -> list[str]:
@@ -336,7 +341,208 @@ def capacity_line(rows: list[dict] | None = None) -> str:
         f"＝ **月20万は、この族の「上位1/4 の1本」1本/月 と同じ大きさ**で、"
         f"**門は その 1本 の 1/3 以下**です（`trend.rev_deadline` が出すのは門までで、ここは出しません）。"
         f"**RPM はうちでは未測です**（収益化前 ＝ 帯で出しています・覆る条件 (1)）。"
-        f"**この分布は検索の上位に寄っています ＝ 上振れの側**（覆る条件 (2)）。")
+        f"**この分布は検索の上位に寄っています ＝ 上振れの側**（覆る条件 (2)）。\n"
+        # **この 1行 を外さないこと**（2026-09-16 17:0x）。上の「上位1/4 の1本」は
+        #  corpus 全体の比で、**その比が測っているのはチャンネルの大きさ**でした
+        #  （同じ罠の 3度目 ＝ JOURNAL 15:1x の覆る条件が引かれた）。
+        #  **比を出す口そのものに控えを返させる** ＝ 生の比だけが印字される道を塞ぐ。
+        + capacity_by_size_line(rows))
+
+
+def niche_channels() -> dict[str, dict]:
+    """corpus のチャンネルの登録者数（**API 0単位** ＝ 台帳 `data/niche_channels.jsonl` を読むだけ）。
+
+    空の dict が返ったら台帳が無いということで、そのときは `capacity_by_size` は
+    「**分けられない**」と印字します（**黙って生の比を返してはいけません**）。
+    取り直しは `channels.list` を `corpus_channels()` に当てて **5単位**。
+    """
+    if not NICHE_CHANNELS.exists():
+        return {}
+    last = None
+    for ln in NICHE_CHANNELS.read_text(encoding="utf-8").splitlines():
+        if ln.strip():
+            try:
+                last = json.loads(ln)
+            except ValueError:
+                continue
+    if not last:
+        return {}
+    return {c["id"]: c for c in last.get("channels", []) if c.get("id")}
+
+
+def capacity_by_size(rows: list[dict] | None = None) -> dict:
+    """`capacity` の**控え** —— 同じ分布を「そのチャンネルの登録者数」で割る（**API 0単位**）。
+
+    **なぜ要るか（2026-09-16 17:0x・optimizer・Fable 5.1・ultracode が撃って分かったこと）**:
+    `capacity` は corpus 全体で「**16% の本が 400,000回 を越えている**」と印字し、
+    `docs/GOAL.md` (4-l) はそれを根拠に固定2 へ「**できる**」と答えていました。
+    **その 16% は、このニッチの1本の力ではなく、その本を出したチャンネルの大きさでした**:
+
+        登録者帯          長尺  ch  再生中央    最大      ≧60,000  ≧142,857  ≧200,000  ≧400,000
+        0〜    1,000     104  83      555   34,677    **0本**   **0本**   **0本**   **0本**
+        1,000〜10,000     68  54    3,249  548,720    7本 10%   5本  7%   4本  6%   3本  4%
+        10,000〜100,000   56  43   61,358 1,355,819   28本 50%  22本 39%  18本 32%   9本 16%
+        100,000〜        107  38  271,741 5,124,861   83本 78%  68本 64%  60本 56%  41本 38%
+
+    **うちは いちばん下の帯です（登録 29人）。その帯の 104本 で、扉(b)（60,000回）を
+    越えた本は 1本 もありません。最大が 34,677回 です。**
+    ＝ 「月20万 ＝ この族の上位1/4 の1本 1本/月」は、**うちの大きさでは 0/104 の出来事**でした。
+
+    **この repo が同じ罠を踏むのは 3度目です**（`title_shape` 54.4倍 → 同じch内 1.02倍 ／
+    `families` の床 5,087倍 → 同じ口の中 2.35倍 ／ この `capacity` の 16%）。
+    **JOURNAL 2026-09-16 15:1x の覆る条件（「3つ目が出たら、比を出す口そのものに控えを返させる」）
+    が、この回に引かれました。** だから `capacity_line` は、この控えを**必ず隣に並べます**
+    （生の比だけを印字する道は、もうありません）。
+
+    **この口が言わないこと**: 「だから無理」ではありません。**帯を上がれば分布が変わる**、
+    までです —— 10,000人 の帯では**中央値の本**が 61,358回 ＝ 扉(b) を 1本 で越えます。
+    ＝ 期限までの 88日 に置く的は「200,000回 の本 1本」ではなく「**帯を上がること**」です。
+
+    **覆る条件**:
+     (1) 台帳（`niche_channels`）が **30日** より古くなったら引き直すこと（登録者は動く・5単位）。
+     (2) 登録 1,000人 未満の帯で **60,000回 を越えた本が 1本 でも出たら**、
+         「0/104」は数え直す側 ＝ この註の表を撃ち直すこと。
+     (3) corpus は**検索結果の上位**なので、どの帯も**上振れの側**です
+         （`capacity` の覆る条件 (2) と同じ。帯どうしの比には効きません ＝ 同じ偏りが全帯に乗る）。
+     (4) **これは相関で、因果ではありません。** 「登録者が多いから伸びる」のか
+         「伸びる本を作れるから登録者が多い」のかを、この口は分けません。
+         分けるのは A/B（うちの本が帯の中央 555回 を越えるか）です。
+    """
+    L = corpus_longs() if rows is None else rows
+    info = niche_channels()
+    if not info:
+        return {"n": len(L), "have": 0, "bands": []}
+    need = {rpm: int(GOAL_YEN / rpm * 1000) for rpm in RPM_BAND}
+    joined = [{**r, "subs": info[r["channel"]]["subs"]} for r in L if r.get("channel") in info]
+    bands = []
+    for lo, hi in SUB_BANDS:
+        sub = [r for r in joined if lo <= r["subs"] < hi]
+        if not sub:
+            continue
+        vs = sorted(r["views"] for r in sub)
+        bands.append({
+            "lo": lo, "hi": hi, "n": len(vs), "channels": len({r["channel"] for r in sub}),
+            "p50": vs[len(vs) // 2], "max": vs[-1],
+            "secs_median": int(st.median([r.get("secs") or 0 for r in sub])),
+            "over_gate": sum(1 for v in vs if v >= 60_000),
+            "over": {rpm: sum(1 for v in vs if v >= n) for rpm, n in need.items()},
+        })
+    return {"n": len(L), "have": len(joined), "need": need, "bands": bands}
+
+
+def capacity_by_size_line(rows: list[dict] | None = None) -> str:
+    """毎周 印字する1行。**`capacity_line` は必ずこれを隣に並べます**（覆る条件 (4) ＝ 3度目の罠）。"""
+    c = capacity_by_size(rows)
+    if not c.get("bands"):
+        return ("**`capacity` の控え（登録者の帯で割る）は引けません** —— "
+                "`data/niche_channels.jsonl` が在りません（`channels.list` **5単位** で取り直すこと）。"
+                "**それまで上の 16%／24%／28% を「このニッチの1本の力」と読まないこと** ＝ "
+                "同じ罠を 2度 踏んでいます（`title_shape` 54.4→1.02倍・`families` 5,087→2.35倍）。")
+    out = ["**`capacity` の控え —— 同じ分布を登録者の帯で割る**（`peers.capacity_by_size`・**API 0単位**・"
+           f"台帳 `niche_channels` {c['have']}本 ぶん）。**うちは いちばん下の帯（登録 29人）**:"]
+    for b in c["bands"]:
+        hi = "以上" if b["hi"] > 10 ** 8 else f"〜{b['hi']:,}"
+        over = " ".join(f"≧{n:,} **{b['over'][r]}本({b['over'][r] / b['n']:.0%})**"
+                        for r, n in c["need"].items())
+        out.append(f"  登録 {b['lo']:>7,}{hi:<9} 長尺{b['n']:>4}本/ch{b['channels']:>3} "
+                   f"尺中央{b['secs_median']:>5}秒 再生中央 {b['p50']:>8,} 最大 {b['max']:>9,}  "
+                   f"扉(b)≧60,000 {b['over_gate']:>3}本({b['over_gate'] / b['n']:.0%})  {over}")
+    low = c["bands"][0]
+    out.append(
+        f"  ＝ **うちの帯（登録1,000人未満）の {low['n']}本 で、扉(b) を越えた本は {low['over_gate']}本・"
+        f"最大は {low['max']:,}回**。「月20万 ＝ 上位1/4 の1本」は、**うちの大きさでは 0/{low['n']} の出来事**です。"
+        f"**期限までの的は「200,000回 の本 1本」ではなく「帯を上がること」** —— "
+        f"10,000人 の帯では**中央値の本**が扉(b) を 1本 で越えます。"
+        f"**相関であって因果ではありません**（覆る条件 (4)）。")
+    return "\n".join(out)
+
+
+#: 転換率を数えるときの床（小さすぎる口は比が暴れる）。
+CONV_MIN_VIEWS = 1_000
+CONV_MIN_VIDEOS = 5
+
+
+def conversion(mine: dict | None = None) -> dict:
+    """**登録 ÷ 総再生**（チャンネル合計・**標本ではない**）を corpus と並べる（**API 0単位**）。
+
+    **なぜ要るか（2026-09-16 17:1x・optimizer・Fable 5.1・ultracode が撃って分かったこと）**:
+    09/13 からの 14周 は、ぜんぶ **1本あたり再生**の側を触っていました
+    （尺・題の形・絵・族・検索の語・分かりやすさの輪）。**そこはうちの弱点ではありませんでした。**
+
+        corpus 215口（総再生1,000回以上・本5本以上）   **うち**
+        登録/1,000再生  下1/4 2.55・中央 **5.29**・上1/4 8.40    **0.32** ← **下から 2/215**
+        1本あたり再生   下1/4  780・中央 3,857・上1/4 38,280      **323** ← 下から 28/215（下位13%）
+
+    **＝ 1本あたり再生は「悪いが分布の中」、転換率は「215口 中 213口 が持っていない欠陥」です。**
+    中央値で転換していれば、**いまの 89,850回 は 475人** になっていました（実物 29人）。
+
+    **形の言い訳は、同じ corpus の中で消えます** —— `あき姉` は **100本 中 72本 がショート**で
+    93,200人 / 8,757,276回 ＝ **10.64/1,000**（**うちの 33倍**）。
+    ＝ 「うちはショートだから低い」では 33倍 は説明できません。
+
+    **期限の側が、この数で書き換わります**（`docs/GOAL.md` (4-o)）:
+    門（あと 971人）までに要る再生は、**転換率をいくつに置くかで割り算が変わります** ——
+    いまの 0.32 なら 303万回、corpus の中央 5.29 なら **18.4万回**（58日 で 3,165回/日 ＝ いまの **3.7倍**）。
+    **「138倍」は、壊れた転換率を固定したまま再生だけを伸ばした数でした。**
+
+    **覆る条件**:
+     (1) **うちの分子と分母は形が混ざっています**（総再生の 97% がショート面）。
+         `analytics` が**長尺だけの登録/1,000再生**を返せるようになったら、その数で並べ直すこと
+         （`studio/analytics.py` の `forms`。09/05 の実測は 長尺 2.13・ショート 0.25）。
+     (2) corpus の分母は**全期間の総再生**、分子は**いまの登録者**です（口ごとの齢が混ざる）。
+         比の順位には効きますが、**倍率を予測にそのまま代入しないこと**（`lines` の覆る条件 (4) と同じ）。
+     (3) corpus には会社の口が混ざります（下位 8口 のうち 4口 が矯正歯科・不動産・人材）。
+         **うちがその並びに居ること自体がこの節の中身**なので、外さずに数えています。
+     (4) うちの転換率が **corpus の下1/4（2.55）を越えたら**、この節は役目を終えます ＝
+         そのときに縛るのは 1本あたり再生の側へ戻る（`capacity_by_size` の帯）。
+    """
+    info = niche_channels()
+    rows = []
+    for c in info.values():
+        v, n = c.get("views") or 0, c.get("videos") or 0
+        if v < CONV_MIN_VIEWS or n < CONV_MIN_VIDEOS:
+            continue
+        rows.append({"title": c.get("title", ""), "subs": c.get("subs") or 0, "views": v,
+                     "videos": n, "sub_per_1k": 1000 * (c.get("subs") or 0) / v,
+                     "views_per_video": v / n})
+    if not rows:
+        return {"n": 0}
+    sp = sorted(r["sub_per_1k"] for r in rows)
+    vp = sorted(r["views_per_video"] for r in rows)
+    out = {"n": len(rows),
+           "sub_per_1k": {"q1": sp[len(sp) // 4], "p50": st.median(sp), "q3": sp[3 * len(sp) // 4]},
+           "views_per_video": {"q1": vp[len(vp) // 4], "p50": st.median(vp), "q3": vp[3 * len(vp) // 4]}}
+    if mine and mine.get("views"):
+        m_sp = 1000 * mine["subs"] / mine["views"]
+        m_vp = mine["views"] / max(mine.get("videos") or 1, 1)
+        out["mine"] = {
+            "sub_per_1k": m_sp, "views_per_video": m_vp,
+            "rank_sub": sum(1 for x in sp if x < m_sp) + 1, "rank_views": sum(1 for x in vp if x < m_vp) + 1,
+            "x_to_p50": (out["sub_per_1k"]["p50"] / m_sp) if m_sp else 0.0,
+        }
+    return out
+
+
+def conversion_line(mine: dict | None = None) -> str:
+    """毎周 印字する1行（**API 0単位**）。数はここが持つ ＝ **§7／GOAL へ写さないこと**。"""
+    c = conversion(mine)
+    if not c.get("n"):
+        return ("**転換率（登録÷総再生）の控えは引けません** —— `data/niche_channels.jsonl` が在りません"
+                "（`channels.list` **5単位**）。")
+    s, v = c["sub_per_1k"], c["views_per_video"]
+    head = (f"**転換率（登録÷総再生・`peers.conversion`・**API 0単位**・corpus {c['n']}口）**: "
+            f"登録/1,000再生 下1/4 {s['q1']:.2f}・**中央 {s['p50']:.2f}**・上1/4 {s['q3']:.2f} ／ "
+            f"1本あたり再生 下1/4 {v['q1']:,.0f}・中央 {v['p50']:,.0f}・上1/4 {v['q3']:,.0f}。")
+    m = c.get("mine")
+    if not m:
+        return head
+    return head + (
+        f"\n  **うち**: 登録/1,000再生 **{m['sub_per_1k']:.2f}**（下から **{m['rank_sub']}/{c['n']}**）・"
+        f"1本あたり **{m['views_per_video']:,.0f}回**（下から {m['rank_views']}/{c['n']}）。"
+        f"\n  ＝ **1本あたり再生は「分布の中の下のほう」、転換率は「{c['n'] - m['rank_sub']}口 が持っていない欠陥」** "
+        f"（中央まで **{m['x_to_p50']:.1f}倍**）。**ショートだから、では説明が付きません** —— "
+        f"`あき姉` は 100本 中 72本 がショートで **10.64/1,000**。"
+        f"**門（登録 1,000人）までに要る再生は、この率で割り算が変わります**（`docs/GOAL.md` (4-o)）。")
 
 
 def title_shape(rows: list[dict] | None = None) -> dict:

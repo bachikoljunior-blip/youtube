@@ -2457,6 +2457,21 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         # 選ぶ側が要るのは床のほう（`peers.FAMILY_FLOOR_Q` の註）。
         out.append(_peers.family_floor_line(_pl))
         out.append(_peers.title_shape_line(_pl))
+        # **転換率（登録÷総再生）**（2026-09-16 17:1x に足した）—— 上の行は全部「1本あたり再生」の側で、
+        #  そこはうちの弱点ではありませんでした（下から 28/215 ＝ 分布の中）。**215口 中 213口 が
+        #  持っていない欠陥は転換率のほう**（0.32 対 中央 5.29）。決めと覆る条件は
+        #  `peers.conversion` の註・`docs/GOAL.md` (4-o) —— **ここへ数を写さないこと**。
+        #  うちの数は**台帳の `channel` の行**から取ります（`cli.record_channel` が毎周 残す ＝
+        #  ここで `yt.channel()` を撃たない。撃つと 1周 1単位 増えるうえ、複製から返る値を
+        #  掴みます・`yt.channel` の註）。
+        _cs = _channel_rows(rows)
+        _mine = None
+        if _cs:
+            _last = _cs[-1]
+            _v, _n = int(_last.get("views") or 0), int(_last.get("videos") or 0)
+            if _v and _n:
+                _mine = {"subs": int(_last.get("subs") or 0), "views": _v, "videos": _n}
+        out.append(_peers.conversion_line(_mine))
     except Exception as e:  # noqa: BLE001
         out.append(f"**門の先（月20万）の距離**は引けなかった: {str(e)[:80]}")
     out.append(sub_rate_line(rows))

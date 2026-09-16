@@ -6135,3 +6135,12 @@
 {"cmd": "status", "at": "2026-09-16T14:36:34+09:00", "id": "-", "event": "quota_exceeded"}
 {"cmd": "status", "at": "2026-09-16T14:36:41+09:00", "id": "-", "event": "quota_exceeded"}
 {"cmd": "status", "at": "2026-09-16T14:36:49+09:00", "id": "-", "event": "quota_exceeded"}
+{"subs": 29, "views": 89850, "videos": 278, "at": "2026-09-16T16:49:51+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-16T16:49:51+09:00", "id": "uc0SceBfoxQ", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-16T16:49:52+09:00", "id": "BzWoZR1Y4ZI", "event": "ready_checked"}
+{"views_live": 221, "views_ledger": 196, "over": 25, "age_h": 30.8, "src": "status", "at": "2026-09-16T16:49:52+09:00", "id": "Ws32ZrBAuFQ", "event": "views_over"}
+{"views_live": 1031, "views_ledger": 962, "over": 69, "age_h": 54.8, "src": "status", "at": "2026-09-16T16:49:52+09:00", "id": "-bSkulqONhI", "event": "views_over"}
+{"views_live": 830, "views_ledger": 829, "over": 1, "age_h": 102.8, "src": "status", "at": "2026-09-16T16:49:52+09:00", "id": "4l3DDCLIRxg", "event": "views_over"}
+{"views_live": 1036, "views_ledger": 1035, "over": 1, "age_h": 126.8, "src": "status", "at": "2026-09-16T16:49:52+09:00", "id": "mja40GJ-GHU", "event": "views_over"}
+{"views_live": 9, "views_ledger": 4, "over": 5, "age_h": 150.8, "src": "status", "at": "2026-09-16T16:49:52+09:00", "id": "2YZ_4FXC-XI", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-16T16:49:52+09:00", "id": "4MpH3QliNi4", "event": "zero_probe"}
