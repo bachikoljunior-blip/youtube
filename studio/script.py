@@ -789,12 +789,36 @@ class Script(BaseModel):
                        "オーナー 09/11 19:5x「制度の仕組みは説明した方が良くない？計算結果だけ出されても"
                        "何でそうなるの？ってなる」。要らないと決めたら、その理由をその本の節に書くこと")
         # **札と声の言い回しの対応**（`TAG_OPENERS` の註）。止めない
-        for i, s in enumerate(self.segments, 1):
-            opener = TAG_OPENERS.get(s.tag)
-            if opener and opener not in _SENT_END.split(s.say)[0]:
-                out.append(f"コマ{i} の札「{s.tag}」に、声の口「{opener}」が 1文目に在りません"
-                           f"（§3 の 7-b: 前提「たとえば、」・決まり「決まりでは、」・計算「計算すると、」で文を始める）"
-                           f": {s.say[:18]}…")
+        #
+        # **【2026-09-16 14:3x に、毎コマ から 本に 1度 へ変えました】**（optimizer・Fable 5.1・ultracode）
+        # **オーナー 09/16 12:2x（`be77dee9`）が、この規則の出来上がりに違和感を言いました**:
+        # 「**あと決まりでは、と言うのが連続してくると違和感ある**」。
+        # **偶然ではありません** —— 「札が同じなら同じ口で文を始める」を毎コマ 当てると、
+        # **札が続くコマでは、声が必ず同じ字で始まります。**
+        # 実物: `2026-09-17-teikibin-nai-okane-6tsu` は 113コマ で「決まりでは、」**20回**、
+        # `2026-09-16-ninni-kanyu-108man`（オーナーが見た本）は 11コマ で
+        # コマ5・6・7 が **3つ 続けて「計算すると、」**。
+        # ＝ **オーナーが違和感を言った当のものを、この規則が毎コマ 作っていました。**
+        #
+        # **どちらの言葉も生きています。** 09/10 12:3x「事実なのか前提なのかとか分かるようにした方が良い」は
+        # **画面の札が毎コマ 持っています**（`slides.TAG_COLORS` ＝ 色つきの丸ボタン・242行）。
+        # 声の側は**本に 1度 出れば、その言い回しと札の対応が視聴者に渡ります** ——
+        # 2度目から先は、目に在るものを耳でもう一度 言っているだけです。
+        # ＝ **本に 1度 も出ていない札だけを言う**（`phrase_runs` が「窓の中で 2度」を止める側）。
+        #
+        # **覆る条件**: (1) 本に 1度 の形で出した本 3本 の維持率（`data/retention.json` の 25%・50%）が、
+        # 毎コマ の本を**下回ったら**、口は耳の側にも毎回 要る ＝ 窓（`OPENER_NEAR`）を広げて戻すこと。
+        # (2) オーナーが「札が分かりにくい」と言ったら、その言葉が正本 ＝ 画面の札のほうを直すこと
+        # （声を戻すと 09/16 の違和感が戻ります）。
+        said = {t for s in self.segments for t in (s.tag,)
+                if TAG_OPENERS.get(t) and TAG_OPENERS[t] in _SENT_END.split(s.say)[0]}
+        for t in sorted({s.tag for s in self.segments} - said):
+            if TAG_OPENERS.get(t):
+                where = next(i for i, s in enumerate(self.segments, 1) if s.tag == t)
+                out.append(f"札「{t}」の声の口「{TAG_OPENERS[t]}」が、本に 1度も出ていません"
+                           f"（いちばん早いのは コマ{where}）。**毎コマ ではありません** ——"
+                           "1度 出れば札との対応が渡ります（§3 の 7-b・2026-09-16 14:3x に"
+                           "オーナー `be77dee9`「決まりでは、と言うのが連続してくると違和感ある」で変えた）")
         # **notes の引き写しが古い**（`stale_note_quotes` の註）。止めない
         out += stale_note_quotes(self.notes, [x.say for x in self.segments])
         return out
