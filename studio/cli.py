@@ -11,6 +11,7 @@
     python -m studio.cli schedule <id> --at 10:00 [--replace <videoId>]   # きょうの枠へ予約（`YYYY-MM-DD HH:MM` なら その日・2本目 以降は --force）
     python -m studio.cli reschedule <id> --at "YYYY-MM-DD HH:MM" [--force]  # 予約ずみの本の刻だけ動かす（50単位・上げ直さない・`LONG_SLOTS`）
     python -m studio.cli measure              # 公開ずみの本の再生・高評価を台帳へ
+    python -m studio.cli catchup [--dry-run]    # 日枠が戻った周に、詰まっている手を安い順で撃つ（約152単位・`cmd_catchup`）
     python -m studio.cli trend [--days 3]       # 台帳から「齢 → 再生」の並び（API 0単位・§7 の判定はこれで）
     python -m studio.cli trend --by-day-count   # 「その日に何本 出したか」ごとの 48時間 再生（API 0単位・§7 の覆る条件）
     python -m studio.cli comments               # 視聴者が書いたコメント（自分の自動コメントは除く。API 1単位）
@@ -2368,6 +2369,71 @@ def cmd_watermark(a):
     return 0
 
 
+def cmd_catchup(a):
+    """**日枠が戻った周に、詰まっている手を安い順で一気に撃つ**（2026-09-17 08:3x・optimizer・Fable 5.1・ultracode）。
+
+    **なぜ足したか（実測・台帳から数えた）**: 09/16 15:3x の回が `watermark`（50単位・**公開ずみの本にも
+    後から載る、ただ 1つ の腕**）を名指ししてから、**5周 が それを撃てずに終わっています** ——
+    21:17:47 に 1度 撃って 403、以後 日枠が戻る前に周が尽きる。同じ窓で `FLLHpj27v7s`／`4MpH3QliNi4`
+    （長尺 2本・刻を 35.3時間／20.3時間 過ぎ）も打ち直せていません。
+    **詰まっているのは判断ではなく順番**で、日枠が戻る刻（16:00 JST）と周の刻（129分）が合わないだけです。
+    ＝ **戻った窓の最初の周が 1コマンドで全部 撃てる形**にしておくこと。
+
+    **撃つ順（安い順・合計 約 152単位 ＝ 本 1本 上げる 1,650 の 1/11）**:
+
+        1  `yt.channel()`                  **1単位**     日枠が戻ったかを 1単位 で試す（403 ならここで終わる）
+        2  `yt.readiness()` × 出ていない本   **1単位/本**  `publishAt` が消えているかを見る
+        3  `reschedule --at <空き枠>` × 同   **50単位/本** 消えていれば打ち直す（`cmd_reschedule` を通す
+                                                        ＝ 読み返し・台帳・門は 1か所のまま）
+        4  `watermark`                     **50単位**    1度も置かれていなければ置く
+
+    **1,650単位 の `schedule --replace` は撃ちません** —— 本も題も絵も、上がっている物のままです。
+    **判定はしません** —— 撃つのは「どの周に撃っても同じ答えになる手」だけ。
+
+    **覆る条件**:
+     (1) 3 で `stuck` が False（打った刻が入らない）本が 2周 続けて出たら、原因は口ではなく
+         YouTube の予約そのもの ＝ `schedule --replace` の側へ倒すこと（`yt.reschedule` の覆る条件 (1)）。
+     (2) 2 で `publishAt` が **在るのに** 刻を過ぎている本が出たら、それは「刻が消えた」ではない
+         ＝ 打ち直しても同じ所で止まるので、この口は触らず `pubcheck` の鳴りを残すこと。
+     (3) ここへ手を足すときは「どの周に撃っても同じ答えになる手」だけ。
+         判断の要る手（題材・尺・本数・題）は入れないこと（§5 の持ち場）。
+    """
+    now = now_jst()
+    rows = ledger_rows()
+    bad = pubcheck.missing(rows, now)
+    done_wm = any(r.get("event") == "watermark_set" for r in rows)
+    print(f"catchup（安い順・**判定はしません**）: 出ていない本 {len(bad)}本・"
+          f"透かし {'置いてある' if done_wm else '**未**'}")
+    if not bad and done_wm:
+        print("  撃つものがありません（**0単位**）")
+        return 0
+    if getattr(a, "dry_run", False):
+        print(f"  [dry-run] 撃てば 約{1 + len(bad) * 51 + (0 if done_wm else 50)}単位（**いまは 0単位**）")
+        return 0
+    ch = yt.channel()                      # **1単位**。尽きていれば ここで 403 ＝ `main()` が受ける
+    print(f"  口は開いています（1単位）: 登録 {ch['subscriberCount']}・総再生 {ch['viewCount']}")
+    slots = next_long_slots(pubcheck.taken_slots(rows, now), now, n=max(1, len(bad)))
+    fixed = 0
+    for b, at in zip(bad, slots):
+        rd = yt.readiness(b["video_id"])   # **1単位**
+        if not rd["no_publish_at"]:
+            print(f"  {b['video_id']} は publishAt を持っています（{rd['publish_at']}・privacy {rd['privacy']}）"
+                  f" ＝ 刻は消えていません・**打ち直しません**（覆る条件 (2)）")
+            continue
+        print(f"  {b['video_id']}（{b['script']}）は **private・刻なし** ＝ "
+              f"{at:%m/%d %H:%M} JST へ打ち直します（50単位）")
+        if cmd_reschedule(argparse.Namespace(id=b["script"], at=f"{at:%Y-%m-%d %H:%M}",
+                                             force=True, dry_run=False)) == 0:
+            fixed += 1
+    if len(bad) > len(slots):
+        print(f"  !! 空き枠が {len(slots)}個 しかありません（出ていない本 {len(bad)}本）"
+              f" ＝ 残りは次の周（`LONG_SLOTS` は {'/'.join(LONG_SLOTS)}）")
+    if not done_wm:
+        cmd_watermark(argparse.Namespace(offset_ms=15000, dry_run=False))
+    print(f"  打ち直した本 {fixed}本 / {len(bad)}本")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -2387,6 +2453,9 @@ def main(argv=None):
     sub.add_parser("measure")
     # **透かし（登録ボタンの重ね）**（2026-09-16 15:3x・`yt.set_watermark` の註）。
     # **1回 50単位 で、公開ずみの長尺にも登録の口が 1つ 増える** ＝ いま在る腕でいちばん安い。
+    # **詰まっている手を、日枠が戻った周に安い順で一気に撃つ**（`cmd_catchup` の註）。
+    cu = sub.add_parser("catchup")
+    cu.add_argument("--dry-run", action="store_true", help="何を撃つかだけ（**0単位**）")
     wm = sub.add_parser("watermark")
     wm.add_argument("--offset-ms", type=int, default=15000, dest="offset_ms",
                     help="本の頭から出るまで（既定 15000 ＝ 15秒）")

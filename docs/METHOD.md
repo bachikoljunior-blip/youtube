@@ -1901,6 +1901,13 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
 
     測った刻       2026-09-14 **17:2x JST のまま**（**この周は `measure` を撃てません** ＝ 口が拒まれている・
                    下の「口（API）」の行。**下の 3〜9本目 の数は その刻の写しです**）
+    1日の視聴時間    **`analytics_day` が持つ**（`analytics`・**Data API 0単位**・別枠）＝ ここへ写さない。
+                   扉(b) は**時間で読むこと**（再生で読むと `rev_deadline` の 1.04倍・時間で読むと別の桁）・
+                   **判定は立ったサブ**・derivation は JOURNAL **09/17 08:1x**
+    口と日枠の別     `analytics`（別枠）が通れば **token は生きている**・尽きているのは Data API の日枠だけ
+                   ＝ `stall.mouth_gap` の「オーナーの手」は その窓では誤報（JOURNAL **09/17 08:1x**）
+    詰まった手      `python -m studio.cli catchup`（**約152単位・安い順**）＝ 日枠が戻った周に 1コマンドで撃つ。
+                   何が詰まっているかは `pubcheck.line` と `budget` の「未着手」が印字する ＝ ここへ写さない
     3本目 lQHX9LJ80Sg  **151.3h 719回**・いいね 4
     4本目 gv1u7n_pCAQ  **127.3h 966回**・いいね 5
     5本目 2YZ_4FXC-XI  **103.3h 1回**（初点の挟み **95.5〜97.1h** ＝ 下敷きの窓 77.6h の外）。

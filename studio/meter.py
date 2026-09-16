@@ -207,6 +207,12 @@ def spent(since: str, rows_: list[dict] | None = None) -> dict:
         at = r.get("at") or ""
         if not at or at < since:
             continue
+        # **数えるのは Data API の口だけ**（2026-09-17 08:4x・optimizer・Fable 5.1・ultracode）。
+        # `youtubeAnalytics` / `youtubereporting` は**別の枠**で、0単位 のまま `calls` を
+        # 押し上げます —— 実測 09/17 08:19 の `analytics` 1回 で **9本**。
+        # 「うちが 10,000 を使い切ったのか」を読む行なので、本数も Data API に揃えること。
+        if (r.get("api") or "youtube") != "youtube":
+            continue
         n += 1
         if r.get("unknown"):
             unknown += 1
