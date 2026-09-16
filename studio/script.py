@@ -686,7 +686,13 @@ class Script(BaseModel):
                        "`script.default_cta()` が型。**文言は書き手が決める** ＝ "
                        "縛っているのは再生ではなく登録・`docs/GOAL.md` (4-g)）")
         # **長尺は、出口だけでは 6.5% にしか届きません**（上の `EARLY_CTA_FROM` の註の実測）。
+        # **`PUBLISHED_BEFORE` は外します**（2026-09-16 16:0x に足した）——
+        # この門は「日付」で切っていますが、**日付では 1日の中の時刻を切れません。**
+        # `2026-09-19-nenkin-15man-tedori` は `date` が 09/19 なのに **09/16 12:00 に公開ずみ**で
+        # （前の晩に別の枠へ動かした本）、**もう直せないのに永久に赤いまま**でした。
+        # 直せない赤は、次の回に「この本は焼き直す物だ」と読ませます ＝ 狼少年になります。
         if (self.date >= EARLY_CTA_FROM and self.segments
+                and self.id not in PUBLISHED_BEFORE
                 and form_of(self.form) is LONG):
             r = early_cta_ratio(self.segments)
             if r is None or not (EARLY_CTA_LO <= r <= EARLY_CTA_HI):

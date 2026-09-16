@@ -163,3 +163,25 @@ def test_公開ずみの本は遡って赤くしない():
                  title="x #Shorts", takeaway="x", form="short",
                  segments=[seg("決まりでは、40年、480か月で割ります。")] * 11)
     assert all("言い直" not in p and "書き出し" not in p for p in s.problems())
+
+
+def test_公開ずみの本は前の一手の門でも赤くならない():
+    """**日付では 1日の中の時刻を切れません**（2026-09-16 16:0x に足した）。
+
+    `2026-09-19-nenkin-15man-tedori` は `date` が 09/19 なのに **09/16 12:00 に公開ずみ**
+    （前の晩に別の枠へ動かした本）で、**もう直せないのに永久に赤いまま**でした。
+    **直せない赤は、次の回に「焼き直す物だ」と読ませます ＝ 狼少年になります。**
+    """
+    # 出口の一手（`CTA_FROM`）は別の門なので、そちらは満たしておく
+    segs = [seg(say="あ" * 60) for _ in range(39)] + [seg(say="登録しておくと、あすの分もとどきます。")]
+    s = S.Script(id="2026-09-19-nenkin-15man-tedori", date="2026-09-19",
+                 title="x", takeaway="x", form="long", segments=segs)
+    assert all("登録の一手" not in p for p in s.problems()), s.problems()
+
+
+def test_公開ずみでない長尺は前の一手の門で赤くなる():
+    """陽性対照 —— 外した所が、外すべきでない本まで通していないこと。"""
+    segs = [seg(say="あ" * 60) for _ in range(39)] + [seg(say="登録しておくと、あすの分もとどきます。")]
+    s = S.Script(id="2026-09-20-nanika", date="2026-09-20",
+                 title="x", takeaway="x", form="long", segments=segs)
+    assert any("長尺の前半に登録の一手が無い" in p for p in s.problems())
