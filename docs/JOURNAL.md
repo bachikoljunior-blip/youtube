@@ -138209,3 +138209,55 @@ corpus の 218チャンネル の `statistics` を引き、台帳 `data/niche_ch
  (5) 尺の狙い（15分）は**この回は動かしていません**。1,000〜10,000 の帯で 200,000回 超の 4本 は
      **19/32/34/86分（4本とも19分以上）**ですが n＝4 で、(4-l-3) がまだ返っていません。
      **引き金**: (4-l-3) が「下回らなかった」で閉じたら、狙いを **1,140秒（19分）**へ上げること。
+
+### 18:0x —— **検査の全部走らせは 42分36秒 かかり、赤が 14件 在ります（どれもこの回の物ではありません）**
+
+**この回が同じ所で 2度 転んだので、数を置いていきます。**
+
+**1. 全部走らせは 42分36秒 です**（9,098件・`python -m pytest tests/ -q`）。
+この回は `timeout 600` と `timeout 590` で **2度 とも SIGTERM（exit 143）で殺し**、
+1度目は出力が `Terminated` の 1行 だけ ＝ **何も分からないまま「落ちた」の通知だけが来ました**。
+**`timeout` を付けずに `run_in_background` で回すこと**（Bash の `timeout` 引数は最大 600,000ms ＝ 10分 で、
+この suite には**構造的に足りません**）。
+
+    studio／trend／peers だけ（`-k "studio or trend or peers"`）  1,332件・**2分20秒**
+    その補集合                                                 7,732件・**42分36秒**
+
+**＝ 触った所だけ走らせるなら 2分20秒 で済みます。** 全部走らせが要るのは、
+`studio/` の外へ手を入れた回だけです。
+
+**2. 赤 14件 は、全部 旧 `src/` の側で、`studio/` とは繋がっていません**
+
+    test_daily_pick_outside_long / test_deadline_check / test_endcard_verdict
+    test_m23_fan_trial_gate / test_measure_window / test_niche_corpus
+    test_request_form / test_request_form_excludes_long_form / test_settle
+    test_theory_per_day / test_today_place / test_video_ids_cache / test_watches（2件）
+
+**繋がっていないことは、撃って確かめました**（推測ではありません）:
+ * `src/` から `studio` を import している file は **0件**（橋は `scripts/` の 3本 だけで、
+   その検査 `test_turf_run`・`test_trend_curve_aligned`・`test_trend_first_view_length`・
+   `test_parent_record_before_spawn` は **40件 とも緑**）。
+ * 上の 13 file のうち、`studio` の語を持つ物は **0件**。
+ * この回が触った file（`niche_channels.jsonl`／`studio/ledger.jsonl`／`GOAL`／`JOURNAL`／
+   `peers.py`／`trend.py`／`test_studio_peers.py`）と、赤の側が読む file
+   （`config/hypotheses.yaml`・`config/watches.yaml`・`data/analytics_lag.jsonl`・
+   `data/batch_runs.jsonl`）は **重なりが 0**。
+
+**3. 赤の中身は「台帳の状態」で、コードの壊れではありません**（3件 を開いて見た）
+
+    test_niche_corpus  `short: published 88/132` ＝ corpus のショートの 9割 が公開ずみ、の門。
+                       corpus は検索結果なので、向こうが消せば下がります
+    test_watches（2件） `config/hypotheses.yaml` の未判定の仮説が `watch:` を指していない
+                       （2026-09-18 の 1件）＝ 立てる側と指す側の食い違い
+    test_deadline_check **同じ回に 1度 落ちて 1度 通りました** ＝ 日付で動く側（不安定）
+
+**この回はどれも直していません。** 持ち場（この回は固定2 と転換率）の外で、
+**赤の原因が全部 別の回の台帳の側**だからです。**直すなら台帳を書いた回が直すほうが速い。**
+
+**覆る条件**:
+ (1) 上の 14件 のどれかが **`studio/` の語を持つようになったら**、この節の「繋がっていない」は
+     数え直す側 ＝ そのときは全部走らせを持ち場に入れること。
+ (2) 赤が **14件 を越えたら**、増えた分は新しい回の物なので、その回が名指しで閉じること
+     （**数が正本 ＝ ここへ写した 14 は 2026-09-16 18:0x の数**）。
+ (3) `test_deadline_check` のように**同じ回に落ちて通る**物がもう 1件 出たら、
+     それは赤ではなく**不安定**の側 ＝ 数えるときに分けること。
