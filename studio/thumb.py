@@ -79,6 +79,44 @@ _NUM = re.compile(r"[0-9０-９]")
 _CHIP = re.compile(r"^[【\[]([^】\]]{1,14})[】\]]")
 
 
+def _bare(s: str) -> str:
+    """くらべるための形（空白・区切り・記号を落とす）。`_dup` の下ばたらき。"""
+    return re.sub(r"[\s　・･\-—ー|｜/／、,。]", "", s or "")
+
+
+def _dup(cand: str | None, big: list[str]) -> bool:
+    """`cand` が、真ん中の巨大な行と**同じことを言っている**か。
+
+    **2026-09-16 11:5x に足しました**（optimizer・Fable 5.1・ultracode）。
+    **何が起きていたか**: `chip_of` は題の `【…】`、`band_of` は題の `｜` の後ろ、
+    `big_lines` は `Script.thumb` の 3行 —— **どれも同じ数から作られているのに、
+    互いを1度も見ていませんでした。**
+    実物（`2026-09-17-taishokukin-2000man-tedori`・11:4x に焼いて目で見た）:
+
+        チップ      退職金2000万円          ← 巨大な 1行目 と同じ
+        巨大        退職金 2000万円
+                   税金は40万5700円
+                   手取り1959万4300円
+        赤帯        税金は40万5700円        ← 巨大な 2行目 と同じ
+
+    **4つ の場所のうち 3つ が同じ字**です。320px では、**読める行が 1行 に減ります**。
+    `Script.thumb` を 4行 にすれば避けられますが、**避け方を書き手の記憶に置かないこと** ——
+    いま在る長尺 10本 は全部 3行 で、**全部 同じ形で重なります**。
+
+    **覆る条件**:
+     (1) 重なりを外した本の CTR（`analytics_traffic` の面と再生）が、
+         重なったままの本を **3本 続けて下回ったら**、重なりは害ではない ＝ この門を外すこと。
+     (2) `_bare` が落としている記号のせいで**別の字を同じと読んだ**回が出たら、
+         落とす記号を減らすこと（いまは空白・中黒・棒・区切り・読点だけ）。
+    """
+    if not cand:
+        return False
+    c = _bare(cand)
+    if not c:
+        return False
+    return any(c == _bare(b) or c in _bare(b) or _bare(b) in c for b in big if b)
+
+
 def lines_for(s) -> list[str]:
     """サムネの行。`Script.thumb` が在ればそれ（3行まで）・無ければ 1コマ目の `show` の行。
 
@@ -100,7 +138,9 @@ def chip_of(s) -> str | None:
     if len(raw) >= 4:
         return raw[0]
     m = _CHIP.match((getattr(s, "title", "") or "").strip())
-    return m.group(1) if m else None
+    got = m.group(1) if m else None
+    # **巨大な行と同じことを言っているチップは描きません**（`_dup` の註・2026-09-16 11:5x）。
+    return None if _dup(got, big_lines(s)) else got
 
 
 def band_of(s) -> str | None:
@@ -115,6 +155,8 @@ def band_of(s) -> str | None:
     else:
         t = (getattr(s, "title", "") or "").strip()
         out = t.split("｜", 1)[1].strip() if "｜" in t else ""
+    if _dup(out, big_lines(s)):        # 巨大な行と同じ字の帯は描きません（`_dup` の註）
+        return None
     return out if 0 < len(out) <= 24 else None
 
 

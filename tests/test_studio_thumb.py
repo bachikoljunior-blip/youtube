@@ -105,3 +105,44 @@ def test_schedule_は_thumbnail_for_を通る():
     body = src[src.index("def cmd_schedule("):src.index("def verify_meta(")]
     assert "thumbnail_for(s, a.id)" in body
     assert 'workdir(a.id) / "slide-01.png"' not in body
+
+
+# ---- 重なりの門（2026-09-16 11:5x・optimizer・Fable 5.1・ultracode）------------------
+#
+# **何が起きていたか**: `chip_of`（題の `【…】`）・`band_of`（題の `｜` の後ろ）・
+# `big_lines`（`Script.thumb` の3行）は、**どれも同じ数から作られているのに、互いを1度も見ていません**でした。
+# `2026-09-17-taishokukin-2000man-tedori` を焼いて目で見たら、**4つ の場所のうち 3つ が同じ字**でした。
+# **陽性対照**: `thumb._dup` を `return False` にすると、下の 2件 が落ちます。
+
+
+def _s4(title, thumb_lines):
+    return script.Script(id="t-dup", date="2026-09-16", title=title, takeaway="t", form="long",
+                         thumb=thumb_lines,
+                         segments=[script.Segment(say="あ" * 40, show="あ\nい") for _ in range(6)])
+
+
+def test_巨大な行と同じチップは描かない():
+    s = _s4("【退職金2000万円】30年勤めた人の手取りは1959万4300円｜税金は40万5700円",
+            ["退職金 2000万円", "税金は40万5700円", "手取り1959万4300円"])
+    assert thumb.chip_of(s) is None          # 「退職金2000万円」は巨大な 1行目 と同じ
+    assert thumb.band_of(s) is None          # 「税金は40万5700円」は巨大な 2行目 と同じ
+
+
+def test_別のことを言うチップと帯は描く():
+    s = _s4("【60代の夫婦へ】ねんきん定期便に載っていないお金6つ｜申請しないと382万円が来ません",
+            ["ねんきん定期便に", "載っていないお金6つ", "382万7800円"])
+    assert thumb.chip_of(s) == "60代の夫婦へ"
+    assert thumb.band_of(s) == "申請しないと382万円が来ません"
+
+
+def test_4行渡せば4つとも別の字になる():
+    s = _s4("【退職金2000万円】30年勤めた人の手取りは1959万4300円｜税金は40万5700円",
+            ["30年勤めて定年の方へ", "退職金 2000万円", "手取り1959万4300円", "税金は40万5700円"])
+    assert thumb.chip_of(s) == "30年勤めて定年の方へ"
+    assert thumb.big_lines(s) == ["退職金 2000万円", "手取り1959万4300円"]
+    assert thumb.band_of(s) == "税金は40万5700円"
+
+
+def test_空白のちがいは同じ字と読む():
+    assert thumb._dup("退職金2000万円", ["退職金 2000万円"])
+    assert not thumb._dup("退職金2000万円", ["手取り1959万4300円"])
