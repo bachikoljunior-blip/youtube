@@ -64,7 +64,14 @@ def _stage(monkeypatch, tmp_path, privacy="private", publish_at="2026-09-18T10:0
     monkeypatch.setattr(yt, "scheduled_all", lambda: [v for v in live if v["publish_at"] and v["privacy"] != "public"])
     monkeypatch.setattr(yt, "now_jst", lambda: NOW)
     moved = []
-    monkeypatch.setattr(yt, "reschedule", lambda vid, at: moved.append((vid, at)))
+
+    # **`reschedule` は打った刻を読み返して返す**（2026-09-16 23:3x・`yt.reschedule` の註）。
+    # 09/15 に 2本 を落としたのは、返りを見ずに「動かした」と台帳へ書いていたため。
+    def _resched(vid, at, stuck=True):
+        moved.append((vid, at))
+        return {"want": at.isoformat(), "got": at.isoformat() if stuck else None, "stuck": stuck}
+
+    monkeypatch.setattr(yt, "reschedule", _resched)
     return sid, written, moved
 
 
@@ -104,6 +111,22 @@ def test_過ぎた刻は拒む(monkeypatch, tmp_path):
     sid, written, moved = _stage(monkeypatch, tmp_path)
     assert cli.cmd_reschedule(_A(sid, "2026-09-15 14:00", force=True)) == 1
     assert moved == []
+
+
+def test_刻が入らなかったら台帳に書かない(monkeypatch, tmp_path, capsys):
+    """**2026-09-16 23:3x に足した門**（`yt.reschedule` の註）。
+
+    09/15 14:27 の 2本 は、刻が入らないまま台帳に `scheduled` が書かれ、
+    `pubcheck`（当時まだ無い）も `trend` も「予約が在る」と読んだ ＝
+    **枠が過ぎるまで、誰も気づかなかった。** 書かなければ、次の周が同じ本を見つけられる。
+    """
+    sid, written, moved = _stage(monkeypatch, tmp_path)
+    monkeypatch.setattr(yt, "reschedule",
+                        lambda vid, at: {"want": at.isoformat(), "got": None, "stuck": False})
+    assert cli.cmd_reschedule(_A(sid, "2026-09-15 21:00", force=True)) == 1
+    out = capsys.readouterr().out
+    assert "刻が入りませんでした" in out
+    assert [w["event"] for w in written] == ["reschedule_failed"]   # `scheduled` は 1行も足さない
 
 
 def test_statusの1行は空いている枠を3つ言う():

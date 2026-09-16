@@ -31,7 +31,7 @@ from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
-from . import analytics, budget, critic, demand, hear, peers, render, reporting, script, stall, trend, yt
+from . import analytics, budget, critic, demand, hear, peers, pubcheck, render, reporting, script, stall, trend, yt
 from . import common
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
@@ -688,6 +688,10 @@ def channel_switch_line(ch: dict, rows: list[dict]) -> str:
 
 
 def cmd_status(a):
+    # **出たか**（`pubcheck` の註・**API 0単位**・oEmbed）。**`yt.channel()` より前に撃つ** ——
+    # 日枠が尽きていると `channel()` で落ちる周があり、そこで落ちると
+    # 「刻を過ぎたのに出ていない本」が**いちばん見たい周に限って**見えなくなる（2026-09-16 23:3x に踏んだ形）。
+    print(pubcheck_line())
     ch = yt.channel()
     vids = yt.all_videos()
     sids = studio_video_ids()
@@ -716,7 +720,14 @@ def cmd_status(a):
         if v["privacy"] != "public":
             # 公開前の本だけ、YouTube 側の処理が終わっているかを添える（1単位。`yt.readiness` の註）。
             rd = yt.readiness(v["id"])
-            mark = "処理 済" if rd["ok"] else f"!! 処理 {rd['upload']}/{rd['processing']} 失敗 {rd['failure'] or rd['rejection']}"
+            if rd["ok"]:
+                mark = "処理 済"
+            elif rd.get("no_publish_at"):
+                # **本は無事で、刻だけが消えている**（`yt.readiness` の註 2026-09-16 23:3x）。
+                mark = ("!! **publishAt が無いまま private** ＝ この本は**永久に出ません**"
+                        "（`reschedule --at <空き枠>` で 50単位・上げ直しは要らない）")
+            else:
+                mark = f"!! 処理 {rd['upload']}/{rd['processing']} 失敗 {rd['failure'] or rd['rejection']}"
             print(f"           {mark}（upload {rd['upload']}・processing {rd['processing']}）")
             drift = meta_drift(v["id"], rd)
             mm = meta_mark(drift, v["id"], script_title=script_title_of(v["id"]))
@@ -1410,6 +1421,23 @@ def next_long_slots(taken: list[dt.datetime], now: dt.datetime, n: int = 3) -> l
     return out
 
 
+def pubcheck_line(now: dt.datetime | None = None) -> str:
+    """**出たか**（`pubcheck` の註・**Data API 0単位**・oEmbed）の 1〜N行。
+
+    `trend` と `status` の**いちばん上**で撃つ。**`yt` を 1度も呼ばないこと** ——
+    この行がいちばん要るのは**日枠が尽きた周**で、そこでは `yt` の口が落ちます
+    （2026-09-16 23:3x に踏んだ形: `FLLHpj27v7s`・`4MpH3QliNi4` が刻を過ぎても出ないまま 8周）。
+    打ち直す先の枠も**台帳から**作る（`pubcheck.taken_slots`）。
+    """
+    now = now or now_jst()
+    try:
+        rows = ledger_rows()
+        slots = next_long_slots(pubcheck.taken_slots(rows, now), now, n=4)
+        return pubcheck.line(rows, now, slots=slots)
+    except Exception as e:      # 網が落ちている回でも `trend`／`status` を止めない
+        return f"**出たか**: 読めませんでした（{e.__class__.__name__}: {e}）"
+
+
 def long_slot_line(vids: list[dict], now: dt.datetime) -> str:
     """`status` の 1行: 次に長尺を置く枠（空いている順に 3つ）。**API 0単位**（`all_videos` は status がもう引いている）。"""
     taken = [yt.when(v) for v in vids if v.get("publish_at") or v.get("published_at")]
@@ -1457,8 +1485,19 @@ def cmd_reschedule(a):
     if a.dry_run:
         print(f"[dry-run] {vid} の刻を {yt.when(live):%m/%d %H:%M} → {at:%m/%d %H:%M} JST へ")
         return 0
-    yt.reschedule(vid, at)
-    print(f"動かした: {vid}  {yt.when(live):%m/%d %H:%M} → {at:%m/%d %H:%M} JST（50単位・ID そのまま）")
+    r = yt.reschedule(vid, at)
+    if not r["stuck"]:
+        # **打った刻が入っていない ＝ その本は出ません**（`yt.reschedule` の註 2026-09-16 23:3x）。
+        # **台帳に `scheduled` を書かないこと** —— 書くと `pubcheck` も `trend` も
+        # 「予約が在る」と読み、**刻が過ぎるまで（＝ 枠を 1つ 落とすまで）誰も気づきません。**
+        print(f"!! **刻が入りませんでした**: {vid} へ {at:%m/%d %H:%M} JST を打ったのに、"
+              f"YouTube が返した publishAt は {r['got'] or '無し'} です。"
+              f"**この本はいま『出ない』側に居ます**（private・刻なし）。"
+              f"台帳には書きません ＝ もう一度 撃つか、`schedule --replace`（1,650単位）へ倒すこと")
+        ledger("reschedule_failed", a.id, video_id=vid,
+               want=at.isoformat(timespec="minutes"), got=r["got"], moved_from=last.get("publish_at"))
+        return 1
+    print(f"動かした: {vid}  {yt.when(live):%m/%d %H:%M} → {at:%m/%d %H:%M} JST（50単位・ID そのまま・刻を読み返して確かめた）")
     ledger("scheduled", a.id, video_id=vid, publish_at=at.isoformat(timespec="minutes"), replaced=None,
            moved_from=last.get("publish_at"), title=s.title)
     return 0
@@ -1863,6 +1902,11 @@ def cmd_trend(a):
     mc = trend.mouth_closed_line(ledger_rows())
     if mc:
         print(mc)
+    # **出たか**（2026-09-16 23:3x・optimizer・Fable 5.1・ultracode）。**API 0単位**（oEmbed）。
+    # 09/15 21:00・09/16 12:00 の 2本 が、刻を過ぎても public にならないまま **8周** 誰にも見えていなかった
+    # ＝ **日枠が尽きている周こそ効く口**なので、`mouth_closed_line` と同じ「いちばん上」に置く。
+    # 出どころと覆る条件は `pubcheck` の註。
+    print(pubcheck_line())
     for line in trend.report(within_h=24 * a.days):
         print(line)
     # **面（サムネのインプレッション）**（2026-09-16 14:0x・optimizer・Fable 5.1・ultracode）。

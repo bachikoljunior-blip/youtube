@@ -293,10 +293,43 @@ def make_private(video_id: str) -> None:
         "privacyStatus": "private", "selfDeclaredMadeForKids": False}}).execute()
 
 
-def reschedule(video_id: str, publish_at: dt.datetime) -> None:
-    svc().videos().update(part="status", body={"id": video_id, "status": {
+def reschedule(video_id: str, publish_at: dt.datetime) -> dict:
+    """予約の刻だけ動かす（`videos.update` 50単位）。**返した刻を読み返す**（+1単位）。
+
+    **2026-09-16 23:3x（optimizer・Fable 5.1・ultracode）に読み返しを足した。実測で 2本 落ちています**:
+
+        09/15 14:27  `FLLHpj27v7s`  09/18 19:00 → **09/15 21:00**   26.6時間 過ぎても public にならず
+        09/15 14:27  `4MpH3QliNi4`  09/19 19:00 → **09/16 12:00**   11.6時間 過ぎても public にならず
+
+    **どちらの呼びも例外を投げていません**（台帳に `scheduled` の行が残っている ＝ `cmd_reschedule` は
+    「動かした」と印字して終わっている）。同じ 2日 に `reschedule` を通していない 5本 は
+    **5本 とも刻どおりに出ています** ＝ 落ちているのはこの口です。
+
+    `videos.update` は **part で指した塊を丸ごと置き換えます**。返る `status` がこちらの打った刻を
+    持っていない周がある以上、**打ちっぱなしにしないこと** —— `resp["status"]` は同じ呼びが返すので、
+    確かめるだけなら **0単位**。返りに刻が無いときだけ `videos.list`（1単位）で引き直して、
+    それでも無ければ呼び手へ「入らなかった」を返します（判定は呼び手・ここでは投げない）。
+
+    **覆る条件**: (1) 「返りには刻が在るのに、その刻に出ない」形が出たら、原因はこの口ではなく
+    YouTube の予約そのもの ＝ そのときは `pubcheck` の鳴りを見て `schedule --replace` の側へ倒すこと。
+    (2) 読み返しの 1単位 すら惜しい形になったら、落とすのは `videos.list` のほうだけ
+    （返りの `status` を見る側は 0単位 なので残す）。
+    """
+    want = publish_at.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    resp = svc().videos().update(part="status", body={"id": video_id, "status": {
         "privacyStatus": "private", "selfDeclaredMadeForKids": False,
-        "publishAt": publish_at.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}}).execute()
+        "publishAt": want}}).execute()
+    got = (resp.get("status") or {}).get("publishAt")
+    if not got:      # 返りが持っていない周だけ、1単位 で引き直す
+        r = svc().videos().list(part="status", id=video_id).execute()
+        got = ((r.get("items") or [{}])[0].get("status") or {}).get("publishAt")
+    stuck = bool(got) and abs(_rfc3339(got) - publish_at) <= dt.timedelta(minutes=1)
+    return {"want": want, "got": got, "stuck": stuck}
+
+
+def _rfc3339(s: str) -> dt.datetime:
+    """YouTube が返す publishAt を datetime に（末尾 Z も読む）。"""
+    return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
 def readiness(video_id: str) -> dict:
@@ -312,18 +345,38 @@ def readiness(video_id: str) -> dict:
     が、予約の後に来たら `update_meta` を撃たない限り誰にも見えない）。突き合わせは `cli.meta_drift`。
     実測 09/09 01:4x `gv1u7n_pCAQ`: 題・説明欄 815字 一致。tags は同じ 9語 だが **YouTube は並べ替えて返す**
     （['65歳', 'シニア', …] の順）ので、比べるときは集合で。
+
+    **2026-09-16 23:3x（optimizer・Fable 5.1・ultracode）: `publishAt` を返し、`ok` の条件に入れた。**
+    この関数は「処理が終わったか」だけを見ていて、**予約の刻そのものを 1度も読んでいませんでした。**
+    実測: `FLLHpj27v7s`（09/15 21:00 の枠）・`4MpH3QliNi4`（09/16 12:00 の枠）は、
+    `reschedule` で刻を前へ動かしたあと **public にならないまま** 26.6時間／11.6時間 経っており、
+    その間 `ready_checked` は **8周 とも `ok: true`** を書いています
+    （`upload=processed`・`processing=succeeded` は本当だった ＝ **本は無事で、刻だけが消えていた**）。
+    **`private` なのに `publishAt` が無い ＝ その本は永久に出ません。**
+    **追加 0単位** —— `status` は同じ 1回 の `videos.list` で既に返ってきていました。
+    **覆る条件**: (1) 意図して `publishAt` を外して private に置く手（`make_private`）が
+    「出す予定の本」に使われる形が出たら、この `ok` は誤って赤くなる ＝ そのときは
+    `cli.record_ready` の側で「台帳に生きた予約が在る本だけ」に絞ること
+    （いまは `pubcheck.live_schedule` がその名簿を持っています）。
+    (2) 刻が過ぎた本の検出そのものは **`pubcheck`（API 0単位）が上位の口**です ——
+    こちらは日枠が尽きた周には撃てないので、**この関数を `pubcheck` の代わりにしないこと。**
     """
     r = svc().videos().list(part="snippet,status,processingDetails", id=video_id).execute()
     if not r.get("items"):
         return {"upload": "missing", "processing": "missing", "failure": None, "rejection": None, "ok": False,
-                "title": None, "description": None, "tags": None}
+                "title": None, "description": None, "tags": None, "publish_at": None, "privacy": None,
+                "no_publish_at": True}
     v = r["items"][0]
     sn, st, pd = v.get("snippet", {}), v.get("status", {}), v.get("processingDetails", {})
     up, pr = st.get("uploadStatus"), pd.get("processingStatus")
     fail, rej = st.get("failureReason"), st.get("rejectionReason")
-    ok = up == "processed" and pr in ("succeeded", None) and not fail and not rej
+    priv, pub_at = st.get("privacyStatus"), st.get("publishAt")
+    # **private なのに刻が無い ＝ 出ない本**（上の註）。public はもう出ているので刻を持たない側。
+    no_at = priv == "private" and not pub_at
+    ok = up == "processed" and pr in ("succeeded", None) and not fail and not rej and not no_at
     return {"upload": up, "processing": pr, "failure": fail, "rejection": rej, "ok": ok,
-            "title": sn.get("title"), "description": sn.get("description"), "tags": sn.get("tags")}
+            "title": sn.get("title"), "description": sn.get("description"), "tags": sn.get("tags"),
+            "publish_at": pub_at, "privacy": priv, "no_publish_at": no_at}
 
 
 def stats(video_ids: list[str]) -> dict[str, dict]:
