@@ -1,11 +1,11 @@
 {
- "id": "2026-09-18-fuyou-shinkokusho-p5-kigen",
- "asked_at": "2026-09-16T13:00:48+09:00",
- "for": "2026-09-18 の本（2026-09-18-fuyou-shinkokusho）のコマ81〜100（部「p5-kigen」）の絵",
- "prompt": "壁にかかった秋の暦と、その下の机に置かれた用紙と封筒。静かな室内。人は写らない。 写実的な写真風。横長。文字やロゴは一切入れない。",
- "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
- "size": "1920x1080",
- "format": "jpg",
- "out": "assets/images/2026-09-18-fuyou-shinkokusho-p5-kigen.jpg",
- "status": "pending"
+  "asked_at": "2026-09-16T13:00:48+09:00",
+  "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+  "for": "2026-09-18 の本（2026-09-18-fuyou-shinkokusho）のコマ81〜100（部「p5-kigen」）の絵",
+  "format": "jpg",
+  "id": "2026-09-18-fuyou-shinkokusho-p5-kigen",
+  "out": "assets/images/2026-09-18-fuyou-shinkokusho-p5-kigen.jpg",
+  "prompt": "壁にかかった秋の暦と、その下の机に置かれた用紙と封筒。静かな室内。人は写らない。 写実的な写真風。横長。文字やロゴは一切入れない。",
+  "size": "1920x1080",
+  "status": "done"
 }
