@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-18-fuyou-shinkokusho-p2-shikumi",
+ "asked_at": "2026-09-16T13:00:48+09:00",
+ "for": "2026-09-18 の本（2026-09-18-fuyou-shinkokusho）のコマ15〜40（部「p2-shikumi」）の絵",
+ "prompt": "机の上の年金の振込通知書と電卓と赤鉛筆。差し引かれた金額の欄に線が引かれている。手もとだけ。 写実的な写真風。横長。文字やロゴは一切入れない。",
+ "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+ "size": "1920x1080",
+ "format": "jpg",
+ "out": "assets/images/2026-09-18-fuyou-shinkokusho-p2-shikumi.jpg",
+ "status": "pending"
+}

@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-18-fuyou-shinkokusho-p7-matome",
+ "asked_at": "2026-09-16T13:00:48+09:00",
+ "for": "2026-09-18 の本（2026-09-18-fuyou-shinkokusho）のコマ141〜150（部「p7-matome」）の絵",
+ "prompt": "記入し終えた用紙を封筒に入れ、郵便受けへ投かんしようとしている手もと。夕方の光。 写実的な写真風。横長。文字やロゴは一切入れない。",
+ "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+ "size": "1920x1080",
+ "format": "jpg",
+ "out": "assets/images/2026-09-18-fuyou-shinkokusho-p7-matome.jpg",
+ "status": "pending"
+}

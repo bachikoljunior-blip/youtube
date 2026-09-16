@@ -83,3 +83,29 @@ def test_ショートには言わない():
     s = S.Script(id="a", date="2026-09-20", title="x #Shorts", takeaway="x", form="short",
                  segments=[seg() for _ in range(11)])
     assert all("部の絵" not in w for w in s.warnings())
+
+
+# ---- 注文の口（この回に 2度 踏んだ所） ----
+
+def test_注文の文は本の背景の場面を継がない():
+    """`image_prompt` は **1コマ目 の場面**。継ぐと部が全部 同じ絵になります（2026-09-16 15:0x）。"""
+    import inspect
+    from studio import cli
+    src = inspect.getsource(cli.order_parts)
+    assert "s.image_prompt" not in src, "1コマ目 の場面を部の注文へ継がないこと"
+    assert "part_prompts" in src, "書き手が書いた部ごとの場面を使うこと"
+
+
+def test_背景が注文ずみでも部の注文は置く():
+    """ここで返すと、**背景が在る本（＝ 既に在る全部）に部の絵を 1枚も頼めません**（同じ回に踏んだ）。"""
+    import inspect
+    from studio import cli
+    src = inspect.getsource(cli.cmd_order_image)
+    before_return = src.split("return 0")[0]
+    assert "order_parts" in before_return, "注文ずみで返る枝でも、部の注文を置くこと"
+
+
+def test_部ごとの場面は本に書ける():
+    kw = dict(date="2026-09-20", title="x", takeaway="x")
+    s = S.Script(id="a", segments=[seg(image="p1")], part_prompts={"p1": "机の上の封筒。"}, **kw)
+    assert s.part_prompts["p1"] == "机の上の封筒。"

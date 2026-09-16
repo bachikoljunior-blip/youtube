@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-18-fuyou-shinkokusho-p3-dareni",
+ "asked_at": "2026-09-16T13:00:48+09:00",
+ "for": "2026-09-18 の本（2026-09-18-fuyou-shinkokusho）のコマ41〜60（部「p3-dareni」）の絵",
+ "prompt": "食卓にひろげた通知書と、その横の老眼鏡と湯のみ。差し込む午後の光。人は写らない。 写実的な写真風。横長。文字やロゴは一切入れない。",
+ "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+ "size": "1920x1080",
+ "format": "jpg",
+ "out": "assets/images/2026-09-18-fuyou-shinkokusho-p3-dareni.jpg",
+ "status": "pending"
+}

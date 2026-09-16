@@ -1094,6 +1094,10 @@ def cmd_order_image(a):
         if prev.get("size") and prev["size"] != size:
             print(f"  !! 注文は {prev['size']} ・いまの形 `{form.name}` は {size}"
                   " ＝ **届く絵は cover-fit で切り取られます**（`cmd_order_image` の註）")
+        # **部の注文は、背景が注文ずみでも置くこと**（2026-09-16 15:0x に踏んだ）——
+        # ここで返してしまうと、**背景が在る本（＝ 既に在る全部）に部の絵を 1枚も頼めません。**
+        # 背景と部は別の注文で、`-bg` が done でも部は pending で置けます。
+        order_parts(s, form, size)
         return 0
     # **`avoid` に「人の顔」を入れてあります**（2026-09-16 07:0x・optimizer・Fable 5.1・ultracode）。
     # `studio/thumb.py` の註が「**こちらは顔を使いません**」と決めている（CLAUDE.md の根幹 ＝
@@ -1140,10 +1144,16 @@ def order_parts(s, form, size) -> int:
         if q.exists():
             continue
         shows = [x.show.replace("\n", " ") for x in s.segments[a_ - 1:b_] if x.show]
+        # **`image_prompt` は継ぎません**（2026-09-16 15:0x に踏んだ）——
+        # あれは **1コマ目 の場面**（この本なら「玄関先で封筒を取り出す」）なので、
+        # 継ぐと **7つ の部が全部 同じ玄関先の絵**になり、部に割った意味が消えます。
+        # 書き手が `Script.part_prompts` に場面を書いていればそれ、無ければ `show` から組みます。
+        scene = (s.part_prompts or {}).get(nm) or (
+            f"この場面で説明しているのは: {'・'.join(shows[:6])}。それが伝わる、"
+            "日本の家庭か役所の、ものと手もとだけの落ち着いた場面。")
         order = {"id": oid, "asked_at": now_jst().isoformat(timespec="seconds"),
                  "for": f"{s.date} の本（{s.id}）のコマ{a_}〜{b_}（部「{nm}」）の絵",
-                 "prompt": (f"{s.image_prompt or ''} この場面で説明しているのは: "
-                            f"{'・'.join(shows[:6])}。写実的。文字は入れない。").strip(),
+                 "prompt": f"{scene} 写実的な写真風。横長。文字やロゴは一切入れない。",
                  "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
                  "size": size, "format": "jpg",
                  "out": f"assets/images/{oid}.jpg", "status": "pending"}

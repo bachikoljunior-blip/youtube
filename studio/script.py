@@ -500,6 +500,11 @@ class Script(BaseModel):
     yomi: dict[str, str] = {}       # 読みを固定する語 → ひらがな（TTS と聞き取り検算の両方が使う）
     kana_in_voice: list[str] = []   # Neural2 系のとき、TTS に渡す文の中で仮名に置き換える語（yomi の語。hear で TTS の誤読が出た語だけ）
     image_prompt: str = ""          # 背景画像の注文文（GPT Image 2.0。文字を入れない）
+    # **部ごとの絵の注文文**（部の名 → 場面）。`Segment.image` の部の名と揃える。
+    # **書かなければ、その部の `show` から機械が組みます** —— ただし
+    # **`image_prompt` は継ぎません**（あれは 1コマ目 の場面で、部ごとには合わない ＝
+    #  継ぐと 7つ の部が全部 同じ玄関先の絵になります・2026-09-16 15:0x に踏んだ）。
+    part_prompts: dict[str, str] = {}
     # **形**（`short` ＝ 縦 1080x1920・95秒 まで／`long` ＝ 横 1920x1080・4〜10分）。
     # 既定は `short` ＝ **書かなければ今までと同じ**（`script.FORMS`・`docs/GOAL.md` (4-g) 2）。
     form: str = "short"

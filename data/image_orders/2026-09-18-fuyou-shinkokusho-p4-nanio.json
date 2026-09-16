@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-18-fuyou-shinkokusho-p4-nanio",
+ "asked_at": "2026-09-16T13:00:48+09:00",
+ "for": "2026-09-18 の本（2026-09-18-fuyou-shinkokusho）のコマ61〜80（部「p4-nanio」）の絵",
+ "prompt": "机に置かれた申告書の用紙とボールペン。記入欄はまだ空。手もとだけ。 写実的な写真風。横長。文字やロゴは一切入れない。",
+ "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+ "size": "1920x1080",
+ "format": "jpg",
+ "out": "assets/images/2026-09-18-fuyou-shinkokusho-p4-nanio.jpg",
+ "status": "pending"
+}

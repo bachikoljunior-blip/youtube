@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-18-fuyou-shinkokusho-p6-rei",
+ "asked_at": "2026-09-16T13:00:48+09:00",
+ "for": "2026-09-18 の本（2026-09-18-fuyou-shinkokusho）のコマ101〜140（部「p6-rei」）の絵",
+ "prompt": "和室の食卓に向かい合う二人ぶんの湯のみと座布団、机の上に通帳と電卓。人は写らないか後ろ姿。 写実的な写真風。横長。文字やロゴは一切入れない。",
+ "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+ "size": "1920x1080",
+ "format": "jpg",
+ "out": "assets/images/2026-09-18-fuyou-shinkokusho-p6-rei.jpg",
+ "status": "pending"
+}
