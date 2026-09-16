@@ -182,7 +182,7 @@ OTHER_IDS: dict[str, str] = {
 #:        （**在り処の無い `FILED_IDS` は `OTHER_IDS` と同じ物**）。
 FILED_IDS: dict[str, str] = {
     "751f4947": ("2026-09-16 説明のパートごとにアニメーションとか画像でイメージしやすくしたらいいと思う"
-                 " → 札: `docs/METHOD.md` §3 の **7-d**（09/16 15:0x に節が立った）"
+                 " → 札: `docs/METHOD.md` §3 の **7-d**（09/16 14:0x に節が立った（`docs/METHOD.md` の見出しは 15:0x と書いていますが、その commit の刻は 14:0x JST ＝ **見出しの刻が 1時間 進んでいます**・次に触る回が直す側））"
                  "・道具は `Script.part_prompts` / `Segment.image` / `cli order-image`"
                  "・**実物 1本目 は `2026-09-18-fuyou-shinkokusho`**（150コマ・部の絵 7枚・09/16 14:0x に焼き上がり、"
                  "焼けたコマを目で見て 部が実際に切り替わっていることを確かめた ＝ JOURNAL 09/16 17:1x）"
