@@ -4,12 +4,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from .common import probe_duration, run, workdir
-from .script import Script
+from .script import Script, part_images
 from .slides import contact_sheet, slide
 from .tts import concat, synth_script
 
 
-def build(s: Script, image: Path | None = None) -> dict:
+def build(s: Script, image: Path | None = None, parts: dict[str, Path] | None = None) -> dict:
+    """`image` は本ぜんたいの背景・`parts` は**部の名 → その部の絵**（オーナー 09/16 12:1x `751f4947`）。
+
+    `parts` に無い部（絵がまだ届いていない）は、本の背景へ落ちます ＝ **止まりません**
+    （`docs/IMAGE_ORDERS.md`「来ていなければ待たずに焼く」と同じ扱い）。
+    """
     d = workdir(s.id)
     audio = synth_script(s, d)
     wavs = [w for w, _ in audio]
@@ -18,9 +23,12 @@ def build(s: Script, image: Path | None = None) -> dict:
     n = len(s.segments)
     # **形は台本が持ちます**（既定 `short` ＝ 縦 1080x1920。`script.Script.form`・`docs/GOAL.md` (4-g) 2）。
     # ここで渡し忘れると横の本が縦の絵で焼けるので、`slide()` の既定値ではなく **必ず渡す**。
-    pngs = [slide(seg.show, seg.sub, seg.say, i, n, image, d / f"slide-{i:02d}.png",
+    parts = parts or {}
+    names = part_images(s.segments)
+    pngs = [slide(seg.show, seg.sub, seg.say, i, n, parts.get(nm) or image,
+                  d / f"slide-{i:02d}.png",
                   tag=seg.tag, board=seg.board, form=s.form)
-            for i, seg in enumerate(s.segments, 1)]
+            for i, (seg, nm) in enumerate(zip(s.segments, names), 1)]
     lst = d / "slides.txt"
     lines = []
     for p, t in zip(pngs, durs):

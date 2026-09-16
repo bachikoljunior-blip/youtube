@@ -482,6 +482,7 @@ class Segment(BaseModel):
     show: str = Field("", description="画面の大きい字（16字まで）。数字か短い見出し。")
     sub: str = Field("", description="画面の小さい字（任意）。")
     tag: str = Field("", description="札（前提／しくみ／決まり／計算／結論／見る所）。声の言い回し（たとえば・決まりでは・計算すると）と同じ札。「しくみ」は『なぜそう決まっているか』のコマ。")
+    image: str = Field("", description="このコマ（と、次に `image` を書いたコマの手前まで）の背景の絵の**部の名**。`assets/images/<本のid>-<image>.jpg` を引く。空なら 1つ前の部の絵、それも無ければ本の背景（`-bg`）。")
     board: list[str] = Field([], description="まん中の板。そのコマまでの前提と数の積み上がり（14字×5行まで）。最後の行がいまのコマ。")
 
 
@@ -583,7 +584,12 @@ class Script(BaseModel):
         **いまは道具の版を見ていません** —— `studio/` を直した回は、その回が焼き直すこと。
         """
         import hashlib
+        # **部の絵の名も入れます**（2026-09-16 14:x・オーナー 12:1x `751f4947`）——
+        # 部を付け替えると背景が変わるので、入れないと**古い絵の mp4 が「新しい」と言われます**
+        # （この註が名指ししている「絵が届く前に焼いた本」と同じ形の、部ごと版）。
+        # **`image` が空のあいだは 1字も変わりません** ＝ 既に在る本の指紋は動きません。
         body = "\n".join(f"{g.say}\x1f{g.show}\x1f{g.sub}\x1f{g.tag}\x1f" + "\x1e".join(g.board)
+                          + (f"\x1f{g.image}" if g.image else "")
                           for g in self.segments)
         yomi = "\x1f".join(f"{k}={v}" for k, v in sorted(self.yomi.items()))
         kana = "\x1f".join(sorted(self.kana_in_voice))
@@ -687,6 +693,17 @@ class Script(BaseModel):
                     f"`data/retention.json` の長尺 4本 の中央値）。"
                     "**出口の一手はそのまま残し、前にもう1つ置くこと**"
                     "（`script.default_early_cta()` が型・文言は書き手が決める）")
+        # **分かりづらさの 2つ**（オーナー 2026-09-16 12:2x `be77dee9`・下の `CLARITY_FROM` の註）。
+        if self.date >= CLARITY_FROM and self.id not in PUBLISHED_BEFORE:
+            for i, s in enumerate(self.segments, 1):
+                for a, b in unit_restate(s.say):
+                    out.append(
+                        f"コマ{i} 同じ量を別の単位で並べて言い直している: 「{a}」「{b}」"
+                        f"（オーナー 09/16「40年を480か月に言い換えてるのね。分かりづらかった」）。"
+                        "**使うほうの単位ひとつで言うこと** —— 換算そのものが計算の一段なら"
+                        f"「{a}は{b}」の形にして、その先を次の文で使う")
+            out += [f"{x}（オーナー 09/16「決まりでは、と言うのが連続してくると違和感ある」）"
+                    for x in phrase_runs(self.segments)]
         return out
 
     def warnings(self) -> list[str]:
@@ -724,6 +741,21 @@ class Script(BaseModel):
         # **焼く前に止まります** ＝ 既に焼いた長尺 7本（320〜487秒）が全部 焼き直せなくなり、
         # 絵が届いた本を差し替える道（`schedule --replace`）が死にます。**この周に 1度 そこへ入れて、
         # `lint` の `[!]` で気づいて移しました**（`cmd_build` を撃つ前に見つかった側）。
+        # **コマをまたいで、同じ量を 2通りの単位で言っている所**（オーナー 09/16 `be77dee9`）。
+        # **止めません** —— またいだ側は、その場ごとに正しい単位が別のことが在ります
+        # （満額の条件は「年」・ねんきん定期便に刷ってある字は「月」）。読んで決めるのは書き手。
+        if self.date >= CLARITY_FROM and self.id not in PUBLISHED_BEFORE:
+            out += [f"{x}（オーナー 09/16「40年を480か月に言い換えてるのね。分かりづらかった」）"
+                    for x in unit_aliases(self.segments)]
+        # **説明のパートごとの絵**（オーナー 2026-09-16 12:1x `751f4947`・`script.parts` の註）。
+        # **止めません** —— 絵は外の係が焼いて返す口なので、無いことを赤にすると本が出せなくなります。
+        if form_of(self.form).name == "long" and not parts(self.segments):
+            out.append(
+                f"部の絵が 1つも在りません（{len(self.segments)}コマ 全部が同じ背景 1枚）。"
+                "**止めません** —— オーナー 09/16 12:1x「説明のパートごとにアニメーションとか"
+                "画像でイメージしやすくしたらいいと思う」。`Segment.image` に部の名を書き、"
+                "`python -m studio.cli order-image <id>` で注文すること"
+                f"（部は {MAX_PARTS} まで・締切の 2時間以上 前に置く ＝ `docs/IMAGE_ORDERS.md`）")
         f_ = form_of(self.form)
         if f_.name == "long":
             aim = int(MAX_TOTAL_CHARS * LONG_TARGET_SECONDS / SHORT_MAX_SECONDS)
@@ -891,6 +923,18 @@ def default_early_cta() -> "Segment":
     )
 
 
+#: **この型が要る `yomi`**（`Script.yomi` へ混ぜること）。
+#: **2026-09-16 13:2x に踏んで足した**: `default_early_cta()` を長尺 5本 へそのまま入れたら、
+#: **5本 とも `コマN 「数字」の読みが固定されていない` で赤くなりました** ——
+#: 出口の型（`default_cta`）の語は どの本の `yomi` にも在るのに、
+#: **前の型だけが「数字」という、どの本にも無い語を持っていた**からです。
+#: ＝ 型が要る読みを、型の側が言っていませんでした（**この repo でいちばん多い壊れ方**）。
+#: **覆る条件**: `default_early_cta()` の文を書き換えたら、この辞書も一緒に直すこと
+#: （検査 `tests/test_studio_clarity_gates.py::test_前の一手の型は自分が要る読みを連れてくる` が、
+#:  型の `say` の漢字が この辞書だけで全部 覆えることを見ています ＝ 片方だけ動かすと落ちます）。
+EARLY_CTA_YOMI = {"数字": "すうじ"}
+
+
 def long_sentences(say: str) -> list[str]:
     """say を 。？！ で切り、MAX_SENTENCE を越える文だけ返す（警告の材料。止めない）。"""
     return [x for x in _SENT_END.split(say) if len(x.strip()) > MAX_SENTENCE]
@@ -958,3 +1002,324 @@ def save(s: Script) -> Path:
     p = path_for(s.id)
     p.write_text(json.dumps(s.model_dump(), ensure_ascii=False, indent=1), encoding="utf-8")
     return p
+
+
+# ---- オーナー 2026-09-16 12:2x の 2つ（**この段は指示です**） -------------------
+# 原文（**一字も変えないこと**・受け取り帳 `be77dee9`・`CLAUDE.md` 冒頭にも在る）:
+#
+#   **「40年を480か月に言い換えてるのね。分かりづらかった。他にもそういう分かりづらさは
+#     作り途中のものや、今後作るものでないようにして。これは指示だからサブに渡して。
+#     あと決まりでは、と言うのが連続してくると違和感ある」**
+#
+# 指したのは `2026-09-16-ninni-kanyu-108man`（09/16 10:00 公開）のコマ4:
+#   「決まりでは、満額を40年、480か月で割ると、1か月はらうごとに毎年1765円ふえます。」
+#
+# **2つ 別のことを言っています。門も 2つ です。**
+#
+# (1) **同じ量を、別の単位で、並べて言い直さない**（`unit_restate`）
+#     コマ4 は「40年」と「480か月」が**同じ量**で、**間に句読点しか無い**（同格）。
+#     聞く側は「40年 と 480か月 は別の数か？」から考え直します。**割るのに使ったのは 480 だけ**です。
+#     **同じ本の中の他の場所は止めません** —— コマ1「40年で満額」・コマ10「加入期間が480か月」は
+#     どちらもその場で正しい単位（満額の条件は年・ねんきん定期便の字は月）＝ **警告**（`warnings`）に回します。
+#     **「Xは Y です」の形は止めません** —— コマ5「5年は60か月。保険料は毎月1万7920円かける60」は
+#     **換算そのものが計算の一段**で、換算した先を次の文で使っています。
+#     ＝ **止めるのは「仕事をしていない言い直し」だけ**（間が句読点・括弧・中黒だけのもの）。
+#
+# (2) **同じ書き出しを続けない**（`phrase_runs`）
+#     オーナーが名指したのは「決まりでは、」で、この本では **コマ2 と コマ4**（1つ おき）。
+#     **同じ本に、もっと強いのが在ります**: **コマ5・6・7 が 3つ 続けて「計算すると、」**。
+#     書き出しは `Segment.tag`（前提／しくみ／決まり／計算／結論／見る所）と同じ語を当てる形なので、
+#     **札が続けば書き出しも続きます** ＝ これは書き手の癖ではなく**型の側の穴**です。
+#     **札は変えません**（札は画面と板が使う）。変えるのは**声の書き出しの言い回し**だけ。
+#
+# **日付で切っています**（`CTA_FROM` と同じ形）: **公開ずみの本は もう直せないので、遡って赤くしない。**
+# `CLARITY_FROM` は **オーナーが言った日** ＝ `2026-09-16`。**その日の朝に もう公開されていた 2本**は
+# `PUBLISHED_BEFORE` で名指しで外します（日付では 1日の中の時刻を切れないため）。
+#
+# **覆る条件**:
+#  (1) `unit_restate` が、換算を**声に出す必要が在る**本を止めたら（同格でしか言えない所が出たら）、
+#      `_APPOSITION` から括弧を外して「、」だけにすること。
+#  (2) 「つまり」「すなわち」で言い直す形が出て、それも分かりづらいとオーナーが言ったら、
+#      `_APPOSITION` にその 2語 を足すこと（**いまは入れていません** ——
+#      「つまり」は言い直す理由を渡しているので、同格とは別の形）。
+#  (3) `phrase_runs` の窓（`OPENER_NEAR` 2）で、直すと日本語が不自然になる本が 3本 続いたら、
+#      窓を 1（＝ 隣り合うときだけ）へ詰めること。オーナーが見たのは 1つ おき（コマ2・4）なので、
+#      **詰めるのはオーナーの言葉が覆ったときだけ**。
+CLARITY_FROM = "2026-09-16"
+#: 言われた刻（09/16 12:2x JST）より前に**もう公開されていた**本。遡って赤くしない。
+PUBLISHED_BEFORE = ("2026-09-16-ninni-kanyu-108man", "2026-09-19-nenkin-15man-tedori")
+
+_ZEN = str.maketrans("０１２３４５６７８９", "0123456789")
+
+#: 単位 → (族, 基準の単位での倍率)。**長い綴りを先に**（`万円` は `円` より先・`か月` は `月` より先）。
+_UNITS: tuple[tuple[str, str, int], ...] = (
+    ("年間", "とき", 12), ("年", "とき", 12),
+    ("か月", "とき", 1), ("ヶ月", "とき", 1), ("ケ月", "とき", 1),
+    ("カ月", "とき", 1), ("箇月", "とき", 1), ("月", "とき", 1),
+    ("時間", "ぶん", 60), ("分", "ぶん", 1),
+    ("億円", "かね", 100_000_000), ("万円", "かね", 10_000), ("円", "かね", 1),
+)
+_QTY_RE = re.compile(
+    r"((?:[0-9０-９]+(?:億|万|千)?)+)\s*(" + "|".join(u for u, _, _ in _UNITS) + ")")
+#: 「仕事をしていない言い直し」＝ 2つ の量の間に、これしか無いとき。
+#: **`は`・`が`・`＝` が在れば止めません**（コマ5 の「5年は60か月」＝ 換算そのものが一段）。
+_APPOSITION = re.compile(r"[、，,（）()「」・…\s]*")
+
+
+def _num(s: str) -> int:
+    """「1万7920」→ 17920・「108万」→ 1080000・「480」→ 480。"""
+    total = 0
+    for m in re.finditer(r"([0-9]+)(億|万|千)?", s.translate(_ZEN)):
+        n = int(m.group(1))
+        total += n * {"億": 100_000_000, "万": 10_000, "千": 1_000}.get(m.group(2) or "", 1)
+    return total
+
+
+def quantities(say: str) -> list[tuple[int, int, str, str, int]]:
+    """say の中の量（開始, 終わり, 族, 単位, 基準の単位での値）。"""
+    out = []
+    for m in _QTY_RE.finditer(say):
+        unit = m.group(2)
+        fam, mul = next((f, k) for u, f, k in _UNITS if u == unit)
+        out.append((m.start(), m.end(), fam, unit, _num(m.group(1)) * mul))
+    return out
+
+
+def unit_restate(say: str) -> list[tuple[str, str]]:
+    """**同じ量を、別の単位で、並べて言い直している所**（間が句読点・括弧だけ）。
+
+    返すのは (前の言い方, 後の言い方)。**「Xは Y」「X＝Y」は返しません**（換算の一段）。
+    """
+    qs = quantities(say)
+    out = []
+    for a, b in zip(qs, qs[1:]):
+        if a[2] != b[2] or a[4] != b[4] or a[3] == b[3]:
+            continue
+        if _APPOSITION.fullmatch(say[a[1]:b[0]]):
+            out.append((say[a[0]:a[1]], say[b[0]:b[1]]))
+    return out
+
+
+def unit_aliases(segments) -> list[str]:
+    """**本ぜんたいで、同じ量を 2通りの単位で言っている所**（コマをまたぐ・**警告**）。
+
+    止めないのは、またいだ側には正しい理由が在り得るから（満額の条件は年・
+    ねんきん定期便の字は月）。**読んで決めるのは書き手**（オーナー 09/06「サブが判断する」）。
+    """
+    seen: dict[tuple[str, int], tuple[int, str]] = {}
+    out = []
+    for i, s in enumerate(segments, 1):
+        for _, _, fam, unit, val in quantities(s.say):
+            key = (fam, val)
+            if key in seen and seen[key][1] != unit:
+                out.append(f"同じ量を 2通りの単位で言っている: "
+                           f"コマ{seen[key][0]}「{seen[key][1]}」対 コマ{i}「{unit}」"
+                           f"（どちらもその場で正しいなら、そのままでよい）")
+                continue
+            seen.setdefault(key, (i, unit))
+    return out
+
+
+#: 書き出し ＝ `say` の最初の「、」まで。2〜8字 のときだけ数える（それより長いのは言い回しではなく文）。
+OPENER_MAX = 8
+#: 同じ書き出しが、この窓（コマの隔たり）の中で 2度 出たら止める。オーナーは 1つ おき（コマ2・4）を「連続」と読んだ。
+OPENER_NEAR = 2
+#: 同じ書き出しが、本ぜんたいで「何コマに 1回」まで許されるか（続いていなくても、常套句の使い過ぎ）。
+#: **本数で割ります** —— 絶対の回数にすると長尺で壊れます: 191コマ の本で「たとえば、」が 3回 は
+#: **64コマに 1回**で、オーナーが見た「連続」ではありません。この回に絶対 3回 で当てたら
+#: **191コマ の本 1つ だけで 9件** 鳴り、その 9件 とも隔たり 20コマ 以上 でした（＝ 全部 偽陽性）。
+OPENER_EVERY = 20
+#: 本が短くても、これより少ない回数では止めない（11コマ のショートで 2回 を止めないため）。
+OPENER_MIN_TIMES = 3
+
+
+#: **数える書き出しは「言い回し」だけ**（オーナー 09/16「決まりでは、**と言うのが**」）。
+#: **主語は数えません** —— 「障害基礎年金は、」「この給付金は、」が近くで 2度 出るのは
+#: ふつうの日本語（話題が続いているだけ）で、オーナーが違和感を言ったものではありません。
+#: **この回に台本 21本 の書き出しを全部 数えて分けました**（`data/studio/scripts/`・**API 0単位**）——
+#: 2回 以上 出た 45種 のうち、**言い回しが 28種・主語が 17種**。主語を混ぜると
+#: `2026-09-16-kuriage-ushinau-3tsu` の「障害基礎年金は、」のような偽陽性が出ます。
+#: **覆る条件**: ここに無い言い回しが続いて耳につく本が出たら、**その語をここへ足すこと**
+#: （型で当てようとしないこと ——「〜は」で切ると主語が全部 入り、「〜と」で切ると
+#:  「計算すると」と「〇〇と」が同じ側に落ちます。この回に両方 試して割れました）。
+STOCK_OPENERS = frozenset((
+    "決まりでは", "計算すると", "たとえば", "例えば", "前提として", "見る所は",
+    "しくみとしては", "しくみは", "結論として", "制度の上では", "ここで見るのは",
+    "だから", "ですから", "では", "そして", "ただし", "しかし", "つまり", "なぜ",
+    "まず", "つぎに", "次に", "さらに", "反対に", "一方", "最後に", "実は",
+    "ここで", "ここが", "ここから", "ここからは", "ここまでは",
+    "1つ目は", "2つ目は", "3つ目は", "残りの2つは", "自分の場合は", "この動画では",
+))
+
+#: 書き出し → 画面の札。**落とすときに、札が空なら この札を立てます**（声から消える印を、画面へ移す）。
+OPENER_TAG = {
+    "決まりでは": "決まり", "制度の上では": "決まり",
+    "計算すると": "計算",
+    "たとえば": "前提", "例えば": "前提", "前提として": "前提",
+    "見る所は": "見る所", "ここで見るのは": "見る所",
+    "しくみとしては": "しくみ", "しくみは": "しくみ",
+    "結論として": "結論",
+}
+
+
+def opener(say: str) -> str:
+    """そのコマの書き出しの**言い回し**（「決まりでは」「計算すると」…）。主語や地の文なら空。"""
+    i = say.find("、")
+    if not (1 <= i <= OPENER_MAX):
+        return ""
+    o = say[:i]
+    return o if o in STOCK_OPENERS else ""
+
+
+def phrase_runs(segments) -> list[str]:
+    """**同じ書き出しが近くで／何度も出ている所**（オーナー 09/16「連続してくると違和感ある」）。"""
+    at: dict[str, list[int]] = {}
+    for i, s in enumerate(segments, 1):
+        o = opener(s.say)
+        if o:
+            at.setdefault(o, []).append(i)
+    cap = max(OPENER_MIN_TIMES, len(list(segments)) // OPENER_EVERY)
+    out = []
+    for o, ix in at.items():
+        near = [(a, b) for a, b in zip(ix, ix[1:]) if b - a <= OPENER_NEAR]
+        if near:
+            out.append(f"書き出し「{o}、」が近くで繰り返されている（コマ "
+                       + "・".join(f"{a}→{b}" for a, b in near)
+                       + f"・窓 {OPENER_NEAR}）。**札（tag）は変えず、声の言い回しだけ変えること**")
+        elif len(ix) > cap:
+            out.append(f"書き出し「{o}、」が {len(ix)}回（コマ "
+                       + "・".join(str(i) for i in ix)
+                       + f"・この尺なら {cap}回 まで ＝ {OPENER_EVERY}コマに 1回）。"
+                       "**札（tag）は変えず、声の言い回しだけ変えること**")
+    return sorted(out)
+
+
+#: 声から落としてよい書き出し ＝ **画面の札（`Segment.tag`）が同じことを言っているもの**。
+#: `studio/slides.py` は札を色つきの丸ボタンで**毎コマ 画面に出しています**（`TAG_COLORS`・242行）。
+#: ＝ **「決まりでは」「計算すると」は、耳と目で 2度 言っています。**
+#: オーナー 09/10 12:3x「事実なのか前提なのかとか分かるようにした方が良い」は**札が持っています**ので、
+#: 声の側を落としても、その指示は割れません。**落とすのは 2度目から**（1度目は残す ＝ 言い回しは消えない）。
+DROPPABLE_OPENERS = (
+    "決まりでは", "計算すると", "前提として", "たとえば", "見る所は",
+    "しくみとしては", "制度の上では", "ここで見るのは", "結論として",
+)
+
+
+def drop_repeated_openers(segments) -> list[tuple[int, str, str]]:
+    """**近くで繰り返している書き出しを、2度目から声の側で落とす**（画面の札は残る）。
+
+    返すのは (コマ番号, 前の say, 後の say, 立てる札)。**`segments` は書き換えません**（呼ぶ側が決める）。
+    落とすのは `DROPPABLE_OPENERS` だけ —— 「たとえば」「だから」「では」は
+    **札が持っていない接続**なので、落とすと文が繋がりません（そちらは書き手が言い換える）。
+
+    **覆る条件**: (1) 落としたコマの `tag` が空なら、耳にも目にも印が無くなります ＝
+    その本は書き手が言い換えること（この口は `tag` の在るコマしか落としません）。
+    (2) 落として合計字数が形の下限を切ったら、落とすのではなく言い換える番（呼ぶ側が見ること）。
+    """
+    segs = list(segments)
+    at: dict[str, list[int]] = {}
+    for i, s in enumerate(segs):
+        o = opener(s.say)
+        if o in DROPPABLE_OPENERS:
+            at.setdefault(o, []).append(i)
+    # **間を空けるのであって、隣り合いを外すだけではありません**（2026-09-16 13:0x に踏んだ）。
+    # 隣り合いだけ外すと、`phrase_runs` の**回数**の門が代わりに鳴ります ——
+    # 113コマ の本で「決まりでは、」を隣り合いだけ外して **20回 残りました**。
+    # ＝ 残す間隔は `本のコマ数 ÷ その尺の上限`（`phrase_runs` の `cap` と同じ数）。
+    n = len(segs)
+    cap = max(OPENER_MIN_TIMES, n // OPENER_EVERY)
+    spacing = max(OPENER_NEAR + 1, -(-n // cap))
+    drop: set[int] = set()
+    for o, ix in at.items():
+        keep = None
+        for i in ix:
+            if keep is not None and i - keep < spacing:
+                drop.add(i)
+            else:
+                keep = i
+    out = []
+    for i in sorted(drop):
+        s = segs[i]
+        o = opener(s.say)
+        # **札が空なら、落とす前に札を立てます**（声から消える印を、画面へ移す）。
+        # これをしないと、印が耳にも目にも無くなります（オーナー 09/10 12:3x
+        # 「事実なのか前提なのかとか分かるようにした方が良い」）。
+        tag = s.tag or OPENER_TAG.get(o, "")
+        if not tag:
+            continue
+        new = s.say[len(o) + 1:].lstrip("　 ")
+        if not new:
+            continue
+        out.append((i + 1, s.say, new, tag))
+    return out
+
+
+# ---- 説明のパートごとの絵（オーナー 2026-09-16 12:1x・受け取り帳 `751f4947`） ----
+#
+# 原文（**一字も変えないこと**）:
+#
+#   **「説明のパートごとにアニメーションとか画像でイメージしやすくしたらいいと思う。」**
+#
+# **この回に数えたら、絵は 1本に 1枚 でした**（`data/studio/scripts/` の 10本・**API 0単位**）——
+# `render.build(s, image)` が受け取るのは `Path` 1つ で、`slides.slide()` が
+# **200コマ 全部に同じ背景**を敷いていました。**15分 の本で、絵は 1枚。**
+# `show`（大きい字）と `board`（まん中の板）は毎コマ 在りますが、**どちらも字**です。
+# ＝ オーナーが「イメージしやすく」と言った所に、**絵の側の口が 1つも無かった。**
+#
+# **口の形**: `Segment.image` に**部の名**を書くと、そのコマから
+# **次に `image` を書いたコマの手前まで**が、その絵になります（`part_images`）。
+# 書かなければ 1本 1枚 の今までどおり ＝ **既に在る 10本 は 1コマも変わりません**。
+#
+# **なぜ「毎コマ 1枚」ではなく「部ごと」か**: 絵は外の ChatGPT Works が焼いて返す口で
+# （`docs/IMAGE_ORDERS.md`）、**注文は締切の 2時間以上 前に置く**決まりです。
+# 200コマ ぶん注文すると、その本 1つ で毎時の係の 1日ぶんを越えます。
+# **部（＝ 話が変わる所）は、長尺で 5〜10 です**（`Segment.tag` が「前提→決まり→計算→結論」と
+# 変わる所が、その境目そのもの）。
+#
+# **覆る条件**:
+#  (1) 部ごとに変えた本 3本 の維持率（`data/retention.json` の 25%・50% の目盛り）が、
+#      1枚 のままの本を**下回ったら**、絵は害 ＝ この口を使わないこと（口は残す）。
+#  (2) 外の係が部の数の注文を返しきれない回が 3本 続いたら、部の上限（`MAX_PARTS`）を下げること。
+#  (3) `slides.background()` が絵を cover-fit で切るので、部ごとに縦横比が違う絵が来ると
+#      切り取られ方が部ごとに変わります。**1本の中では大きさを揃えること**（注文票の `size`）。
+
+#: 1本で頼んでよい部の数の上限（外の係の 1日ぶんを食わないため。上の (2)）。
+MAX_PARTS = 10
+
+
+def part_images(segments) -> list[str]:
+    """コマごとの**部の名**（空 ＝ 本の背景）。`image` を書いたコマから、次に書いたコマの手前まで。"""
+    out, cur = [], ""
+    for s in segments:
+        if s.image:
+            cur = s.image
+        out.append(cur)
+    return out
+
+
+def parts(segments) -> list[tuple[str, int, int]]:
+    """(部の名, 最初のコマ番号, 最後のコマ番号)。**絵を頼む単位**。"""
+    names = part_images(segments)
+    out: list[tuple[str, int, int]] = []
+    for i, nm in enumerate(names, 1):
+        if out and out[-1][0] == nm:
+            out[-1] = (nm, out[-1][1], i)
+        else:
+            out.append((nm, i, i))
+    return [p for p in out if p[0]]
+
+
+def tag_parts(segments) -> list[tuple[int, int, str]]:
+    """**話が変わる所**（`tag` が「計算」から他へ、または他から変わる所）で切った部の候補。
+
+    **注文を書く回への材料**で、門ではありません —— どこを 1つの部にするかは書き手が決めます。
+    返すのは (最初のコマ, 最後のコマ, その部でいちばん多い札)。
+    """
+    out: list[list] = []
+    for i, s in enumerate(segments, 1):
+        t = s.tag or ""
+        if out and out[-1][2] == t:
+            out[-1][1] = i
+        else:
+            out.append([i, i, t])
+    return [(a, b, t) for a, b, t in out]

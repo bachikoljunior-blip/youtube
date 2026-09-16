@@ -91,12 +91,23 @@ def quota_exceeded(e: BaseException) -> bool:
     return reason == "quotaExceeded" or "quotaExceeded" in m or "exceeded your" in m
 
 
-def image_for(vid: str) -> Path | None:
+def image_for(vid: str, part: str = "") -> Path | None:
+    """本の背景（`<vid>-bg`）、または**部の絵**（`<vid>-<part>`）。無ければ None。"""
     for ext in ("jpg", "png"):
-        p = IMAGES / f"{vid}-bg.{ext}"
+        p = IMAGES / f"{vid}-{part or 'bg'}.{ext}"
         if p.exists():
             return p
     return None
+
+
+def part_images_for(s) -> dict[str, Path]:
+    """その本の**部の名 → 届いている絵**（届いていない部は入りません ＝ 本の背景へ落ちる）。"""
+    out = {}
+    for nm, _a, _b in script.parts(s.segments):
+        p = image_for(s.id, nm)
+        if p:
+            out[nm] = p
+    return out
 
 
 def studio_video_ids(rows: list[dict] | None = None) -> set[str]:
@@ -833,8 +844,14 @@ def cmd_build(a):
     if stale:
         print("  [?]", stale)
     img = image_for(a.id)
-    r = render.build(s, img)
+    pimgs = part_images_for(s)
+    r = render.build(s, img, pimgs)
+    ps_ = script.parts(s.segments)
     print(f"mp4: {r['mp4']}  {r['total']:.1f}秒  背景: {img.name if img else '無し（単色）'}")
+    if ps_:
+        miss = [nm for nm, _a, _b in ps_ if nm not in pimgs]
+        print(f"  部の絵: {len(pimgs)}/{len(ps_)} 届いている"
+              + (f"・まだの部 {'・'.join(miss)}（本の背景で焼きました ＝ **止めません**）" if miss else ""))
     print("コマの秒数:", " ".join(f"{d:.1f}" for d in r["durations"]))
     print(f"目で見る: {r['sheet']}")
     # **秒数の門は形ごと**（2026-09-14 14:2x・`script.FORMS`。`MAX_SECONDS` は `short` の値のまま ＝
@@ -1095,6 +1112,46 @@ def cmd_order_image(a):
     p.write_text(json.dumps(order, ensure_ascii=False, indent=1), encoding="utf-8")
     print("注文を置いた:", p, "（外の毎時セッションが焼く。届いたら build し直す）")
     ledger("image_ordered", a.id, order=oid)
+    order_parts(s, form, size)
+    return 0
+
+
+def order_parts(s, form, size) -> int:
+    """**説明のパートごとの絵を注文する**（オーナー 2026-09-16 12:1x・受け取り帳 `751f4947`）。
+
+    原文: **「説明のパートごとにアニメーションとか画像でイメージしやすくしたらいいと思う。」**
+
+    頼むのは `Segment.image` に**部の名**が書いてある所だけ ＝
+    **書いていない本は 1件も注文しません**（既に在る 10本 は 1コマも変わらない）。
+    `prompt` は、その部のコマの `show` を並べた物を土台にして置きます —— **書き手が直してよい**
+    （注文票は json なので、届く前なら書き換えられます）。
+    """
+    ps = script.parts(s.segments)
+    if not ps:
+        return 0
+    if len(ps) > script.MAX_PARTS:
+        print(f"  !! 部が {len(ps)}（上限 {script.MAX_PARTS}）＝ 外の係の 1日ぶんを越えます。"
+              " まとめてから注文すること（`script.MAX_PARTS` の註）")
+        return 1
+    n = 0
+    for nm, a_, b_ in ps:
+        oid = f"{s.id}-{nm}"
+        q = ORDERS / f"{oid}.json"
+        if q.exists():
+            continue
+        shows = [x.show.replace("\n", " ") for x in s.segments[a_ - 1:b_] if x.show]
+        order = {"id": oid, "asked_at": now_jst().isoformat(timespec="seconds"),
+                 "for": f"{s.date} の本（{s.id}）のコマ{a_}〜{b_}（部「{nm}」）の絵",
+                 "prompt": (f"{s.image_prompt or ''} この場面で説明しているのは: "
+                            f"{'・'.join(shows[:6])}。写実的。文字は入れない。").strip(),
+                 "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+                 "size": size, "format": "jpg",
+                 "out": f"assets/images/{oid}.jpg", "status": "pending"}
+        q.write_text(json.dumps(order, ensure_ascii=False, indent=1), encoding="utf-8")
+        n += 1
+    print(f"  部の注文: {n}件 置いた（部 {len(ps)}・コマ {len(s.segments)}）"
+          if n else f"  部の注文: 置くものなし（部 {len(ps)} は全部 注文ずみ）")
+    ledger("image_parts_ordered", s.id, parts=len(ps), placed=n)
     return 0
 
 
@@ -1694,6 +1751,14 @@ def cmd_trend(a):
         print(mc)
     for line in trend.report(within_h=24 * a.days):
         print(line)
+    # **面（サムネのインプレッション）**（2026-09-16 14:0x・optimizer・Fable 5.1・ultracode）。
+    # `trend` は**再生しか見ていませんでした** —— CTR が 4〜6倍 に上がった同じ窓で
+    # 面が 1/12 に落ち、押された数が 1/4.7 になっている形が、**どの門にも鳴っていません**。
+    # 出どころと覆る条件は `reporting.channel_reach` の註（**Data API 0単位**・報告の台帳だけ）。
+    try:
+        print(reporting.reach_line())
+    except Exception as e:      # 台帳が無い・形が違う回でも `trend` を止めない
+        print(f"**面**: 読めませんでした（{e.__class__.__name__}: {e}）")
     return 0
 
 

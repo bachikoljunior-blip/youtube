@@ -391,3 +391,64 @@ def cum_views(rows: list[dict], video_id: str) -> list[tuple[str, int, int]]:
         c += v
         out.append((d, v, c))
     return out
+
+
+def channel_reach(rows: list[dict], days: int = 7) -> list[tuple[str, int, int, float]]:
+    """**チャンネル ぜんたい**の「報告の日 → 面（インプレッション）・押された数・CTR(%)」。
+
+    `reach_by_day` は 1本ぶんで、**チャンネルの合計を出す口がありませんでした**
+    （2026-09-16 13:5x に足した）。**足した理由は、合計にしか出ない形が在るからです** ——
+    この回に手で足したら:
+
+        日        面      押された   CTR
+        08/28   **2,000**   28     1.40%
+        09/01     1,199     10     0.83%
+        09/05       415     10     2.41%
+        09/08       245     12     **4.90%**
+        09/11     **166**    6     3.61%
+
+    **CTR は 4〜6倍 に上がり、同じ窓で面が 1/12 に落ちています**（掛け算は 28 → 6 ＝ 1/4.7）。
+    ＝ **率が良くなっているのに、量が勝って絶対値が落ちている。**
+    `trend` は再生しか見ていないので、**この形はどの門にも鳴っていませんでした。**
+
+    **この口はショートの配りを見ません**（モジュールの註・実測 面 ÷ 再生 11.3%）——
+    ここに出るのは長尺・ブラウズ側です。**「配られていない」とは読まないこと。**
+
+    **覆る条件**: (1) 報告は 1〜2日 遅れて置かれます ＝ **いちばん新しい 2日 を「落ちた」と読まないこと**
+    （その 2日 はまだ全部の行が来ていない）。(2) 新しい長尺の面がこの表に立ち始めたら、
+    落ちが「古い本が枯れた」のか「抑えられた」のかが分かれます —— そのときに読み直すこと。
+    """
+    imp: dict[str, float] = {}
+    clicks: dict[str, float] = {}
+    for r in latest_rows(rows):
+        d = r.get("date", "")
+        i = float(r.get("video_thumbnail_impressions") or 0)
+        imp[d] = imp.get(d, 0.0) + i
+        clicks[d] = clicks.get(d, 0.0) + i * float(r.get("video_thumbnail_impressions_ctr") or 0)
+    out = [(d, int(v), int(round(clicks[d])), (clicks[d] / v * 100 if v else 0.0))
+           for d, v in sorted(imp.items())]
+    return out[-days:] if days else out
+
+
+def reach_line(rows: list[dict] | None = None, days: int = 7) -> str:
+    """`trend` が毎周 印字する 1行（**API 0単位**・台帳だけ）。`channel_reach` の註が出どころ。"""
+    # **`REACH_STORE` から読むこと**（既定の `STORE` ではありません・2026-09-16 14:0x に踏んだ）——
+    # `latest_rows` の鍵は (日・本) で **報告の種類を見ません**。既定の store には
+    # `channel_basic_a3`（面の欄を持たない側）の行が入っていて `_created` が新しいので、
+    # 同じ (日・本) の面の行を**黙って押し出します** ＝ 表が 7日 とも 0 になります
+    # （この回に実際にそう出た。**赤は出ません** —— 0 は「面が無かった」と同じ字だからです）。
+    rows = load_rows(REACH_STORE) if rows is None else rows
+    tbl = channel_reach(rows, days)
+    if not tbl:
+        return ("**面（サムネのインプレッション）**: 報告が 1行も在りません"
+                "（`python -m studio.cli report --reach` を撃つこと）")
+    head = " → ".join(f"{d[4:]} 面{i}・押{c}・{r:.1f}%" for d, i, c, r in tbl)
+    first, last = tbl[0], tbl[-1]
+    di = (last[1] / first[1]) if first[1] else 0.0
+    dc = (last[3] / first[3]) if first[3] else 0.0
+    return (f"**面（サムネのインプレッション・チャンネル合計・`reporting.channel_reach`・**Data API 0単位**）"
+            f"・最後の報告の日 {last[0][4:]}**: {head}"
+            f"　＝ この窓で **面 ×{di:.2f}・CTR ×{dc:.2f}**。"
+            "**率と量は別の腕です** —— CTR（題とサムネ）が上がっても、面が落ちれば押された数は落ちます。"
+            "**いちばん新しい 2日 は報告がまだ揃っていないので、そこだけで「落ちた」と読まないこと**"
+            "（`channel_reach` の覆る条件 (1)）。**この口はショートの配りを見ません**（同 註）")
