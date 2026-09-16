@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from . import meter
 from .common import JST, now_jst
 
 #: 日枠（`studio/yt.py` 冒頭と同じ数。**写しなので、変えるときは両方**）。
@@ -129,11 +130,48 @@ def dry_observed(rows: list[dict], now: dt.datetime | None = None) -> str | None
     return qx if qx and qx > ok else None
 
 
+#: **1度 置けば ずっと効く安い手**（event の名 → 値段と字）。**まだ 1行も無い物だけを印字します。**
+#:
+#: **2026-09-17 06:4x に足した**（optimizer・Fable 5.1・ultracode）。**踏んだ当のもの**:
+#: 09/16 15:3x の回が `watermark`（登録ボタンの重ね・**公開ずみの 280本 にも後から載る、ただ 1つ の腕**）を
+#: 道具として足し、**21:17 に撃って 403**（日枠）。**そこで消えました** —— `status` のどこにも
+#: 「まだ置いていない」と出る所が無く、**次に枠が戻った周は、置いたかどうかを知る手がありません**。
+#: これは この repo で通算 13回 の形（**やると決めた手を、数える口が無いまま次の周へ渡す**）です。
+#: **縛っているのは登録率**（`trend.rev_deadline_line`: 扉(b) で要る 1.61% 対 いま 0.099% ＝ **16倍**）で、
+#: **透かしはその 16倍 に、公開ずみの本ごと効く唯一の腕**です。値段は **50単位 ＝ 1本 上げる 1,650 の 1/33**。
+#:
+#: **覆る条件**: (1) 撃って `watermark_set` が 1行 入ったら、この行はひとりでに消えます（数える口がそれ）。
+#: (2) 同じ形の「1度きりの安い手」が増えたら ここへ足すこと —— **3つ を越えたら**、
+#: 並べる場所を `status` から `docs/METHOD.md` の一覧へ移すこと（毎周 読む行を増やさない）。
+#: (3) 透かしを置いて **登録率が 2週 動かなかったら**、腕はここではありません ＝ この行を消して
+#: `sub_rate_line` の側（本ごとの登録率）へ戻すこと。
+ONE_SHOT = {
+    "watermark_set": (50, "**透かし（登録ボタンの重ね）がまだ 1度も置かれていません**"
+                          "（`python -m studio.cli watermark`・**50単位**）＝ "
+                          "**公開ずみの本にも後から載る、ただ 1つ の腕**"
+                          "（縛っているのは登録率 ＝ `trend.rev_deadline_line` の 16倍）"),
+}
+
+
+def one_shot_lines(rows: list[dict]) -> list[str]:
+    """**まだ 1度も撃っていない、1度きりの安い手**（`ONE_SHOT` の註・**API 0単位**）。"""
+    done = {r.get("event") for r in rows}
+    return [f"    未着手: {txt}" for ev, (_u, txt) in ONE_SHOT.items() if ev not in done]
+
+
 def lines(rows: list[dict], now: dt.datetime | None = None) -> list[str]:
     """印字（**判定はしない** ＝ 数を並べるだけ・この module の註）。"""
     s = spent(rows, now)
     nxt = window_start(now) + dt.timedelta(days=1)
     dry = dry_observed(rows, now)
+    # **実測**（`studio/meter.py`・撃った所で 1本ずつ数えた綴じ）。推計（`spent`）と並べます ——
+    # 推計は「うちが撃った物」しか数えられないので、**撃っていないのに尽きている**形が出ません。
+    since = window_start(now).isoformat(timespec="seconds")
+    try:
+        real = meter.line(since, DAY_UNITS)
+        outside = meter.outside_line(since, DAY_UNITS, dry)
+    except Exception:  # noqa: BLE001  数えが転んでも周を止めない（`cli.main` の前置きと同じ決め）
+        real = outside = None
     if dry:
         # **実測が推計に勝つ側**（`dry_observed` の註）。**「あと N本 出せる」を出さないこと** ——
         # 出せない周に出せると書くのが、この回が踏んだ当のものです。
@@ -143,6 +181,11 @@ def lines(rows: list[dict], now: dt.datetime | None = None) -> list[str]:
         out.append(f"    台帳の推計は 使った {s['total']:,} / {DAY_UNITS:,}（残り {s['left']:,}）ですが、"
                    "**推計は過小で、実測が勝ちます**（覆る条件 (1)）。"
                    "撃つ前に 1単位 の口で試すこと ——**1,650単位 の `schedule` から試さないこと**")
+        if real:
+            out.append(real)
+        if outside:
+            out.append(outside)
+        out += one_shot_lines(rows)
         return out
     out = [f"**日枠**（`budget`・**0単位**・{s['since'][5:16]} JST から・戻るのは {nxt:%m/%d %H:%M} JST）: "
            f"使った **{s['total']:,}** / {DAY_UNITS:,} ・ 残り **{s['left']:,}** "
@@ -154,5 +197,9 @@ def lines(rows: list[dict], now: dt.datetime | None = None) -> list[str]:
         out.append("    !! **残りが測る側の取り分を割っています** ＝ この周は `measure`／`status`／`analytics` が"
                    "落ちる側（403）。**測れない周は `trend` に数が 1つ も入らず、GOAL (4-i) の枝の判定が止まります**"
                    "（`studio/budget.py` の註）。判定はこの周が決めること")
-    out.append("    ※ 台帳に `units` を書かない口の分は入っていません ＝ **この数は過小**（覆る条件 (1)）")
+    if real:
+        out.append(real)
+    out.append("    ※ 上の推計は 台帳に `units` を書かない口を数えません ＝ **過小**（覆る条件 (1)）。"
+               "**実測の行が在れば、そちらが本当の消費です**（`studio/meter.py`）")
+    out += one_shot_lines(rows)
     return out

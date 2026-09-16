@@ -74,6 +74,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from . import meter
 from .common import env, now_jst
 
 #: 本ごとに引く数（`dimensions=video`）。**並びが台帳の欄の名前になります。**
@@ -89,6 +90,9 @@ _svc = None
 def svc():
     global _svc
     if _svc is None:
+        # **別の枠**（Data API 0単位）ですが、行は残します —— 綴じを見て
+        # 「Data API を撃っていない周」と「何も撃っていない周」を取り違えないため（`meter.OTHER_APIS`）。
+        meter.install()
         creds = Credentials(token=None, refresh_token=env("YT_REFRESH_TOKEN"),
                             token_uri="https://oauth2.googleapis.com/token",
                             client_id=env("YT_CLIENT_ID"), client_secret=env("YT_CLIENT_SECRET"))

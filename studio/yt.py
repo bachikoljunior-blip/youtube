@@ -15,6 +15,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+from . import meter
 from .common import JST, env, now_jst
 
 _svc = None
@@ -56,6 +57,9 @@ def token_rejected_words(err: Exception) -> str:
 def svc():
     global _svc
     if _svc is None:
+        # **撃った物を、撃った所で数える**（`studio/meter.py` 冒頭・**API 0単位**）。
+        # ここに置くのは、Data API の口がここ 1つ しかないからです（`svc()` を通らない呼びは無い）。
+        meter.install()
         creds = Credentials(token=None, refresh_token=env("YT_REFRESH_TOKEN"),
                             token_uri="https://oauth2.googleapis.com/token",
                             client_id=env("YT_CLIENT_ID"), client_secret=env("YT_CLIENT_SECRET"))
