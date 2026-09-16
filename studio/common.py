@@ -7,7 +7,42 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-WORK = ROOT / "work"            # 生成物（gitignore）
+
+
+def _shared_root(root: Path) -> Path:
+    """worktree で走っていても、**本体の checkout** を指す（`work/` を周で分けないため）。
+
+    サブは `<本体>/.claude/worktrees/agent-xxxx` で走ります。`ROOT` をそのまま使うと、
+    `work/` が **周ごとに別**になり、次の 3つ が起きます（2026-09-16 15:5x に数えた）:
+
+      1. **焼いた物が、その周で上げられなければ捨てられます。**
+         この回は日枠が尽きていて（戻るのは 16:00 JST）、焼いた 3本 を 1本も上げられません。
+         次の周は、**同じ本を最初から焼き直します**（1本 6〜10分・Google TTS の代金つき）。
+      2. **`seg-<sha>.wav` の憶えが効きません。** TTS は本文の sha で憶えますが、
+         憶えている場所が周ごとに別なので、**1コマも当たりません** ——
+         「1文だけ直して焼き直す」が、毎回 全コマの合成になります。
+      3. **貯まります。** この回に数えたら worktree **42個・うち `work/` を持つ 12個・合計 11GB**。
+
+    `.claude/worktrees/<名>` の手前が本体です。その形でなければ `root` をそのまま返します
+    （検査・本体での実行・別の置き方で壊れない）。**環境変数 `STUDIO_WORK` があればそれが勝ちます。**
+
+    **覆る条件**: (1) 1周に 2体 以上 立てる形へ戻したら、同じ本を同時に焼く道が開きます ——
+    そのときは `work/<id>` に周の印を足すか、この共有をやめること
+    （いまは **1周 1体**・オーナー 2026-09-14 20:4x）。
+    (2) 古い周の mp4 を「新しい」と読んだ回が出たら、それは共有のせいではなく
+    `script.build_sig` の穴です（`cmd_schedule` は `built_sig` と突き合わせてから上げます）——
+    直すのは指紋のほう。
+    """
+    parts = root.parts
+    if ".claude" in parts and "worktrees" in parts:
+        i = parts.index(".claude")
+        if parts[i + 1:i + 2] == ("worktrees",):
+            return Path(*parts[:i])
+    return root
+
+
+#: 生成物（gitignore）。**周をまたいで共有します**（`_shared_root` の註）。
+WORK = Path(os.environ.get("STUDIO_WORK") or (_shared_root(ROOT) / "work"))
 DATA = ROOT / "data" / "studio"  # 台帳（commit する）
 LEDGER = DATA / "ledger.jsonl"
 #: **本物の台帳の道を、読み込みのときに凍らせる**（`_ledger_blocked` の註）。
