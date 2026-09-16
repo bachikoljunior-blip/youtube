@@ -2,14 +2,18 @@
 
 固定 2（期限内にできるか → できる以外なら やり方を疑え）で疑った先:
 **手は「どう作るか」に寄り、「どの族で作るか」は毎周 印字されるだけで、どこにも縛られていなかった。**
-同じ corpus・同じ門（n≧10本）で、族の **床（下から1/4）は 上と下で 5,087倍** 開きます
-（中央値の 3,187倍 より大きい）＝ **作りでは埋まらない差**。
+同じ corpus・同じ門（n≧10本）で、族の **床（下から1/4）は 生では 上と下で 5,087倍** 開きます。
+**ただし その生の比は族の効きではありません**（15:0x に同じ回が撃って外した）——
+**同じチャンネルの中で比べると 2.35倍**（2族 以上 を持つ口 29/218・上が大きい 23/29）で、
+残りは口の大きさです（`title_shape` の「生の比を読むな」と同じ罠・`family_within_channel`）。
 決めと数と覆る条件は `studio/peers.FAMILY_FLOOR_Q` の註・JOURNAL 2026-09-16 14:4x。
 
 **陽性対照**（撃って落とした）:
  * `families()` の `floor` を `median` に替える → `test_床は中央値ではなく下から4分の1` が落ちる
  * `family_match()` の `all()` を `any()` に替える → `test_族は全部の語が当たった本だけ` が落ちる
  * `door_b_views()` の維持率を 1.0 に固定する → `test_扉bの回数は尺と維持率で動く` が落ちる
+ * `family_within_channel()` の `pos[hi] == pos[lo]` の skip を外す（＝ 1族 の口が 1.00 を投げ込む）
+   → `test_同じ口の中でだけ族を比べる` が落ちる（**撃って落とした**）
 """
 from studio import peers
 
@@ -75,3 +79,33 @@ def test_lintの註は長尺だけ_止めない():
     S.form = "long"
     notes = cli._family_floor_notes(S())
     assert len(notes) == 1 and "扉(b)" in notes[0]
+
+
+def test_同じ口の中でだけ族を比べる():
+    """**1族 しか持たない口は数えない**（数えると自分で自分を割って 1.00 になる ＝ 退化）。"""
+    rows = []
+    # 口A: 2族 を持つ（上の族が 10倍）
+    rows += [{"id": f"a{i}", "views": 1000, "form": "long", "q": "年金 手取り いくら",
+              "channel": "A", "secs": 900} for i in range(12)]
+    rows += [{"id": f"b{i}", "views": 100, "form": "long", "q": "医療費控除 いくら戻る",
+              "channel": "A", "secs": 900} for i in range(12)]
+    # 口B: 1族 しか持たない（**数に入ってはいけない**）
+    rows += [{"id": f"c{i}", "views": 9, "form": "long", "q": "医療費控除 いくら戻る",
+              "channel": "B", "secs": 900} for i in range(3)]
+    w = peers.family_within_channel(rows)
+    assert w["channels"] == 2 and w["n_channels"] == 1
+    # **`total` が 1 であること**が、この検査の当のもの ——
+    # skip を外すと 口B が 1.00 を投げ込んで `total` が 2 になり、比の中央が 5.5 へ薄まります
+    assert w["total"] == 1 and w["up"] == 1
+    assert w["ratio"] == 10.0
+
+
+def test_床の行は生の比を族の効きと読ませない():
+    rows = ([{"id": f"a{i}", "views": 200000, "form": "long", "q": "年金 手取り いくら",
+              "channel": f"c{i}", "secs": 900} for i in range(12)]
+            + [{"id": f"b{i}", "views": 5, "form": "long", "q": "医療費控除 いくら戻る",
+                "channel": f"d{i}", "secs": 900} for i in range(12)])
+    line = peers.family_floor_line(rows)
+    # 生の比の隣に、必ず「同じチャンネルの中で」の断りが立つこと
+    assert "生の比を「族の効き」と読まないこと" in line
+    assert "同じチャンネルの中で比べると" in line

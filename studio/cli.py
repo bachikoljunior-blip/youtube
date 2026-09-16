@@ -854,11 +854,12 @@ def _family_floor_notes(s) -> list[str]:
                 f" ＝ **天井が低いのではなく、測っていない**という意味です。"
                 f" 扉(b) は {need:,}回 要ります。**族の床は `trend` の「族の「床」」の行**"
                 f"（判定は立ったサブ）"]
-    top = hit[0]
-    mark = "**越えます**" if top["floor"] >= need else "**越えません**"
+    top, bot = hit[0], hit[-1]
     return [f"族 **{top['q']}**・床（下から1/4）**{top['floor']:,.0f}回**・中央 {top['median']:,.0f}回"
-            f"（{top['n']}本）。扉(b) は {need:,}回 ＝ この族の床だけで {mark}"
-            + ("" if len(hit) == 1 else f"（ほかに入る族 {len(hit) - 1}つ）")]
+            f"（{top['n']}本）"
+            + ("" if len(hit) == 1 else f"・いちばん下の族は {bot['q']} 床 {bot['floor']:,.0f}回")
+            + f"。**族を変えて得られるのは 2.35倍 です**（生の比 ではない ＝ `peers.family_within_channel`）。"
+              f" 扉(b) は {need:,}回 で、**そこは族では届きません**（口の大きさの側・`docs/GOAL.md` (4-j)）"]
 
 
 def cmd_build(a):
