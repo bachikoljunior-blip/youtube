@@ -83,10 +83,67 @@ def spent(rows: list[dict], now: dt.datetime | None = None) -> dict:
             "left": DAY_UNITS - total, "uploads_left": max((DAY_UNITS - total - RESERVE) // UPLOAD_UNITS, 0)}
 
 
+#: **撃って通った証拠**になる event（その行が在る ＝ その刻に Data API が通った）。
+#: `analytics_*` は入れません —— あちらは**別の枠**（`cmd_analytics`「**Data API 0単位**」）で、
+#: Data API が尽きていても通るので、「通った証拠」にすると尽きているのを見落とします。
+LIVE_EVENTS = {
+    "channel", "scheduled", "measured", "zero_probe", "views_over", "rethumb", "retitled",
+    "meta_updated", "meta_update", "meta_repaired", "replied", "watermark_set", "unscheduled",
+    "ready_checked", "cold_read", "viewer_comment",
+}
+
+
+def dry_observed(rows: list[dict], now: dt.datetime | None = None) -> str | None:
+    """**実測で尽きているか** ——尽きているなら、その 403 の刻を返す（**API 0単位**）。
+
+    **2026-09-16 21:2x に足した**（optimizer・Fable 5.1・ultracode）。**踏んだ当のもの**:
+    この回の `budget.lines` は「使った **0** / 10,000・残り **10,000** ＝ **あと 5本 出せる**」と
+    印字し、その **数十秒後**に `watermark`（50単位）も `channels.list`（**1単位**）も
+    **403 quotaExceeded** で落ちました（`reason: quotaExceeded`・撃って確かめた）。
+    ＝ **この module の覆る条件 (1)（台帳は過小）が、いちばん高い所で出ました** ——
+    「あと 5本 出せる」は、**1単位 も撃てない周**に出ていた字です。
+
+    **推計（`spent`）と実測（403）が食い違ったら、実測が勝ちます。**
+    見るのは `spent` の残りではなく「**いまの枠の中で、最後に通った刻より後に 403 が在るか**」
+    ——通った刻より後の 403 だけを見るので、枠が戻れば（次に 1本 通った瞬間に）**ひとりでに消えます**。
+
+    **覆る条件**:
+     (1) 403 の後に `LIVE_EVENTS` の行が出ているのに、この関数が「尽きている」と言い続けたら、
+         その event が `LIVE_EVENTS` に無い ＝ 足すこと（**通った証拠の取りこぼし**）。
+     (2) 逆に、**通っていないのに** `LIVE_EVENTS` の行を書く口が出たら（台帳に先に書いて
+         それから撃つ口）、その event を外すこと。
+     (3) `quotaExceeded` 以外の理由の 403 を `cli.quota_exceeded` が拾うようになったら
+         （あちらの覆る条件 (1)）、この関数は「日枠」ではない物まで日枠と読みます ＝ そのとき分けること。
+    """
+    lo = window_start(now).isoformat(timespec="seconds")
+    qx = ok = ""
+    for r in rows:
+        at = r.get("at") or ""
+        if not at or at < lo:
+            continue
+        ev = r.get("event")
+        if ev == "quota_exceeded":
+            qx = max(qx, at)
+        elif ev in LIVE_EVENTS:
+            ok = max(ok, at)
+    return qx if qx and qx > ok else None
+
+
 def lines(rows: list[dict], now: dt.datetime | None = None) -> list[str]:
     """印字（**判定はしない** ＝ 数を並べるだけ・この module の註）。"""
     s = spent(rows, now)
     nxt = window_start(now) + dt.timedelta(days=1)
+    dry = dry_observed(rows, now)
+    if dry:
+        # **実測が推計に勝つ側**（`dry_observed` の註）。**「あと N本 出せる」を出さないこと** ——
+        # 出せない周に出せると書くのが、この回が踏んだ当のものです。
+        out = [f"**日枠**（`budget`・**0単位**・{s['since'][5:16]} JST から・戻るのは {nxt:%m/%d %H:%M} JST）: "
+               f"**実測で尽きています**（{dry[5:16]} JST に 403 quotaExceeded・"
+               f"それより後に通った口が 1つ もありません）。**出せる本は 0本**"]
+        out.append(f"    台帳の推計は 使った {s['total']:,} / {DAY_UNITS:,}（残り {s['left']:,}）ですが、"
+                   "**推計は過小で、実測が勝ちます**（覆る条件 (1)）。"
+                   "撃つ前に 1単位 の口で試すこと ——**1,650単位 の `schedule` から試さないこと**")
+        return out
     out = [f"**日枠**（`budget`・**0単位**・{s['since'][5:16]} JST から・戻るのは {nxt:%m/%d %H:%M} JST）: "
            f"使った **{s['total']:,}** / {DAY_UNITS:,} ・ 残り **{s['left']:,}** "
            f"＝ あと **{s['uploads_left']}本** 出せる（1本 {UPLOAD_UNITS}単位・測る側に {RESERVE} 残す）"]

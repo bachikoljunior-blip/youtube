@@ -1240,6 +1240,49 @@ def cmd_thumb(a):
     return 0
 
 
+def reupload_cost(rows: list[dict], sid: str) -> tuple[int, int]:
+    """この台本を**もう何回 上げたか**と、**上げ直しに使った単位**（**API 0単位**・台帳だけ）。
+
+    **2026-09-16 21:3x に足した**（optimizer・Fable 5.1・ultracode）。**撃って数えた当のもの**:
+
+        台帳の `scheduled` 19台本 のうち **10台本 が 2回以上**。捨てた版（`replaced` された video）は
+        **13本 ＝ 21,450単位 ＝ 日枠 2.1日分**。いちばん多い 1台本（`2026-09-15-kurisage-ushinau-3tsu`）は
+        **5回**（23:13→23:52→01:07→02:16→04:14）＝ **8,250単位 ＝ 日枠 0.83日 を 1本 に使った**。
+        09/14 16:00 の枠だけで `scheduled` **31,350単位**（日枠 10,000 の **3.1倍**）。
+        **＝ 09/15・09/16 に口が閉じ続けている理由は、ここです。**
+
+    **なぜ起きるか（機械の欠陥ではなく、値段の見えない手順）**: 固定その2 の 3
+    「次の枠までの時間を、その枠で出す 1本 を改善し続けることに使う」（**オーナーは 3 を外していません**）を、
+    いまの手順は**上げ直し**で実装しています。改善が台本に入ると音と絵が変わるので `build` をやり直し、
+    `schedule --replace` で**新しい video を 1本 作り直す ＝ 1,650単位**。改善 1回 の値段が 1,650単位 で、
+    **その値段がどこにも印字されていませんでした。**
+
+    **安い側**: 改善が**題・説明欄・サムネだけ**なら、上げ直さずに **50単位**（`retitled`／`rethumb`）で済みます。
+    **本当に音が変わる改善だけが 1,650単位 の側です。**
+
+    **数え方**: 同じ `video_id` の 2行目 は `reschedule`（刻を動かしただけ・50単位）で、
+    上げ直しではありません ＝ **`video_id` の種類で数えます**（行数で数えると 15 と出て、2本 多い）。
+
+    **覆る条件**:
+     (1) `schedule` が「新しい video を作らずに、在る video の mp4 を差し替える」口を持ったら
+         （YouTube にその口は**在りません** —— 2026-09-16 現在 `videos.insert` のみ）、この数え方は要りません。
+     (2) 上げ直しの門（`cmd_schedule`）が `--anyway` ばかりで通される回が **3回** 続いたら、
+         門の置き場所が違う ＝ 止める先は `schedule` ではなく**上げる刻**（改善が閉じてから上げる）側。
+     (3) **上げる刻を遅らせる案は、この回は撃っていません。** 上げてから公開までに YouTube の処理
+         （`ready_checked`）が要るので、**枠の直前に上げると間に合わない側**があります ＝
+         遅らせるなら、その処理にかかる実測（台帳 `ready_checked`）を先に引くこと。
+    """
+    seen: set[str] = set()
+    for r in rows:
+        if r.get("event") != "scheduled" or r.get("id") != sid:
+            continue
+        v = r.get("video_id")
+        if v:
+            seen.add(str(v))
+    n = len(seen)
+    return n, max(n - 1, 0) * budget.UPLOAD_UNITS
+
+
 def cmd_schedule(a):
     s = script.load(a.id)
     mp4 = workdir(a.id) / f"{a.id}.mp4"
@@ -1282,9 +1325,34 @@ def cmd_schedule(a):
             print("  → 台本の `title` を台帳の題に書き換えてから撃ち直すこと"
                   "（旧の題は台帳 `retitled` の `old_title` に在る ＝ 0単位で戻せます）")
             return 1
+    # **上げ直しの値段を、上げる前に出す**（2026-09-16 21:3x・optimizer・Fable 5.1・ultracode）。
+    # 数と覆る条件は `reupload_cost` の註（**上げ直し 13本 ＝ 21,450単位 ＝ 日枠 2.1日分**）。
+    rows = ledger_rows()
+    done, spent_here = reupload_cost(rows, a.id)
+    if done:
+        print(f"!! この台本は**もう {done}回 上げてあります**（上げ直しに使った **{spent_here:,}単位**）。"
+              f"これで {done + 1}回目 ＝ さらに **{budget.UPLOAD_UNITS:,}単位**")
     if a.dry_run:
         print(f"[dry-run] 上げる: {mp4.name} → 公開 {at:%m/%d %H:%M} JST・差し替え {a.replace or '無し'}・題「{s.title}」")
         return 0
+    # **門は「上げ直し」にだけ掛ける**（`reupload_cost` の註の 2）——
+    #   **1本目 は止めません**（`CLAUDE.md` 4「投稿が途切れるのが最大の損失」）。
+    #   上げ直しは、**前の版がもう予約に座っていて、出る本が 1本 も減らない**側なので、
+    #   落としても失うのは「その版の改善」だけ。対して枠を食えば、**あすの新しい 1本**が出せません。
+    if done and not a.anyway:
+        dry = budget.dry_observed(rows)
+        left = budget.spent(rows)["left"]
+        if dry:
+            print(f"  → **やめました**（{dry[5:16]} JST に 403・実測で日枠が尽きています ＝ この 1,650単位 は"
+                  "**撃っても通りません**）。前の版は予約に座ったままで、出る本は減りません。"
+                  "**`--anyway` で撃てます**")
+            return 1
+        if left < budget.UPLOAD_UNITS + budget.RESERVE:
+            print(f"  → **やめました**（残り {left:,}単位 ＜ 1本 {budget.UPLOAD_UNITS:,} ＋ 測る側 {budget.RESERVE}）。"
+                  "**改善に、あすの 1本 の枠を食わせないこと。** 前の版は予約に座ったままです。"
+                  "**題・説明・サムネだけの直しなら 50単位 で済みます**（`retitle`／`rethumb`）。"
+                  "**`--anyway` で撃てます**")
+            return 1
     vid = yt.upload(mp4, s.title, s.description, s.tags, at)
     print("上げた:", vid, f"公開 {at:%m/%d %H:%M} JST")
     first = thumbnail_for(s, a.id)
@@ -2218,6 +2286,9 @@ def main(argv=None):
     sc = sub.add_parser("schedule"); sc.add_argument("id"); sc.add_argument("--at", required=True)
     sc.add_argument("--replace", default=""); sc.add_argument("--force", action="store_true")
     sc.add_argument("--dry-run", action="store_true")
+    # **上げ直しの門の鍵**（`reupload_cost` の註・`--force` とは別の問い）。
+    sc.add_argument("--anyway", action="store_true",
+                    help="日枠が足りなくても上げ直す（1本 1,650単位・**あすの 1本 を食います**）")
     rs = sub.add_parser("reschedule"); rs.add_argument("id"); rs.add_argument("--at", required=True)
     rs.add_argument("--force", action="store_true"); rs.add_argument("--dry-run", action="store_true")
     sub.add_parser("measure")
