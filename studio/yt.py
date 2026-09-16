@@ -279,6 +279,46 @@ def set_watermark(png: Path | None = None, offset_ms: int = 15000,
                            media_body=MediaFileUpload(str(png), mimetype="image/png")).execute()
 
 
+def set_channel_title(title: str) -> dict:
+    """**チャンネルの題を変える**（`channels.list` **1単位** ＋ `channels.update` **50単位**）。
+
+    **2026-09-17 02:xx に足した**（optimizer・Fable 5.1・ultracode）。**この回は撃っていません**
+    —— 日枠が尽きていて、戻るのは 09/17 16:00 JST。
+
+    **なぜ ここが大きいか**: 扉(b) が要るのは **11.1人/日**（`trend.rev_deadline`）。
+    corpus（肩書きを外した 161口・齢<1000日）を **名前 × 制度名** で割ると、
+    **うちの升（名前なし ＋ 制度名なし・46口）の中央は 1.6人/日**、隣の 2升 は **9.7／11.9**、
+    両方の升は **78.8** です（`peers.title_identity`）。
+    **＝ 題は「配りの腕」ではなく、門の分母そのものに乗っています。**
+    **50単位 ＝ 本 1本 の 1/33** で、**公開ずみの在庫 全部の「終わった後に見える身元」**が変わります。
+
+    **`brandingSettings` は読んでから書くこと** —— `channels.update` は渡した部を
+    **丸ごと置き換えます**。読まずに `{"channel": {"title": ...}}` だけ書くと、
+    `keywords`・`description`・`unsubscribedTrailer` が**黙って消えます**（紹介動画 `CdX2oIb7BG8` は
+    転換 2.07/1,000 ＝ チャンネル全体の 6.5倍 を出している面・GOAL (4-p) 3 (a)）。
+
+    **返すのは `{"before", "after", "ok"}`** ——**打った題を読み返します**（`reschedule` と同じ形・
+    2026-09-16 23:3x に 2本 が黙って落ちた側の型）。`ok` が False なら台帳に書かないこと。
+
+    **覆る条件**:
+     (1) YouTube は題の変更を **14日 に 3回** までしか通しません。
+         **外したら 14日 戻せません** ＝ 撃つ前に `peers.title_identity_line` の升を読むこと。
+     (2) 変えたら `config/channel.yaml` の `channel.name` を**同じ回に**直すこと ——
+         `trend._channel_name` はそちらを読むので、ずれると**うちではない題**を judge します。
+     (3) 変えた日を `docs/GOAL.md` (4-r) に刻み、**前後 14日 の 登録/日** を並べること
+         （`peers.title_identity` の覆る条件 (1) ＝ 相関を因果に変える唯一の手）。
+    """
+    ch = svc().channels().list(part="brandingSettings", mine=True).execute()["items"][0]
+    bs = ch.get("brandingSettings") or {}
+    before = (bs.get("channel") or {}).get("title", "")
+    bs.setdefault("channel", {})["title"] = title
+    svc().channels().update(part="brandingSettings",
+                            body={"id": ch["id"], "brandingSettings": bs}).execute()
+    back = svc().channels().list(part="brandingSettings", mine=True).execute()["items"][0]
+    after = ((back.get("brandingSettings") or {}).get("channel") or {}).get("title", "")
+    return {"before": before, "after": after, "ok": after == title}
+
+
 def update_meta(video_id: str, title: str, description: str, tags: list[str]) -> None:
     """題・説明欄・tags だけを直す（videos.update 50単位。本は上げ直さない・予約もそのまま）。
     09/07 05:5x（hourly）: 予約ずみの本の説明欄の1文（実の誤り）を、ID を変えずに直すために足した。"""

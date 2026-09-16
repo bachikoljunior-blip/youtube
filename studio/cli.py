@@ -2292,6 +2292,47 @@ def cmd_demand(a):
     return 0
 
 
+def cmd_rename_channel(a):
+    """**チャンネルの題を変える**（`channels.list` 1単位 ＋ `channels.update` 50単位）。
+
+    なぜ・覆る条件は `yt.set_channel_title` の註と `peers.title_identity_line`。
+    **`config/channel.yaml` の `channel.name` を同じ回に直します** ——
+    直さないと `trend._channel_name` が**うちではない題**を judge します。
+    **`--dry-run` は升だけ見る（0単位）。**
+    """
+    from studio import peers
+    new = (a.title or "").strip()
+    if not new:
+        print("題が空です")
+        return 1
+    print(peers.title_identity_line(new, need_spd=None))
+    named, topic = bool(peers.PERSONA_RE.match(new)), bool(peers.TOPIC_NARROW_RE.search(new))
+    if peers.CRED_RE.search(new):
+        print("  !! 肩書き（人間の経歴）の語が入っています ＝ `config/channel.yaml` 08/30 が閉じた腕。"
+              "**収益化不可として名指しされている形**です（`peers.CRED_RE`）")
+        return 1
+    if not (named and topic):
+        print(f"  !! 目当ての升（名前 ＋ 制度名）に入っていません（名前 {named}・制度名 {topic}）")
+        if not a.anyway:
+            print("  それでも撃つなら `--anyway`")
+            return 1
+    if a.dry_run:
+        print("  （`--dry-run` ＝ 変えていません・**0単位**）")
+        return 0
+    r = yt.set_channel_title(new)
+    print(f"  `{r['before']}` → `{r['after']}`  読み返し {'通った' if r['ok'] else '**落ちた**'}")
+    if not r["ok"]:
+        print("  !! 打った題が読み返せません ＝ 台帳にも config にも書きません（`reschedule` と同じ型）")
+        return 1
+    cfg = Path("config/channel.yaml")
+    txt = cfg.read_text(encoding="utf-8")
+    cfg.write_text(re.sub(r'(?m)^(\s*name:\s*)".*"$', lambda m: m.group(1) + f'"{new}"', txt, count=1),
+                   encoding="utf-8")
+    print(f"  `config/channel.yaml` の `channel.name` も直しました。"
+          f"**変えた日を `docs/GOAL.md` (4-r) に刻み、前後 14日 の 登録/日 を並べること**")
+    return 0
+
+
 def cmd_watermark(a):
     """**チャンネルの透かし（登録ボタンの重ね）を置く**（`watermarks.set` 50単位）。
 
@@ -2342,6 +2383,12 @@ def main(argv=None):
     wm.add_argument("--offset-ms", type=int, default=15000, dest="offset_ms",
                     help="本の頭から出るまで（既定 15000 ＝ 15秒）")
     wm.add_argument("--dry-run", action="store_true", help="絵を確かめるだけ（**0単位**）")
+    # **チャンネルの題**（2026-09-17 02:xx・`yt.set_channel_title` / `peers.title_identity` の註）。
+    # **門が要る 11.1人/日 に対し、うちの升の中央は 1.6人/日**（名前なし ＋ 制度名なし・46口）。
+    rc = sub.add_parser("rename-channel")
+    rc.add_argument("title")
+    rc.add_argument("--dry-run", action="store_true", help="升だけ見る（**0単位**）")
+    rc.add_argument("--anyway", action="store_true", help="目当ての升の外でも撃つ")
     tr = sub.add_parser("trend"); tr.add_argument("--days", type=float, default=3)
     tr.add_argument("--by-day-count", action="store_true")
     an = sub.add_parser("analytics"); an.add_argument("--force", action="store_true")

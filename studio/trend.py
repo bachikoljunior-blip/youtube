@@ -2491,6 +2491,17 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         #  **決めと覆る条件は `peers.persona` の註 ＝ ここへ数を写さないこと。**
         #  題は `config/channel.yaml` の `channel.name` から（**API 0単位**）。
         out.append(_peers.persona_line(_channel_name()))
+        # **名前 × 制度名 の 2×2**（2026-09-17 02:xx に足した）—— 上の `persona_line` は
+        #  **名前の 1軸 だけ**で割り、「転換は齢を揃えて 1.2倍 ＝ 名前は転換の腕ではない」で
+        #  棚に上げました（GOAL (4-p) 2）。**読んだ列が違いました** —— 扉(b) の通貨は
+        #  転換率ではなく **登録/日** で、そこでは 名前 1軸 で 7.4倍・制度名と掛けて **49倍** 開きます。
+        #  **門が要る 11.1人/日 を、うちの升の中央（1.6）は 7倍 下回り、隣の 2升 はどちらも越えます。**
+        #  **決めと覆る条件は `peers.title_identity_line` の註と GOAL (4-r) ＝ ここへ数を写さないこと。**
+        try:
+            _need = rev_deadline(rows).get("subs_need_per_day")
+        except Exception:  # noqa: BLE001
+            _need = None
+        out.append(_peers.title_identity_line(_channel_name(), need_spd=_need))
     except Exception as e:  # noqa: BLE001
         out.append(f"**門の先（月20万）の距離**は引けなかった: {str(e)[:80]}")
     out.append(sub_rate_line(rows))

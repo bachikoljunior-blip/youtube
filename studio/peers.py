@@ -712,6 +712,138 @@ def persona_line(mine_title: str = "") -> str:
     return "\n".join(out)
 
 
+# ---------------------------------------------------------------------------
+# **題の身元 ＝ 名前 × 制度名**（`title_identity`・2026-09-17 02:xx・optimizer・Fable 5.1・ultracode）
+# ---------------------------------------------------------------------------
+
+#: **チャンネルの題が「何の口か」を名指ししているか。** `年金`・`退職金`・`給付金` のような
+#: **制度の名**であって、`お金`・`マネー`・`家計` のような広い語ではありません
+#: （その2つは下の `TOPIC_BROAD_RE` で分けて数えます ——
+#:  **分けないと、うちの `お金と仕事の教科書` が「題材が在る」側に入ります**）。
+TOPIC_NARROW_RE = re.compile(
+    r"(年金|退職金|老後|シニア|定年|相続|介護|給付金|失業|社会保険|確定申告|控除|住宅ローン|NISA|iDeCo)")
+TOPIC_BROAD_RE = re.compile(r"(お金|マネー|家計|節約|貯金|貯蓄|投資|資産|税金|節税|保険|副業|転職|稼)")
+
+#: 升に人を置く床（これを下回る升は数を出さない ＝ 1口 の外れ値で升が動くのを塞ぐ）。
+CELL_MIN_CH = 5
+
+
+def title_identity(today=None) -> dict:
+    """**名前（`PERSONA_RE`）× 制度名（`TOPIC_NARROW_RE`）の 2×2**（**API 0単位**）。
+
+    **なぜ要るか（2026-09-17 02:xx に撃って出た）**: `persona`（09/16 19:xx）は
+    **名前の 1軸 だけ**で割って「転換は齢を揃えると 1.2倍 しか動かない ＝
+    名前は転換の腕ではない」と読み、**そこで棚に上げました**（`docs/GOAL.md` (4-p) 2）。
+    **読んだ列が違いました。** 扉(b) の通貨は転換率ではなく **登録/日** で、
+    その列では 名前 1軸 でも **7.4倍**、**制度名と掛け合わせると 49倍** 開きます。
+
+        齢<1000日・肩書きを外した 161口 の中        ch   転換中央  登録/日中央    1本中央
+        名前 ＋ 制度名                              5    9.37     **78.8**    58,041
+        名前 ＋ 制度名なし                          11    5.48       11.9     22,462
+        名前なし ＋ 制度名                          11    5.63        9.7     16,487
+        **名前なし ＋ 制度名なし（＝ うちの居る升）**  46    3.97      **1.6**     1,410
+
+    **門が要るのは 11.1人/日**（`trend.rev_deadline`）。
+    **うちの升の中央は 1.6人/日 で、うちはその半分（0.80）です** ＝
+    **この升に居るかぎり、期限内に門は開きません**（升の中央でも 7倍 足りない）。
+    **隣の 2升 は どちらも 9.7／11.9人/日 ＝ 単独で門の要求に届きます。**
+
+    **どちらの軸も、うちに開いています** —— `タヌキの年金相談室`（転換 18.03）・
+    `フクロウの年金・給付金解説室` は**人ですらない名前**で、人間の経歴を 1つ も主張していません
+    （`CRED_RE` で外している「肩書き」とは別物）。
+
+    **覆る条件は `title_identity_line` の下と `docs/GOAL.md` (4-r)。**
+    """
+    rows = []
+    for c in niche_channels().values():
+        v, n = c.get("views") or 0, c.get("videos") or 0
+        t = c.get("title", "")
+        if v < CONV_MIN_VIEWS or n < CONV_MIN_VIDEOS or CRED_RE.search(t):
+            continue
+        age = _age_days(c.get("created", ""), today)
+        rows.append({"title": t, "age": age, "videos": n,
+                     "conv": 1000 * (c.get("subs") or 0) / v,
+                     "spd": (c.get("subs") or 0) / age, "vpv": v / n,
+                     "named": bool(PERSONA_RE.match(t)), "topic": bool(TOPIC_NARROW_RE.search(t))})
+    if not rows:
+        return {"n": 0}
+
+    def cell(rs: list[dict]) -> dict:
+        if len(rs) < CELL_MIN_CH:
+            return {"n": len(rs)}
+        return {"n": len(rs), "conv": st.median(r["conv"] for r in rs),
+                "spd": st.median(r["spd"] for r in rs), "vpv": st.median(r["vpv"] for r in rs)}
+
+    young = [r for r in rows if r["age"] < PERSONA_AGE_CAP]
+    out = {"n": len(rows), "n_young": len(young), "cells": {}}
+    for nm, want_named, want_topic in (("named_topic", True, True), ("named_plain", True, False),
+                                       ("plain_topic", False, True), ("plain_plain", False, False)):
+        out["cells"][nm] = cell([r for r in young
+                                 if r["named"] is want_named and r["topic"] is want_topic])
+    out["examples"] = sorted([r for r in young if r["topic"]], key=lambda r: -r["conv"])[:8]
+    return out
+
+
+def title_identity_line(mine_title: str = "", need_spd: float | None = None) -> str:
+    """毎周 印字する（**API 0単位**）。**数はここが持つ ＝ `docs/METHOD.md` §7／GOAL へ写さないこと。**
+
+    **覆る条件**:
+     (1) **相関であって因果ではありません**（`persona` の (4-p-1) と同じ穴）。
+         **分ける手は 1つ ＝ うちが動かして前後を測ること** ——
+         動かした日は `docs/GOAL.md` (4-r) に刻んであります。
+         **その日から 14日 の登録/日 を、動かす前の 14日 と並べること。**
+     (2) **升が小さい**（いちばん効く升で {CELL_MIN_CH}口）。`niche_channels` が増えたら引き直すこと。
+     (3) `TOPIC_NARROW_RE` / `PERSONA_RE` は**題の字面**しか見ません
+         ＝ 上の倍率は**下限**です（題に出さず本の中で名乗る口を拾えない）。
+     (4) **うちが `named_topic` の升へ移った後は、この行が読むのは「升の差」ではなく
+         「うちの前後」です** —— 升の表は控えとして残しますが、判定は (1) の前後の数へ移ること。
+     (5) **`CRED_RE` を動かしたら升は全部 変わります**（`persona` の (4-p-5) と同じ）。
+    """
+    p = title_identity()
+    if not p.get("n"):
+        return ("**題の身元（`peers.title_identity`）は引けません** —— "
+                "`data/niche_channels.jsonl` が在りません（`channels.list` **5単位**）。")
+    c = p["cells"]
+    out = [f"**題の身元 ＝ 名前 × 制度名**（`peers.title_identity`・**API 0単位**・"
+           f"肩書きを外した {p['n']}口 のうち 齢<{PERSONA_AGE_CAP}日 の {p['n_young']}口）。"
+           f"**読む列は転換ではなく 登録/日**（扉(b) の通貨・`trend.rev_deadline`）:"]
+    for key, nm in (("named_topic", "名前 ＋ 制度名      "), ("named_plain", "名前 ＋ 制度名なし   "),
+                    ("plain_topic", "名前なし ＋ 制度名   "), ("plain_plain", "名前なし ＋ 制度名なし")):
+        a = c.get(key, {})
+        if a.get("conv") is None:
+            out.append(f"  {nm} ch{a.get('n', 0):>3}  （{CELL_MIN_CH}口 未満 ＝ 数えない）")
+            continue
+        out.append(f"  {nm} ch{a['n']:>3}  転換{a['conv']:>6.2f}  **登録/日{a['spd']:>7.1f}**  "
+                   f"1本{a['vpv']:>9,.0f}")
+    if mine_title:
+        named, topic = bool(PERSONA_RE.match(mine_title)), bool(TOPIC_NARROW_RE.search(mine_title))
+        broad = bool(TOPIC_BROAD_RE.search(mine_title))
+        key = ("named_topic" if named and topic else "named_plain" if named else
+               "plain_topic" if topic else "plain_plain")
+        mine_cell = c.get(key, {})
+        line = (f"  **うちの題 `{mine_title}`** ＝ 名前 {'在り' if named else '**無し**'}・"
+                f"制度名 {'在り' if topic else '**無し**'}"
+                + ("（`お金`/`マネー` のような広い語は在りますが、制度名ではありません）" if broad and not topic else "")
+                + f" ＝ **`{key}` の升**")
+        if mine_cell.get("spd") is not None:
+            line += f"（升の中央 登録/日 **{mine_cell['spd']:.1f}**）"
+        out.append(line)
+        if need_spd and mine_cell.get("spd") is not None and key == "plain_plain":
+            best = c.get("named_topic", {})
+            out.append(f"  **門が要るのは {need_spd:.1f}人/日** ＝ **この升の中央でも "
+                       f"{need_spd / max(mine_cell['spd'], 1e-9):.1f}倍 足りません。**"
+                       + (f" 隣の升は {c['plain_topic']['spd']:.1f}／{c['named_plain']['spd']:.1f}人/日 ＝ "
+                          f"**どちらも単独で門の要求に届きます**（両方 ＝ {best['spd']:.1f}）。"
+                          if c.get("plain_topic", {}).get("spd") and c.get("named_plain", {}).get("spd")
+                          and best.get("spd") else "")
+                       + " **判定は立ったサブとオーナー**（`docs/GOAL.md` (4-r)）。")
+    ex = p.get("examples", [])[:4]
+    if ex:
+        out.append("  うちに**開いている**形（人間の経歴を 1つ も主張していない・制度名を持つ口）: "
+                   + "・".join(f"{e['title'][:18]}（転換{e['conv']:.1f}・登録/日{e['spd']:.0f}）" for e in ex))
+    return "\n".join(out)
+
+
 
 def title_shape(rows: list[dict] | None = None) -> dict:
     """題の型（【】・！？・N選・改正・数）と再生の関係。**チャンネルの大きさで揃えた側も出します。**

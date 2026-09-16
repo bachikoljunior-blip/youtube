@@ -1,0 +1,104 @@
+"""**題の身元 ＝ 名前 × 制度名**（`peers.title_identity` / `yt.set_channel_title` /
+`cli.cmd_rename_channel`・2026-09-17 02:xx・optimizer・Fable 5.1・ultracode）。
+
+**陽性対照を先に置いてあります** —— 「鳴らない」だけの検査は、口を外しても通るので。
+"""
+from __future__ import annotations
+
+import pytest
+
+from studio import peers
+
+
+# ---- 印そのもの（字面の読み分け）--------------------------------------------
+
+@pytest.mark.parametrize("title,named,topic", [
+    ("お金と仕事の教科書", False, False),          # うち ＝ 広い語だけ・名乗る人が居ない
+    ("タヌキの年金相談室", True, True),
+    ("としこの年金相談所", True, True),
+    ("きな子のシニアお金ゼミ", True, True),
+    ("年金・給付金完全攻略チャンネル", False, True),
+    ("サラダのお金相談所", True, False),           # 名前は在るが制度名が無い
+    ("サンデーマネーチャンネル", False, False),
+])
+def test_升の割り振りは題の字面で決まる(title, named, topic):
+    assert bool(peers.PERSONA_RE.match(title)) is named
+    assert bool(peers.TOPIC_NARROW_RE.search(title)) is topic
+
+
+def test_陽性対照_広い語は制度名に数えない():
+    """**`お金`/`マネー` を制度名に数えると、うちが `plain_topic` の升へ入ります。**
+    その混ぜが、この口の答えを丸ごと変える所です。"""
+    assert peers.TOPIC_BROAD_RE.search("お金と仕事の教科書")
+    assert not peers.TOPIC_NARROW_RE.search("お金と仕事の教科書")
+
+
+def test_陽性対照_肩書きの口は升から外れている():
+    """うちに閉じている腕（`CRED_RE`）が升に混ざると、取れない効きを取れる効きとして読みます。"""
+    for t in ("元ハローワーク職員ケンの退職サポート", "あき姉 元銀行員FPが教える資産形成術"):
+        assert peers.CRED_RE.search(t)
+
+
+# ---- 2×2 そのもの -----------------------------------------------------------
+
+def test_4つの升が出て_うちの升がいちばん低い():
+    p = peers.title_identity()
+    if not p.get("n"):
+        pytest.skip("corpus が在りません")
+    c = p["cells"]
+    assert set(c) == {"named_topic", "named_plain", "plain_topic", "plain_plain"}
+    spd = {k: v.get("spd") for k, v in c.items() if v.get("spd") is not None}
+    assert "plain_plain" in spd, "うちの居る升が床（CELL_MIN_CH）を下回っています"
+    assert min(spd, key=spd.get) == "plain_plain", "うちの升がいちばん低くないなら、この節の前提が覆っています"
+
+
+def test_床を下回る升は数を出さない():
+    p = peers.title_identity()
+    if not p.get("n"):
+        pytest.skip("corpus が在りません")
+    for v in p["cells"].values():
+        if v["n"] < peers.CELL_MIN_CH:
+            assert "spd" not in v
+
+
+def test_行は門の倍率を出す():
+    line = peers.title_identity_line("お金と仕事の教科書", need_spd=11.1)
+    assert "plain_plain" in line and "11.1人/日" in line and "倍 足りません" in line
+
+
+def test_陽性対照_目当ての升の題では倍率の行が出ない():
+    """升の外に居ることを言う行なので、**入ったら消えなければなりません**。"""
+    line = peers.title_identity_line("タヌキの年金相談室", need_spd=11.1)
+    assert "named_topic" in line and "倍 足りません" not in line
+
+
+# ---- 撃つ側（`--dry-run` は 0単位）-------------------------------------------
+
+def test_肩書きの題は撃つ前に止まる():
+    from studio import cli
+    a = type("A", (), {"title": "元社労士ゆきの年金相談室", "dry_run": True, "anyway": False})()
+    assert cli.cmd_rename_channel(a) == 1
+
+
+def test_升の外の題は_anyway_なしでは撃たない():
+    from studio import cli
+    a = type("A", (), {"title": "お金と仕事の教科書2", "dry_run": True, "anyway": False})()
+    assert cli.cmd_rename_channel(a) == 1
+
+
+def test_升の中の題は_dry_run_で通る():
+    from studio import cli
+    a = type("A", (), {"title": "カワウソの年金計算室", "dry_run": True, "anyway": False})()
+    assert cli.cmd_rename_channel(a) == 0
+
+
+def test_題を書く口は読んでから書き_読み返す():
+    """`channels.update` は渡した部を**丸ごと置き換えます** ——
+    読まずに書くと `keywords` と `unsubscribedTrailer`（紹介動画）が黙って消えます。"""
+    import inspect
+
+    from studio import yt
+    src = inspect.getsource(yt.set_channel_title)
+    assert 'part="brandingSettings", mine=True' in src, "読まずに書いています"
+    assert src.count("channels().list") == 2, "打った題を読み返していません"
+    assert '"ok": after == title' in src
