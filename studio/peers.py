@@ -401,3 +401,104 @@ def title_shape_line(rows: list[dict] | None = None) -> str:
         f"**答えを出す番は corpus の深さ**（いま 1チャンネルあたり "
         f"{capacity(rows)['per_ch']:.1f}本 ＝ `playlistItems`＋`videos` で 1チャンネル 2単位・"
         f"218チャンネル 約450単位）。**判定は立ったサブとオーナー。**")
+
+
+# ---- corpus を **深く** する（`title_shape` の穴を埋める唯一の手）------------------
+#
+# **2026-09-16 11:xx・optimizer・Fable 5.1・ultracode が足した。この回は撃っていません**（日枠が尽きていた）。
+#
+# **なぜ要るか**: `title_shape` が出す生の比（最大 54.4倍）は、**同じチャンネルの中で比べると消えます**。
+# 消える理由は 1つ —— corpus が **1チャンネルあたり 1.5本** しかないからです（`demand` の種で
+# `search.list` を撃つと、**広く浅く**集まる。1チャンネルから 1本 ずつ 218チャンネル）。
+# **題の型が効くかどうかは、同じチャンネルの中でしか測れません**（チャンネルの大きさが交絡するため）。
+#
+# **値段**: `playlistItems.list` 1単位/50本 ＋ `videos.list` 1単位/50本 ＝ **1チャンネル 2単位**
+# （`contentDetails` を引く `channels.list` は 50件 で 1単位）。
+# **218チャンネル・1チャンネル 50本 で 約450単位**（日枠 10,000 の **4.5%**）。
+# `search.list` なら 1回 100単位 なので、**同じ深さを search で買うと 100倍 かかります。**
+#
+# **この口は `niche_corpus.jsonl` に追記します**（`peers.jsonl` ではありません）——
+# `corpus_longs` / `title_shape` / `capacity` が読むのは corpus の側なので。
+# **同じ動画が何度 入っても構いません**（`corpus_longs` が id で畳みます）。
+#
+# **覆る条件**:
+#  (1) 深く引いたあとの `title_shape` で、**同じch内の比が 1.5倍 を越えた型**が出たら、
+#      その型は本物 ＝ `retitle` の根拠になります（`docs/GOAL.md` (4-m-1)）。
+#  (2) **3ch 以上 で 0.7倍 を下回った型**が出たら、それは逆に効く型 ＝ 題から外すこと（(4-m-2)）。
+#  (3) 1チャンネルあたりが 2本 を越えても同じch内の比が立たないなら、**交絡はチャンネルではなく
+#      題材の側**（同じチャンネルでも題材で桁が変わる）＝ そのときは題材を揃えて比べ直すこと。
+#  (4) `DEEP_MAX_UNITS` は**日枠を食い切らないための蓋**です。上げるのは、その周に
+#      予約（1,650単位/本）を撃たないと決めた回だけ。
+
+#: 1チャンネルから何本まで引くか（`playlistItems` 1ページ ＝ 50本 ＝ 1単位）。
+DEEP_PER_CHANNEL = 50
+#: この口が 1回 に使ってよい単位の蓋（覆る条件 (4)）。
+DEEP_MAX_UNITS = 500
+
+
+def deep_pull(svc, ids: list[str] | None = None, per_channel: int = DEEP_PER_CHANNEL,
+              max_units: int = DEEP_MAX_UNITS, now: dt.datetime | None = None) -> dict:
+    """corpus のチャンネルを 1つずつ開いて、その本を corpus へ追記する。
+
+    **蓋に当たったら、その時点までを返します**（途中で止まっても、集まった分は使えます）。
+    返すのは {units, channels, videos, rows} —— `rows` はそのまま corpus へ書く行。
+    """
+    ids = ids if ids is not None else corpus_channels()
+    at = (now or now_jst()).isoformat(timespec="seconds")
+    units = 0
+    rows: list[dict] = []
+    done = 0
+    for cid in ids:
+        if units + 2 > max_units:
+            break
+        try:
+            r = svc.channels().list(part="contentDetails", id=cid).execute()
+            units += 1
+            items = r.get("items", [])
+            if not items:
+                continue
+            up = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+            vids, token = [], None
+            while len(vids) < per_channel and units < max_units:
+                pr = svc.playlistItems().list(part="contentDetails", playlistId=up,
+                                              maxResults=50, pageToken=token).execute()
+                units += 1
+                vids += [i["contentDetails"]["videoId"] for i in pr.get("items", [])]
+                token = pr.get("nextPageToken")
+                if not token:
+                    break
+            vids = vids[:per_channel]
+            for i in range(0, len(vids), 50):
+                if units >= max_units:
+                    break
+                vr = svc.videos().list(part="snippet,statistics,contentDetails",
+                                       id=",".join(vids[i:i + 50])).execute()
+                units += 1
+                for it in vr.get("items", []):
+                    s = it.get("statistics", {})
+                    secs = iso_secs(it.get("contentDetails", {}).get("duration", ""))
+                    rows.append({
+                        "at": at, "id": it["id"],
+                        "views": int(s.get("viewCount", 0) or 0),
+                        "secs": secs,
+                        "form": "long" if secs > SHORT_SECS else "short",
+                        "channel": cid,
+                        "title": it["snippet"]["title"],
+                        "published": it["snippet"].get("publishedAt", ""),
+                        "q": "deep",
+                    })
+            done += 1
+        except Exception:                                        # noqa: BLE001
+            # **1チャンネルで転んでも止めない** —— 集まった分は次の周が使えます。
+            continue
+    return {"at": at, "units": units, "channels": done, "videos": len(rows), "rows": rows}
+
+
+def deep_save(rows: list[dict]) -> int:
+    """corpus へ追記する（同じ動画が重なっても `corpus_longs` が id で畳みます）。"""
+    if not rows:
+        return 0
+    with CORPUS.open("a", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return len(rows)

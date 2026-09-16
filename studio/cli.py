@@ -1982,6 +1982,28 @@ def mine_shape(rows: list[dict]) -> dict:
 
 def cmd_peers(a):
     """同じニッチの他人のチャンネルと、うちを並べる（`studio/peers.py` の註がこの口の正本）。"""
+    # **corpus を深くする手**（2026-09-16 11:xx・`peers.deep_pull` の註がこの枝の正本）。
+    # `title_shape` の生の比は**チャンネルの大きさの交絡**で、同じch内でしか測れません。
+    # いま corpus は 1チャンネル 1.5本 ＝ **同じch内で比べられる型が 0〜6ch 分 しかない**。
+    # 1チャンネル 2単位 で 50本 引けば、その穴が埋まります（218ch ≒ 450単位・日枠の 4.5%）。
+    if getattr(a, "deep", False):
+        ids = peers.corpus_channels()
+        if not ids:
+            print("!! `data/niche_corpus.jsonl` にチャンネルが 1つ もありません")
+            return 1
+        cap = a.max_units or peers.DEEP_MAX_UNITS
+        got = peers.deep_pull(yt.svc(), ids, per_channel=a.per_channel, max_units=cap)
+        n = peers.deep_save(got["rows"])
+        ledger("peers_deep", "channel", units=got["units"], channels=got["channels"], videos=n)
+        print(f"corpus を深くしました: **{got['channels']}チャンネル・{n}本**・**{got['units']}単位**"
+              f"（蓋 {cap}・1チャンネル {a.per_channel}本 まで）。"
+              f"{'!! **蓋に当たって途中で止まりました** —— 残りは次の周（同じ口をもう一度 撃つだけ）' if got['units'] >= cap else ''}")
+        rows_ = peers.corpus_longs()
+        print(peers.title_shape_line(rows_))
+        print(peers.capacity_line(rows_))
+        print("**向きを読むのは `docs/GOAL.md` (4-m-1)(4-m-2) の門だけ**"
+              "（同じch内 1.5倍 を越えた型 ／ 3ch 以上 で 0.7倍 を下回った型）。")
+        return 0
     last = peers.last_pull()
     if not a.force and peers.fresh_enough(last):
         row = last
@@ -2052,6 +2074,13 @@ def main(argv=None):
     an = sub.add_parser("analytics"); an.add_argument("--force", action="store_true")
     sub.add_parser("comments")
     pe = sub.add_parser("peers"); pe.add_argument("--force", action="store_true")
+    # corpus を深くする枝（`peers.deep_pull` の註・`docs/GOAL.md` (4-m)）。
+    pe.add_argument("--deep", action="store_true",
+                    help="corpus のチャンネルを1つずつ開いて本を追記する（1ch 2単位・題の型の交絡を外す唯一の手）")
+    pe.add_argument("--per-channel", type=int, default=peers.DEEP_PER_CHANNEL,
+                    dest="per_channel", help="1チャンネルから何本まで（既定 50 ＝ 1ページ）")
+    pe.add_argument("--max-units", type=int, default=0, dest="max_units",
+                    help=f"この1回で使ってよい単位の蓋（既定 {peers.DEEP_MAX_UNITS}）")
     de = sub.add_parser("demand"); de.add_argument("--seeds", default="")
     de.add_argument("--tails", type=int, default=0); de.add_argument("--top", type=int, default=60)
     rpt = sub.add_parser("reporting"); rpt.add_argument("--setup", action="store_true")
