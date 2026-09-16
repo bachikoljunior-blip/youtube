@@ -2472,6 +2472,13 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
             if _v and _n:
                 _mine = {"subs": int(_last.get("subs") or 0), "views": _v, "videos": _n}
         out.append(_peers.conversion_line(_mine))
+        # **題に「名前」が在るか**（2026-09-16 19:xx に足した）—— 上の `conversion_line` は
+        #  「転換率が下から2番目」までしか言わず、**何をすれば上がるかを言っていません**でした。
+        #  この行は corpus の中で 1つ 名指しします。**肩書き（人間の経歴）の腕は うちには閉じている**
+        #  ので、**その口を外してから**数えます（`config/channel.yaml` 08/30）。
+        #  **決めと覆る条件は `peers.persona` の註 ＝ ここへ数を写さないこと。**
+        #  題は `config/channel.yaml` の `channel.name` から（**API 0単位**）。
+        out.append(_peers.persona_line(_channel_name()))
     except Exception as e:  # noqa: BLE001
         out.append(f"**門の先（月20万）の距離**は引けなかった: {str(e)[:80]}")
     out.append(sub_rate_line(rows))
@@ -5337,6 +5344,24 @@ def channel_ids(rows: list[dict]) -> list[str]:
     for r in sorted([r for r in rows if r.get("event") == "channel" and r.get("id")], key=_at):
         seen[str(r["id"])] = None
     return list(seen)
+
+
+def _channel_name(path: str = "config/channel.yaml") -> str:
+    """うちのチャンネルの題（**API 0単位** ＝ `config/channel.yaml` の `channel.name` を読むだけ）。
+
+    **`yt.channel()` を撃たないこと** —— 1周 1単位 増えるうえ、複製から返る値を掴みます
+    （`conversion_line` のうちの数と同じ理由・`yt.channel` の註）。
+    **覆る条件**: config の題と YouTube 側の題がずれたら、この行は**うちではない題**を judge します。
+    ずれを見つけたら config を直すこと（`persona_line` は字面しか見ません）。
+    """
+    try:
+        from pathlib import Path as _P
+        import re as _re
+        txt = _P(path).read_text(encoding="utf-8")
+        m = _re.search(r'^\s{2}name:\s*"([^"]+)"', txt, _re.M)
+        return m.group(1) if m else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _channel_rows(rows: list[dict]) -> list[dict]:

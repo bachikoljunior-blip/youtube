@@ -8,6 +8,7 @@
 `YOUNG_DAYS` を 100000 にすると `test_古い相手は選ばない` が落ちる。
 """
 import datetime as dt
+import re
 
 import pytest
 
@@ -219,3 +220,95 @@ def test_転換率の行は判定せずに数を並べる(monkeypatch):
         assert word not in line
     monkeypatch.setattr(peers, "niche_channels", lambda: {})
     assert "引けません" in peers.conversion_line(None)
+
+
+# ---------------------------------------------------------------------------
+# **人格の印**（`peers.persona` / `persona_line`・2026-09-16 19:xx）
+# ---------------------------------------------------------------------------
+
+def _persona_info(monkeypatch, extra=None):
+    """名前あり 3口・名前なし 3口・**肩書き 2口**（外されるはずの側）。"""
+    base = [
+        # 名前あり（肩書きは無い）＝ うちに開いている側
+        {"id": "n1", "title": "きな子のシニアお金ゼミ", "subs": 1000, "views": 100_000,
+         "videos": 100, "created": "2025-09-16T00:00:00Z"},
+        {"id": "n2", "title": "タヌキの年金相談室", "subs": 900, "views": 100_000,
+         "videos": 50, "created": "2025-09-16T00:00:00Z"},
+        {"id": "n3", "title": "としこの年金相談所", "subs": 800, "views": 100_000,
+         "videos": 80, "created": "2025-09-16T00:00:00Z"},
+        # 名前なし
+        {"id": "p1", "title": "年金解説チャンネル", "subs": 100, "views": 100_000,
+         "videos": 100, "created": "2025-09-16T00:00:00Z"},
+        {"id": "p2", "title": "お金と仕事の教科書", "subs": 90, "views": 100_000,
+         "videos": 200, "created": "2025-09-16T00:00:00Z"},
+        {"id": "p3", "title": "シニアマネー研究", "subs": 80, "views": 100_000,
+         "videos": 150, "created": "2025-09-16T00:00:00Z"},
+        # **肩書きを持つ口** ＝ うちには閉じている腕。数から外れなければ検査が落ちる
+        {"id": "c1", "title": "元ハローワーク職員ケンの退職サポート", "subs": 90_000,
+         "views": 100_000, "videos": 30, "created": "2025-09-16T00:00:00Z"},
+        {"id": "c2", "title": "あき姉 元銀行員FPが教える資産形成術", "subs": 80_000,
+         "views": 100_000, "videos": 40, "created": "2025-09-16T00:00:00Z"},
+    ]
+    if extra:
+        base.extend(extra)
+    monkeypatch.setattr(peers, "niche_channels", lambda: {c["id"]: c for c in base})
+    return base
+
+
+def test_肩書きを持つ口は数から外れる(monkeypatch):
+    """**うちに閉じている腕の効きを、開いている腕の効きとして読まないこと。**
+
+    `元ハローワーク職員ケン` と `あき姉 元銀行員FP` は転換 900/1,000 で、
+    外さなければ「名前なし」側の中央を吊り上げます。
+    """
+    _persona_info(monkeypatch)
+    p = peers.persona(today=dt.date(2026, 9, 16))
+    assert p["n"] == 6, p["n"]                      # 8口 のうち 肩書き 2口 が落ちる
+    titles = {e["title"] for e in p["examples"]}
+    assert not any("職員" in t or "FP" in t for t in titles)
+    assert p["all"]["plain"]["n"] == 3 and p["all"]["named"]["n"] == 3
+    # **陽性対照**: 外す線を消すと、その 2口 が比べる側へ入ってくる
+    #   （**中央値は 2口 の外れ値では動きません** —— だから n で見ます。
+    #    2026-09-16 19:xx に、中央が動くほうへ賭けた検査を撃って外しました）
+    monkeypatch.setattr(peers, "CRED_RE", re.compile(r"(?!x)x"))
+    p2 = peers.persona(today=dt.date(2026, 9, 16))
+    assert p2["n"] == 8
+    assert p2["all"]["plain"]["n"] + p2["all"]["named"]["n"] == 8
+    assert p2["all"]["plain"]["n"] > p["all"]["plain"]["n"]
+
+
+def test_名前の印は題の頭の名前だけを拾う(monkeypatch):
+    _persona_info(monkeypatch)
+    assert peers.PERSONA_RE.match("きな子のシニアお金ゼミ")
+    assert peers.PERSONA_RE.match("タヌキの年金相談室")
+    assert not peers.PERSONA_RE.match("お金と仕事の教科書")
+    assert not peers.PERSONA_RE.match("年金解説チャンネル")
+
+
+def test_人格の行は控えを必ず隣に並べる(monkeypatch):
+    """**生の「N倍」だけが印字される道を塞ぐ**（2026-09-16 15:1x の覆る条件）。
+
+    比を出すなら、同じ行に **名前なし側の数**と**本/日の控え**が並んでいること。
+    """
+    _persona_info(monkeypatch)
+    line = peers.persona_line("お金と仕事の教科書")
+    assert "名前あり" in line and "名前なし" in line          # 控えが隣に在る
+    assert "本/日" in line                                  # 「たくさん出した」の控え
+    assert "倍" in line
+    assert "肩書きの腕は うちには閉じています" in line
+    assert "名前 **無し**" in line                           # うちの判定
+    for word in ("すべき", "してください"):                    # 判定はしない
+        assert word not in line
+
+
+def test_うちの題に名前が在れば在りと出る(monkeypatch):
+    """**陽性対照** —— 題を振ると印字が反転する。"""
+    _persona_info(monkeypatch)
+    assert "名前 **在り**" in peers.persona_line("タヌキの年金相談室")
+    assert "名前 **無し**" in peers.persona_line("お金と仕事の教科書")
+
+
+def test_台帳が無ければ黙って比を返さない(monkeypatch):
+    monkeypatch.setattr(peers, "niche_channels", lambda: {})
+    assert "引けません" in peers.persona_line("お金と仕事の教科書")
+    assert peers.persona(today=dt.date(2026, 9, 16)) == {"n": 0}

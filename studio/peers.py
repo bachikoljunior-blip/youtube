@@ -548,6 +548,171 @@ def conversion_line(mine: dict | None = None) -> str:
         f"**門（登録 1,000人）までに要る再生は、この率で割り算が変わります**（`docs/GOAL.md` (4-o)）。")
 
 
+# ---------------------------------------------------------------------------
+# **人格の印**（`persona` / `persona_line`・2026-09-16 19:xx・optimizer・Fable 5.1・ultracode）
+# ---------------------------------------------------------------------------
+
+#: **肩書き（人間の専門家の経歴）の語。** `config/channel.yaml` 2026-08-30 が落とした側で、
+#: **うちには永久に閉じている腕**です —— 合成音声が税・保険・年金という「視聴者が自分の金で動く題」を
+#: 実在しない人間の経歴を根拠に話す形は、YouTube が収益化不可として名指ししており、
+#: `src/verify._check_no_human_expert_claim()` が台本の側でも塞いでいます。
+#: **だから、この語を持つ口は corpus から外してから数えます**（外さないと、
+#: うちが取れない腕の効きを、取れる腕の効きとして読むことになる）。
+CRED_RE = re.compile(
+    r"(社労士|税理士|銀行員|FP|看護師|ナース|弁護士|会計士|行政書士|証券|学長|アドバイザー"
+    r"|プランナー|相談員|ハロワ|ハローワーク|職員|投資家|薬剤師|教授|講師|眼科医|医師|大学)")
+
+#: **名前 ＋ の ＋ 題材**（`きな子のシニアお金ゼミ`／`としこの年金相談所`／`タヌキの年金相談室`）。
+#: **肩書きではありません** —— 名乗っているのは名前だけで、人間の経歴を 1つ も主張していません。
+#: ＝ **うちに開いている側**（`タヌキ`・`フクロウ` は人ですらない）。
+PERSONA_RE = re.compile(
+    r"^[^\s]{0,6}?[ぁ-んァ-ヶ][ぁ-んァ-ヶー]{1,6}(子|さん|先生|姉|兄|ちゃん|くん|ママ|パパ)?の[^\s]")
+
+#: 古さの控え（`persona` はこの齢より若い口だけでも数え、両方を並べます）。
+PERSONA_AGE_CAP = 1000
+
+
+def _age_days(created: str, today=None) -> int:
+    try:
+        y, m, d = (int(x) for x in created[:10].split("-"))
+    except Exception:
+        return 1
+    return max(((today or now_jst().date()) - dt.date(y, m, d)).days, 1)
+
+
+def persona(today=None) -> dict:
+    """**題に「名前」が在るか**と、転換率・登録/日・1本あたり再生 を並べる（**API 0単位**）。
+
+    **なぜ要るか（2026-09-16 19:xx に撃って出た）**: `conversion`（17:1x）は
+    **うちの転換率が 215口 中 下から 2番目**だと出しましたが、**では何をすれば上がるのかは
+    言っていません**でした（「見た人に登録する理由を渡していない」で止まっている）。
+    この口は、その「理由」を corpus の中で 1つ 名指しします。
+
+    **まず、取れない腕を外します。** corpus のいちばん速い層は
+    `元ハローワーク職員ケン`／`元社労士事務所勤務ゆき`／`あき姉 元銀行員FP` のように
+    **名前 ＋ 人間の肩書き**を題に持ち、**転換 13.5・登録 89.8人/日・1本 74,690回**（齢<400日・5口）です。
+    **これはうちには閉じた腕です**（`CRED_RE` の註 ＝ `config/channel.yaml` 08/30）。
+    **だから肩書きを持つ口を全部 外した 161口 で数えます**（`CONV_MIN_*` の床の後）。
+
+        肩書きを持たない 161口        ch    転換中央   登録/日中央   1本中央   本/日中央
+        名前 ＋ の ＋ 題材            24     5.75      11.9     13,123     0.13
+        そうでない                  137     4.14       1.5      2,911     0.17
+        齢<1000日 だけ（古さの控え）
+        名前 ＋ の ＋ 題材            16     5.94      12.7     27,291     0.13
+        そうでない                   57     4.93       1.9      2,585     0.29
+
+    **＝ 齢を揃えて 転換 1.2倍・登録/日 6.8倍・1本あたり 10.6倍。**
+    **そして「名前」の側は、本を 少なく 出しています**（0.13 対 0.29本/日）＝
+    **「名前」は「たくさん出した」の言い換えではありません**（その控えがこの列です）。
+
+    **いちばん大事なのは、この口が撃った側の仮説を 半分 落としたことです。**
+    この口は「うちの転換率が下から2番目なのは、名乗る人が居ないからだ」を確かめに行って、
+    **転換では 1.2倍 しか出ませんでした**（齢を揃えた後）。**大きいのは 1本あたり再生 10.6倍 の側**です。
+    ＝ **「名前」は 転換の腕ではなく、届く量の腕**として corpus に写っています。
+    **うちの転換率 0.32 は、肩書きを外した母集団の中央 4.14 の 1/13 で、
+    その差は「名前が無いから」では説明が付きません**（形でも・出す数でも付かない ——
+    `conversion` の覆る条件 (1) と `persona` の本文）。**まだ名前の付いていない欠陥が 1つ 在ります。**
+
+    **うちに開いている形であることを、corpus の中で確かめました** ——
+    `タヌキの年金相談室`（転換 **18.03**・45本・0.08本/日）と
+    `フクロウの年金・給付金解説室`（転換 6.03・45本・1本 171,712回）は
+    **人ですらない名前**で、**人間の経歴を 1つ も主張していません**。
+    `きな子のシニアお金ゼミ`（9.37）・`としこの年金相談所`（10.48）も同じで、
+    **どれも うちと同じ「年金・シニアのお金」の族**です。
+    **うちの題は `お金と仕事の教科書`** ＝ **教科書**で、名乗る人が居ません。
+
+    **覆る条件**:
+     (1) **これは相関で、因果ではありません。** 「名前を付けたから伸びた」のか
+         「作りが丁寧な口は名前も付ける」のかを、この口は分けません。
+         **分ける手は 1つ しかありません ＝ うちが名前を付けて、前後を測ること**
+         （`conversion` が毎周 印字する ＝ 付けた日を刻んで、その前後で引くこと）。
+     (2) **n が小さい**（齢<1000日 の控えで 16口）。`niche_channels` が増えたら引き直すこと。
+     (3) `PERSONA_RE` は**題の字面**しか見ていません。`サラダのお金相談所` を名前として拾い、
+         名前を**題に出さずに本の中で名乗る**口は拾えません ＝ **この数は「名前の効き」の下限**です。
+     (4) **うちの転換率が corpus の下1/4（2.55）を越えたら、この節は役目を終えます**
+         （`conversion` の覆る条件 (4) と同じ門・**門は 1か所**）。
+     (5) 肩書きを外す線（`CRED_RE`）を動かしたら、上の表の数は全部 変わります。
+         **動かすなら、動かした後の表を JOURNAL へ写してから**。
+    """
+    info = niche_channels()
+    rows = []
+    for c in info.values():
+        v, n = c.get("views") or 0, c.get("videos") or 0
+        if v < CONV_MIN_VIEWS or n < CONV_MIN_VIDEOS:
+            continue
+        t = c.get("title", "")
+        if CRED_RE.search(t):          # **取れない腕は数えない**（上の註）
+            continue
+        age = _age_days(c.get("created", ""), today)
+        rows.append({"title": t, "subs": c.get("subs") or 0, "views": v, "videos": n,
+                     "age": age, "persona": bool(PERSONA_RE.match(t)),
+                     "sub_per_1k": 1000 * (c.get("subs") or 0) / v,
+                     "views_per_video": v / n,
+                     "subs_per_day": (c.get("subs") or 0) / age,
+                     "videos_per_day": n / age})
+    if not rows:
+        return {"n": 0}
+
+    def cut(rs: list[dict]) -> dict:
+        if not rs:
+            return {"n": 0}
+        return {"n": len(rs),
+                "conv": st.median([r["sub_per_1k"] for r in rs]),
+                "spd": st.median([r["subs_per_day"] for r in rs]),
+                "vpv": st.median([r["views_per_video"] for r in rs]),
+                "vpd": st.median([r["videos_per_day"] for r in rs]),
+                "age": st.median([r["age"] for r in rs])}
+
+    young = [r for r in rows if r["age"] < PERSONA_AGE_CAP]
+    out = {"n": len(rows),
+           "all": {"named": cut([r for r in rows if r["persona"]]),
+                   "plain": cut([r for r in rows if not r["persona"]])},
+           "young": {"named": cut([r for r in young if r["persona"]]),
+                     "plain": cut([r for r in young if not r["persona"]])}}
+    named = sorted([r for r in rows if r["persona"]], key=lambda r: -r["subs_per_day"])
+    out["examples"] = named[:8]
+    return out
+
+
+def persona_line(mine_title: str = "") -> str:
+    """毎周 印字する（**API 0単位**）。**控えを必ず隣に並べます** ——
+    生の「N倍」だけが出る道を塞ぐため（2026-09-16 15:1x の覆る条件「3つ目が出たら共通の口へ」）。
+    """
+    p = persona()
+    if not p.get("n"):
+        return ("**人格の印（`peers.persona`）は引けません** —— `data/niche_channels.jsonl` が"
+                "在りません（`channels.list` **5単位**）。")
+    out = [f"**題に「名前」が在るか（`peers.persona`・**API 0単位**・肩書きを持つ口を外した {p['n']}口）**。"
+           f"**肩書きの腕は うちには閉じています**（`config/channel.yaml` 08/30・"
+           f"`_check_no_human_expert_claim`）＝ **外してから数えています**:"]
+    for key, nm in (("all", "全部    "), ("young", f"齢<{PERSONA_AGE_CAP}日")):
+        a, b = p[key]["named"], p[key]["plain"]
+        if not a.get("n") or not b.get("n"):
+            continue
+        out.append(f"  {nm}  名前あり ch{a['n']:>3} 転換{a['conv']:>6.2f} 登録/日{a['spd']:>7.1f} "
+                   f"1本{a['vpv']:>9,.0f} **本/日{a['vpd']:>5.2f}**")
+        out.append(f"  {'':8}  名前なし ch{b['n']:>3} 転換{b['conv']:>6.2f} 登録/日{b['spd']:>7.1f} "
+                   f"1本{b['vpv']:>9,.0f} **本/日{b['vpd']:>5.2f}**")
+    y = p["young"]
+    if y["named"].get("n") and y["plain"].get("n") and y["plain"]["conv"]:
+        out.append(f"  ＝ 齢を揃えて 転換 **{y['named']['conv'] / y['plain']['conv']:.1f}倍**・"
+                   f"登録/日 **{y['named']['spd'] / max(y['plain']['spd'], 1e-9):.1f}倍**・"
+                   f"1本 **{y['named']['vpv'] / max(y['plain']['vpv'], 1e-9):.1f}倍**。"
+                   f"**名前の側は本を 少なく 出しています**（{y['named']['vpd']:.2f} 対 {y['plain']['vpd']:.2f}本/日）"
+                   f" ＝ **「たくさん出した」の言い換えではありません**（これが控え）。")
+    ex = [e for e in p.get("examples", []) if e["age"] < PERSONA_AGE_CAP][:4]
+    if ex:
+        out.append("  うちに**開いている**形（人間の経歴を 1つ も主張していない口）: "
+                   + "・".join(f"{e['title'][:16]}（転換{e['sub_per_1k']:.1f}・{e['videos']}本）" for e in ex))
+    if mine_title:
+        hit = bool(PERSONA_RE.match(mine_title))
+        out.append(f"  **うちの題 `{mine_title}`**: 名前 **{'在り' if hit else '無し'}**"
+                   + ("" if hit else " ＝ **名乗る人が居ません**。**判定は立ったサブとオーナー**"
+                                     "（`docs/GOAL.md` (4-p)）。"))
+    return "\n".join(out)
+
+
+
 def title_shape(rows: list[dict] | None = None) -> dict:
     """題の型（【】・！？・N選・改正・数）と再生の関係。**チャンネルの大きさで揃えた側も出します。**
 
