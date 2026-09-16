@@ -1,3 +1,4 @@
 {"at": "2026-09-17T06:14:37+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": false, "status": 403}
 {"at": "2026-09-17T06:19:39+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
 {"at": "2026-09-17T06:19:39+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T06:25:48+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
