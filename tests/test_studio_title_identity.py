@@ -102,3 +102,48 @@ def test_題を書く口は読んでから書き_読み返す():
     assert 'part="brandingSettings", mine=True' in src, "読まずに書いています"
     assert src.count("channels().list") == 2, "打った題を読み返していません"
     assert '"ok": after == title' in src
+
+
+# ---- config の題 対 YouTube 側の題（`trend.channel_title_drift_line`・API 0単位）----
+
+def _ch(at: str, title=None):
+    r = {"event": "channel", "id": "UC1", "at": at, "subs": 1, "views": 1, "videos": 1}
+    if title is not None:
+        r["title"] = title
+    return r
+
+
+def test_題を持つ行が無ければ_まだ数えられないと言う():
+    from studio import trend
+    line = trend.channel_title_drift_line([_ch("2026-09-16T21:00:00+09:00")], "お金と仕事の教科書")
+    assert "まだ数えられません" in line and "ずれ" not in line
+
+
+def test_一致していれば一致と言う():
+    from studio import trend
+    rows = [_ch("2026-09-17T03:00:00+09:00", "お金と仕事の教科書")]
+    assert "**一致**" in trend.channel_title_drift_line(rows, "お金と仕事の教科書")
+
+
+def test_陽性対照_ずれたら鳴る():
+    """**鳴らない側だけの検査は、口を外しても通ります。**"""
+    from studio import trend
+    rows = [_ch("2026-09-17T03:00:00+09:00", "カワウソの年金計算室")]
+    line = trend.channel_title_drift_line(rows, "お金と仕事の教科書")
+    assert line.startswith("!!") and "うちではない題" in line
+
+
+def test_いちばん新しい行を読む():
+    from studio import trend
+    rows = [_ch("2026-09-17T03:00:00+09:00", "むかしの題"),
+            _ch("2026-09-17T05:00:00+09:00", "いまの題")]
+    assert "いまの題" in trend.channel_title_drift_line(rows, "いまの題")
+
+
+def test_台帳に題を残している_追加0単位():
+    """`yt.channel()` が既に返している欄なので、残すのに単位は増えません。"""
+    import inspect
+
+    from studio import cli, yt
+    assert '"title": ch["snippet"]["title"]' in inspect.getsource(yt.channel)
+    assert 'title=ch.get("title")' in inspect.getsource(cli.record_channel)

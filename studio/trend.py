@@ -2501,7 +2501,14 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
             _need = rev_deadline(rows).get("subs_need_per_day")
         except Exception:  # noqa: BLE001
             _need = None
-        out.append(_peers.title_identity_line(_channel_name(), need_spd=_need))
+        _cfg_name = _channel_name()
+        out.append(_peers.title_identity_line(_cfg_name, need_spd=_need))
+        # **config の題と YouTube 側の題がずれていないか**（2026-09-17 02:xx・**API 0単位**）。
+        #  上の升の判定は `config/channel.yaml` の字で下ります ＝ **ずれていたら
+        #  「うちではない題」を judge します**（`_channel_name` の覆る条件・09/16 19:xx から
+        #  註に在ったのに、**確かめる数が台帳に 1つ もありませんでした**）。
+        #  `cli.record_channel` が 02:xx から題も残すので、**次の周から読めます**。
+        out.append(channel_title_drift_line(rows, _cfg_name))
     except Exception as e:  # noqa: BLE001
         out.append(f"**門の先（月20万）の距離**は引けなかった: {str(e)[:80]}")
     out.append(sub_rate_line(rows))
@@ -5367,6 +5374,40 @@ def channel_ids(rows: list[dict]) -> list[str]:
     for r in sorted([r for r in rows if r.get("event") == "channel" and r.get("id")], key=_at):
         seen[str(r["id"])] = None
     return list(seen)
+
+
+def channel_title_drift_line(rows: list[dict], cfg_name: str = "") -> str:
+    """**config の題 対 YouTube 側の題**（台帳だけ・**API 0単位**）。
+
+    **2026-09-17 02:xx に足した**（optimizer・Fable 5.1・ultracode）。
+    `peers.title_identity` の升の判定は `config/channel.yaml` の字で下ります。
+    **ずれていたら、その判定は「うちではない題」に下ります** ——
+    `_channel_name` の覆る条件は 09/16 19:xx から註に在りましたが、
+    **確かめる数が台帳に 1つ もありませんでした**（`channel` 行 291行 は どれも題を持っていない）。
+    `cli.record_channel` が同じ回から `title` も残すので、**次の周から読めます**（追加 0単位）。
+
+    **覆る条件**: (1) ずれが出たら、**正本は YouTube 側**です（`config` を直す ＝ 逆ではない）——
+    ただし `rename-channel` で変えた直後の 1周 だけは、`config` の側が新しいことがあります
+    （あの口は読み返してから config を書くので、**同じ回に両方 揃います**）。
+    (2) 題を人手で YouTube 側から変える形が出たら、この行が最初に見つけます。
+    """
+    live = [r.get("title") for r in _channel_rows(rows) if r.get("title")]
+    if not live:
+        return ("**config の題 対 YouTube 側の題**（`trend.channel_title_drift_line`・**API 0単位**）: "
+                "**まだ数えられません** —— 台帳の `channel` 行が題を持つのは 2026-09-17 02:xx 以降で、"
+                "いまは **0行**。**次に `status` が通った周から読めます**（追加 0単位）。")
+    now = live[-1]
+    if not cfg_name:
+        return (f"**config の題 対 YouTube 側の題**: YouTube 側 `{now}`・"
+                f"**config が読めません**（`config/channel.yaml` の `channel.name`）。")
+    if now == cfg_name:
+        return (f"**config の題 対 YouTube 側の題**（`trend.channel_title_drift_line`・**API 0単位**）: "
+                f"**一致**（`{now}`） ＝ 上の升の判定は うちの題に下っています。")
+    return (f"!! **config の題と YouTube 側の題がずれています** —— "
+            f"YouTube 側 `{now}` 対 config `{cfg_name}`。"
+            f"**上の升の判定は『うちではない題』に下っています**（`peers.title_identity`）。"
+            f"**正本は YouTube 側** ＝ `config/channel.yaml` の `channel.name` を直すこと"
+            f"（`rename-channel` で変えた直後の 1周 だけは逆のことがあります・この関数の註）。")
 
 
 def _channel_name(path: str = "config/channel.yaml") -> str:

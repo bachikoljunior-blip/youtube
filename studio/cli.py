@@ -634,7 +634,15 @@ def record_channel(ch: dict) -> None:
     `data/rounds.jsonl` の側から周を引くこと。
     """
     ledger("channel", ch["id"], subs=ch.get("subscriberCount"),
-           views=ch.get("viewCount"), videos=ch.get("videoCount"))
+           views=ch.get("viewCount"), videos=ch.get("videoCount"),
+           # **YouTube 側の題**（2026-09-17 02:xx・**追加 0単位** ＝ `yt.channel()` が既に返している欄）。
+           #  **穴**: `trend._channel_name` は `config/channel.yaml` を読んで升を判定しますが
+           #  （GOAL (4-r)・`peers.title_identity`）、**config と YouTube 側がずれていたら、
+           #  その判定は「うちではない題」に下ります**。その覆る条件は 09/16 19:xx から
+           #  註に書いてあったのに、**確かめる数が台帳に 1つ もありませんでした**
+           #  （291行 の `channel` 行 は どれも題を持っていない ＝ この回に数えた）。
+           #  **`rename-channel` の読み返しと合わせて、ずれは次の周の `trend` が見ます。**
+           title=ch.get("title"))
 
 
 def record_ready(vid: str, rd: dict, drift) -> None:
