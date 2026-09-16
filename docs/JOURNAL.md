@@ -137133,8 +137133,12 @@ corpus 全体（335本）で数え直したら、生の比は大きく出ます:
 `python -m pytest tests -x -q` ＝ **1,166 passed / 1 failed**。
 落ちた 1件 は `tests/test_daily_pick_outside_long.py`（`src/daily_pick.py` ＝ **旧道具**・METHOD §8）。
 この回は `src/` を 1行 も触っていません（触ったのは `studio/peers.py`・`studio/trend.py`・`docs/`・台本）。
-選んで撃ち直した 315件（`peers`／`studio_trend`／`studio_lint`／`studio_script`／`deadline`）も、
-落ちたのは `tests/test_deadline_check.py`（**旧道具の仮説台帳の期限が日付で流れる側**）1件 だけです。
+選んで撃ち直した側で落ちたのも、**旧道具の 2件 だけ**でした:
+`tests/test_deadline_check.py`（仮説台帳の期限が日付で流れる）と
+`tests/test_request_form_excludes_long_form.py`（`src/ab_split` 対 `src/judgeable` の群の数え方が、
+公開が進むとずれる ＝ `title_form/問い` が 24本 対 44本）。
+**この回は `src/`・`scripts/`・`data/uploaded.jsonl`・`data/ab_labels.json`・`data/video_forms.json` を
+1行 も触っていません**（差分が空であることを確かめた）。
 **どちらも この回の変更とは別**です（次の回へ: 旧道具の検査 2件 が日付で落ち続けるなら、
 落とす代わりに `skip` にするか、台帳の期限を `--shrink` で詰める番 —— **どちらも旧道具の側の話**）。
 
