@@ -2451,6 +2451,8 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         from . import peers as _peers
         _pl = _peers.corpus_longs()
         out.append(_peers.capacity_line(_pl))
+        # **族ごとの天井**（同じ回に足した）—— `capacity` の「1本」は族で 3,187倍 ちがいます。
+        out.append(_peers.family_line(_pl))
         out.append(_peers.title_shape_line(_pl))
     except Exception as e:  # noqa: BLE001
         out.append(f"**門の先（月20万）の距離**は引けなかった: {str(e)[:80]}")

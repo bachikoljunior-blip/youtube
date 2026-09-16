@@ -502,3 +502,99 @@ def deep_save(rows: list[dict]) -> int:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     return len(rows)
+
+
+# ---- 題材の**族**ごとの天井（ニッチは 1つ ではありません）------------------------
+#
+# **2026-09-16 11:xx・optimizer・Fable 5.1・ultracode が足した。**
+#
+# `capacity` は「このニッチの 1本」で数えますが、**corpus の `q`（引いた検索語）で割ると、
+# 族ごとの中央値が 3,000倍 ちがいます**:
+#
+#     年金 手取り いくら      n=38  中央 **605,548**  最大 5,124,861
+#     退職金 税金 いくら      n=36  中央 **325,807**  最大 2,023,357
+#     加給年金 いくら        n=35  中央  **91,269**  最大 4,422,714
+#     所得税 控除 節税       n=39  中央   68,276
+#     遺族年金 いくら 計算     n=21  中央   59,469
+#     …
+#     医療費控除 いくら戻る    n=25  中央     **190**
+#
+# **＝ 「どのニッチか」ではなく「そのニッチの、どの族か」で天井が決まります。**
+# `capacity` が言う「上位1/4 の1本」は、**族を選べば中央値の側**です
+# （年金 手取り の族なら、中央の本が 605,548回 ＝ 月20万の 3倍）。
+#
+# **この口は判定しません** —— 族と数と、うちが何本 持っているかを並べるだけ（`lines` の覆る条件 (4) と同じ）。
+#
+# **覆る条件**:
+#  (1) `q` は `demand` の種で引いた語なので、**族は種の側の都合**です。種を変えたら族も変わります
+#      ＝ この表を「ニッチの地図」と読まないこと。
+#  (2) うちの長尺が 3本 たまった族が出たら、**その族の中央値とうちの 48h を並べること**
+#      （族の中央値が高いのに うちが伸びないなら、効いていないのは族ではなく作りの側）。
+#  (3) 族ごとの n が 10本 を切ったら、その行の中央値は読まないこと（いま 14〜40本）。
+
+#: 中央値を読んでよい最小の本数（覆る条件 (3)）。
+FAMILY_MIN_N = 10
+#: 族の語のうち、当てはめに使わない語（**どの本にも在る語**）。`mine_by_family` の註。
+FAMILY_STOPWORDS = frozenset({"いくら", "計算", "とは", "上限", "節税", "いくら戻る", "最新", "条件"})
+
+
+def families(rows: list[dict] | None = None) -> list[dict]:
+    """corpus を `q`（引いた語）で割って、族ごとの長尺の中央値・最大・本数を出す。"""
+    L = corpus_longs() if rows is None else rows
+    by: dict[str, dict[str, int]] = {}
+    for r in L:
+        q = r.get("q", "") or "（語なし）"
+        by.setdefault(q, {})[r["id"]] = r["views"]
+    out = []
+    for q, m in by.items():
+        v = sorted(m.values())
+        if not v:
+            continue
+        out.append({"q": q, "n": len(v), "median": st.median(v), "max": v[-1]})
+    return sorted(out, key=lambda d: -d["median"])
+
+
+def mine_by_family(scripts_dir: Path | None = None) -> dict[str, list[str]]:
+    """うちの長尺の台本が、どの族の語を題か tags に持っているか（**ファイルを読むだけ**）。"""
+    d = scripts_dir or (DATA / "scripts")
+    fams = [f["q"] for f in families()]
+    out: dict[str, list[str]] = {q: [] for q in fams}
+    if not d.exists():
+        return out
+    for p in sorted(d.glob("*.json")):
+        try:
+            s = json.loads(p.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if s.get("form") != "long":
+            continue
+        hay = (s.get("title", "") + " " + " ".join(s.get("tags", []))).replace(" ", "")
+        for q in fams:
+            # 族の語は空白区切りの並び。**「いくら」「計算」のような当たり前の語を外し、
+            # 残りが全部 題か tags に在る本だけ**を、その族に入れます。
+            # **1語 でも当たれば入れる形にしないこと** —— 「年金」は 11本 のうち 10本 に在り、
+            # そうすると族の表が「どの族も全部 持っている」と嘘をつきます（2026-09-16 11:xx に踏んだ）。
+            need = [w for w in q.split() if w and w not in FAMILY_STOPWORDS]
+            if need and all(w in hay for w in need):
+                out[q].append(s.get("id", p.stem))
+    return out
+
+
+def family_line(rows: list[dict] | None = None) -> str:
+    """毎周 印字する1行（**API 0単位**）。**判定はしません。**"""
+    fs = [f for f in families(rows) if f["n"] >= FAMILY_MIN_N]
+    if not fs:
+        return ""
+    mine = mine_by_family()
+    top = fs[0]
+    bot = fs[-1]
+    body = " ／ ".join(f"{f['q']} 中央 **{f['median']:,.0f}**（{f['n']}本・うち {len(mine.get(f['q'], []))}本）"
+                      for f in fs[:6])
+    return (
+        f"**題材の族ごとの天井**（`peers.families`・**API 0単位**・`niche_corpus` の `q` で割った・"
+        f"門 n≧{FAMILY_MIN_N}本）: {body}"
+        f" … いちばん下は **{bot['q']} 中央 {bot['median']:,.0f}**（{bot['n']}本）。"
+        f"**＝ 上と下で {top['median'] / max(bot['median'], 1):,.0f}倍** —— "
+        f"**天井を決めるのはニッチではなく族です**（`capacity` が言う「上位1/4 の1本」は、"
+        f"いちばん上の族なら**中央値の側**）。**族は `demand` の種の都合**なので"
+        f"「ニッチの地図」と読まないこと（覆る条件 (1)）。**判定は立ったサブとオーナー。**")

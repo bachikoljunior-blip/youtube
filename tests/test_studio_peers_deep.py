@@ -11,6 +11,7 @@
 `test_同じch内の比は生の比と別に出る` が落ちる。
 """
 import datetime as dt
+import json
 
 import pytest
 
@@ -130,3 +131,34 @@ def test_門の先の距離は_RPM_の帯で出る():
     assert c["over"][1000.0] == 2                     # 200,000 と 500,000
     assert c["over_gate"] == 3                        # 60,000 以上（扉(b)）
     assert "月20万" in peers.capacity_line(rows)
+
+
+def test_族ごとに天井がちがう():
+    """ニッチは 1つ ではありません —— `q` で割ると中央値が桁で変わります。"""
+    rows = ([{"id": f"a{i}", "views": 600_000, "channel": f"A{i}", "title": "x", "form": "long",
+              "q": "年金 手取り いくら"} for i in range(12)]
+            + [{"id": f"b{i}", "views": 200, "channel": f"B{i}", "title": "x", "form": "long",
+                "q": "医療費控除 いくら戻る"} for i in range(12)])
+    fs = peers.families(rows)
+    assert fs[0]["q"] == "年金 手取り いくら" and fs[0]["median"] == 600_000
+    assert fs[-1]["q"] == "医療費控除 いくら戻る"
+    assert "3,000倍" in peers.family_line(rows)
+
+
+def test_n_が門より少ない族は印字しない():
+    """本数が少ない族の中央値は読まないこと（`FAMILY_MIN_N`・覆る条件 (3)）。"""
+    rows = [{"id": f"a{i}", "views": 9_000_000, "channel": f"A{i}", "title": "x", "form": "long",
+             "q": "うすい族"} for i in range(peers.FAMILY_MIN_N - 1)]
+    assert peers.family_line(rows) == ""
+
+
+def test_当たり前の語では族に入れない(tmp_path):
+    """**「年金」1語 で入れると、族の表が「どの族も全部 持っている」と嘘をつきます。**
+
+    `FAMILY_STOPWORDS` を空にするか `all(...)` を `any(...)` にすると落ちる（陽性対照）。
+    """
+    (tmp_path / "a.json").write_text(json.dumps(
+        {"id": "a", "form": "long", "title": "年金を60歳から早くもらった人が失うもの3つ", "tags": ["年金"]},
+        ensure_ascii=False), encoding="utf-8")
+    got = peers.mine_by_family(tmp_path)
+    assert got.get("年金 手取り いくら") == []          # 「手取り」が無いので入らない
