@@ -1992,6 +1992,20 @@ def cmd_peers(a):
             print("!! `data/niche_corpus.jsonl` にチャンネルが 1つ もありません")
             return 1
         cap = a.max_units or peers.DEEP_MAX_UNITS
+        # **日枠を食い切らない**（2026-09-16 11:5x）。この口は「あとで撃てばよい」側なので、
+        # 予約（1本 1,650単位）と測る側（`RESERVE` 600）の取り分を先に残します。
+        # **蓋に当たっても集まった分は使えます**（`deep_pull` は途中までを返す）。
+        _s = budget.spent(ledger_rows())
+        room = _s["left"] - budget.RESERVE - budget.UPLOAD_UNITS
+        if room < 50:
+            print(f"!! 日枠の残りが **{_s['left']:,}単位** ＝ 予約 1本（{budget.UPLOAD_UNITS}）と"
+                  f"測る側（{budget.RESERVE}）を残すと、この口に回せるのは {max(room, 0)}単位 です。"
+                  f"**撃ちません**（この口は 16:00 JST の後で撃てばよい側）。"
+                  f"どうしても今 撃つなら `--max-units <数>` を明示すること")
+            return 1
+        if cap > room:
+            print(f"（蓋を {cap} → **{room}単位** に下げました ＝ 予約 1本 と測る側の取り分を残すため）")
+            cap = room
         got = peers.deep_pull(yt.svc(), ids, per_channel=a.per_channel, max_units=cap)
         n = peers.deep_save(got["rows"])
         ledger("peers_deep", "channel", units=got["units"], channels=got["channels"], videos=n)
