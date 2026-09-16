@@ -1,11 +1,11 @@
 {
- "id": "2026-09-20-nenkin-tedori-hayamihyou-p3-shotoku",
- "asked_at": "2026-09-17T04:25:14+09:00",
- "for": "2026-09-20 の本（2026-09-20-nenkin-tedori-hayamihyou）のコマ32〜43（部「p3-shotoku」）の絵",
- "prompt": "日本の60代の男性が自宅の机で電卓をたたきながら、封筒から出した書類を確かめている様子。窓から自然光。写実的な写真風。文字やロゴ、数字は一切入れない。横長。 写実的な写真風。横長。文字やロゴは一切入れない。",
- "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
- "size": "1920x1080",
- "format": "jpg",
- "out": "assets/images/2026-09-20-nenkin-tedori-hayamihyou-p3-shotoku.jpg",
- "status": "pending"
+  "id": "2026-09-20-nenkin-tedori-hayamihyou-p3-shotoku",
+  "asked_at": "2026-09-17T04:25:14+09:00",
+  "for": "2026-09-20 の本（2026-09-20-nenkin-tedori-hayamihyou）のコマ32〜43（部「p3-shotoku」）の絵",
+  "prompt": "日本の60代の男性が自宅の机で電卓をたたきながら、封筒から出した書類を確かめている様子。窓から自然光。写実的な写真風。文字やロゴ、数字は一切入れない。横長。 写実的な写真風。横長。文字やロゴは一切入れない。",
+  "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+  "size": "1920x1080",
+  "format": "jpg",
+  "out": "assets/images/2026-09-20-nenkin-tedori-hayamihyou-p3-shotoku.jpg",
+  "status": "done"
 }
