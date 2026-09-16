@@ -537,6 +537,62 @@ FAMILY_MIN_N = 10
 #: 族の語のうち、当てはめに使わない語（**どの本にも在る語**）。`mine_by_family` の註。
 FAMILY_STOPWORDS = frozenset({"いくら", "計算", "とは", "上限", "節税", "いくら戻る", "最新", "条件"})
 
+# ---------------------------------------------------------------------------
+# **族の「床」（p25）** —— 2026-09-16 15:0x・optimizer・Fable 5.1・ultracode・**API 0単位**
+#
+# **なぜ 中央値ではなく p25 を足したか。**
+# 上の `family_line` は族の**中央値**を並べ、上と下で 3,187倍 と印字していました。
+# しかし中央値は「うまくいったらどこまで行くか」の側で、**こちらが選ぶときに要るのは
+# 「外したときにどこまで落ちるか」**です（うちは 29人 のチャンネルなので、族の中の下側に落ちる前提で選ぶ）。
+# 同じ corpus を p25 で割り直すと、**族の差は中央値よりさらに開きます**（撃って数えた・下）:
+#
+#     年金 手取り いくら        p25 **117,006**  中央 605,548  n=38 ch=24
+#     退職金 税金 いくら        p25  **99,851**  中央 325,807  n=36 ch=22
+#     加給年金 いくら          p25  **31,682**  中央  91,269  n=35 ch=26
+#     所得税 控除 節税         p25   **9,500**  中央  68,276  n=39 ch=24
+#     遺族年金 いくら 計算      p25   **2,939**  中央  59,469  n=21 ch=19
+#     再就職手当 計算          p25     **549**  中央   4,586  n=14 ch=13
+#     変動金利 5年ルール 未払利息 p25   **1,835**  中央   3,387  n=31 ch=25
+#     標準報酬月額 計算        p25     **591**  中央   1,588  n=26 ch=20
+#     ふるさと納税 上限 計算     p25     **222**  中央   1,332  n=31 ch=27
+#     不動産取得税 計算        p25     **314**  中央   1,094  n=40 ch=37
+#     医療費控除 いくら戻る      p25      **23**  中央     190  n=25 ch=21
+#
+# **＝ 上と下で 5,087倍**（中央値の 3,187倍 より大きい）。
+# **同じ集め方・同じ門（n≧10本）で 5,000倍 開くものは、作りでは埋まりません。**
+#
+# **この数が効く所**: 扉(b)（4,000時間）は、狙いの尺 900秒 × 維持率 45% ＝ 0.1125時間/回 で割ると
+# **35,556回**です。**いちばん上の族は、下から 1/4 の本でも その 3.3倍（117,006回）を持っています。**
+# ＝ **扉(b) は「何本 出すか」ではなく「どの族で出すか」で決まります。**
+#
+# **うちが 2026-09-15 に出した `2026-09-15-iryohi-koujo-10man` は、
+# 測った 11族 のうち いちばん下（p25 23回）の族です。**
+#
+# **覆る条件**:
+#  (1) corpus は**検索の上位**なので、どの族も「検索で当たった側」だけです ＝ p25 は
+#      「その題材で作った本の下から1/4」ではなく「**その語で上位に出た本の下から1/4**」。
+#      **上振れの側**（`lines` の覆る条件 (2) と同じ）。**族どうしの比だけを読むこと**（集め方は全族 同じ）。
+#  (2) うちの長尺が **その族で 2本** 公開されて、**48h が族の p25 の 1/100 にも届かなかったら**、
+#      縛っているのは族ではなく口（配り）の側 ＝ この段は使えません（GOAL (4-i) の枝 B へ）。
+#  (3) 族ごとの n が 10本 を切ったら、その族の p25 は読まないこと。
+#  (4) **p25 の順が中央値の順と入れ替わる族が出たら**、その族は本数が足りないか、
+#      2つ の別の族が同じ語に入っています（`q` を割り直すこと）。
+# ---------------------------------------------------------------------------
+
+#: 族の「床」として読む分位（覆る条件 (1)）。
+FAMILY_FLOOR_Q = 0.25
+
+
+def _quantile(vals: list[int], p: float) -> float:
+    """線形補間の分位。`statistics.quantiles` は n=1 で落ちるので自前（族は n≧10 だが、呼び先は選ばない）。"""
+    v = sorted(vals)
+    if not v:
+        return 0.0
+    k = (len(v) - 1) * p
+    f = int(k)
+    c = min(f + 1, len(v) - 1)
+    return v[f] + (v[c] - v[f]) * (k - f)
+
 
 def families(rows: list[dict] | None = None) -> list[dict]:
     """corpus を `q`（引いた語）で割って、族ごとの長尺の中央値・最大・本数を出す。"""
@@ -550,8 +606,40 @@ def families(rows: list[dict] | None = None) -> list[dict]:
         v = sorted(m.values())
         if not v:
             continue
-        out.append({"q": q, "n": len(v), "median": st.median(v), "max": v[-1]})
+        # `floor` は p25（**外したときにどこまで落ちるか**・上の註）。`median` は残す（読み手が 2つ）。
+        out.append({"q": q, "n": len(v), "median": st.median(v), "max": v[-1],
+                    "floor": _quantile(v, FAMILY_FLOOR_Q), "p10": _quantile(v, 0.10)})
     return sorted(out, key=lambda d: -d["median"])
+
+
+def family_match(hay: str, fams: list[str]) -> list[str]:
+    """題＋tags の字（空白を抜いたもの）が入る族を全部 返す。
+
+    族の語は空白区切りの並び。**「いくら」「計算」のような当たり前の語を外し、
+    残りが全部 題か tags に在る本だけ**を、その族に入れます。
+    **1語 でも当たれば入れる形にしないこと** —— 「年金」は 11本 のうち 10本 に在り、
+    そうすると族の表が「どの族も全部 持っている」と嘘をつきます（2026-09-16 11:xx に踏んだ）。
+    """
+    out = []
+    for q in fams:
+        need = [w for w in q.split() if w and w not in FAMILY_STOPWORDS]
+        if need and all(w in hay for w in need):
+            out.append(q)
+    return out
+
+
+def family_of(title: str, tags: list[str] | None = None,
+              rows: list[dict] | None = None) -> list[dict]:
+    """1本 の題＋tags が入る族を、**床（p25）の高い順**に返す（**ファイルを読むだけ・API 0単位**）。
+
+    返すのは `families()` の行そのもの（`q` / `n` / `median` / `floor` / `p10` / `max`）。
+    **入る族が 1つも無いとき は空**で、それは「天井が低い」ではなく **「測っていない」** です
+    （corpus は `demand` の種の都合 ＝ `FAMILY_FLOOR_Q` の註の覆る条件 (1)）。
+    """
+    fs = [f for f in families(rows) if f["n"] >= FAMILY_MIN_N]
+    hay = (title + " " + " ".join(tags or [])).replace(" ", "")
+    hit = set(family_match(hay, [f["q"] for f in fs]))
+    return sorted([f for f in fs if f["q"] in hit], key=lambda f: -f["floor"])
 
 
 def mine_by_family(scripts_dir: Path | None = None) -> dict[str, list[str]]:
@@ -569,14 +657,8 @@ def mine_by_family(scripts_dir: Path | None = None) -> dict[str, list[str]]:
         if s.get("form") != "long":
             continue
         hay = (s.get("title", "") + " " + " ".join(s.get("tags", []))).replace(" ", "")
-        for q in fams:
-            # 族の語は空白区切りの並び。**「いくら」「計算」のような当たり前の語を外し、
-            # 残りが全部 題か tags に在る本だけ**を、その族に入れます。
-            # **1語 でも当たれば入れる形にしないこと** —— 「年金」は 11本 のうち 10本 に在り、
-            # そうすると族の表が「どの族も全部 持っている」と嘘をつきます（2026-09-16 11:xx に踏んだ）。
-            need = [w for w in q.split() if w and w not in FAMILY_STOPWORDS]
-            if need and all(w in hay for w in need):
-                out[q].append(s.get("id", p.stem))
+        for q in family_match(hay, fams):
+            out[q].append(s.get("id", p.stem))
     return out
 
 
@@ -598,3 +680,50 @@ def family_line(rows: list[dict] | None = None) -> str:
         f"**天井を決めるのはニッチではなく族です**（`capacity` が言う「上位1/4 の1本」は、"
         f"いちばん上の族なら**中央値の側**）。**族は `demand` の種の都合**なので"
         f"「ニッチの地図」と読まないこと（覆る条件 (1)）。**判定は立ったサブとオーナー。**")
+
+
+#: 扉(b)（収益化の基準1）の視聴時間。**与件**（YouTube の公表条件）。
+DOOR_B_HOURS = 4_000
+#: 扉(b) を回数に直すときの 1本 の狙いの尺（秒）。正本は `script.LONG_TARGET_SECONDS`（§2）。
+#: **ここへ写しているのは「族の床と同じ行で読む」ためだけ**で、決めるのは §2 の側です。
+DOOR_B_SECS = 900
+#: 同じく、実測の平均視聴率（`trend.analytics_traffic` の新しい作り 7本 の中央 45.5%）。
+DOOR_B_HOLD = 0.455
+
+
+def door_b_views(secs: int = DOOR_B_SECS, hold: float = DOOR_B_HOLD) -> int:
+    """扉(b)（4,000時間）を**回数**に直す。**この数は尺と維持率で動きます**（点で読まない）。"""
+    per = max(secs * hold / 3600.0, 1e-9)
+    return int(DOOR_B_HOURS / per)
+
+
+def family_floor_line(rows: list[dict] | None = None) -> str:
+    """族の**床**（p25）と、扉(b) が要る回数を同じ行に並べる（**API 0単位・判定はしません**）。
+
+    `family_line` は**中央値**（うまくいったらどこまで）。この行は**床**（外したらどこまで）です。
+    決めと覆る条件は `FAMILY_FLOOR_Q` の註。
+    """
+    fs = [f for f in families(rows) if f["n"] >= FAMILY_MIN_N]
+    if not fs:
+        return ""
+    fs = sorted(fs, key=lambda f: -f["floor"])
+    mine = mine_by_family()
+    need = door_b_views()
+    body = " ／ ".join(
+        f"{f['q']} 床 **{f['floor']:,.0f}**（中央 {f['median']:,.0f}・{f['n']}本・うち {len(mine.get(f['q'], []))}本）"
+        for f in fs[:6])
+    over = [f for f in fs if f["floor"] >= need]
+    bot = fs[-1]
+    return (
+        f"**族の「床」（下から1/4・`peers.family_floor_line`・**API 0単位**・`niche_corpus` の `q` で割った・"
+        f"門 n≧{FAMILY_MIN_N}本）: {body}"
+        f" … いちばん下は **{bot['q']} 床 {bot['floor']:,.0f}**（{bot['n']}本）。"
+        f"**＝ 床で見ると 上と下は {fs[0]['floor'] / max(bot['floor'], 1):,.0f}倍**"
+        f"（中央値の {fs[0]['median'] / max(min(f['median'] for f in fs), 1):,.0f}倍 より**開きます**）。 "
+        f"**扉(b)（{DOOR_B_HOURS:,}時間）を回数に直すと {need:,}回**"
+        f"（尺 {DOOR_B_SECS}秒 × 維持率 {DOOR_B_HOLD:.1%} ＝ 0.114時間/回・**尺と維持率で動く数**）"
+        f" ＝ **床だけで 1本 が扉(b) を越える族 {len(over)}つ**"
+        + (f"（{'・'.join(f['q'] for f in over)}）" if over else "")
+        + "。**＝ 扉(b) は「何本 出すか」ではなく「どの族で出すか」で決まります。** "
+        "**この p25 は「その語で検索の上位に出た本の下から1/4」**（上振れの側・族どうしの比だけを読むこと）。"
+        "**判定は立ったサブとオーナー。**")

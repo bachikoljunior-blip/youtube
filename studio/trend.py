@@ -2453,6 +2453,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         out.append(_peers.capacity_line(_pl))
         # **族ごとの天井**（同じ回に足した）—— `capacity` の「1本」は族で 3,187倍 ちがいます。
         out.append(_peers.family_line(_pl))
+        # **族の「床」**（2026-09-16 15:0x に足した）—— 中央値は「うまくいったら」、床は「外したら」。
+        # 選ぶ側が要るのは床のほう（`peers.FAMILY_FLOOR_Q` の註）。
+        out.append(_peers.family_floor_line(_pl))
         out.append(_peers.title_shape_line(_pl))
     except Exception as e:  # noqa: BLE001
         out.append(f"**門の先（月20万）の距離**は引けなかった: {str(e)[:80]}")

@@ -828,7 +828,37 @@ def cmd_lint(a):
     stale = loop_stale(s.id, s.loop_sig())
     if stale:
         print("  [?]", stale)
+    for w in _family_floor_notes(s):
+        print("  [?]", w)
     return 1 if ps else 0
+
+
+def _family_floor_notes(s) -> list[str]:
+    """長尺の台本が、どの族に入っていて、その族の**床**（p25）はいくつか（**API 0単位・止めない**）。
+
+    **なぜ lint に置くか**: 族の床は 上と下で 5,000倍 開きます（`peers.FAMILY_FLOOR_Q` の註）。
+    それは作りでは埋まらない差なので、**台本を書き終えた所で 1度 目に入る**必要があります。
+    **止めません**（`[?]` だけ）—— 族は `demand` の種の都合なので、
+    「入る族が無い」は「天井が低い」ではなく「**測っていない**」です（同 覆る条件 (1)）。
+    """
+    if getattr(s, "form", "") != "long":
+        return []
+    try:
+        from . import peers as _p
+        hit = _p.family_of(s.title or "", list(getattr(s, "tags", []) or []))
+        need = _p.door_b_views()
+    except Exception:          # corpus が無い／壊れている回は黙る（lint を止めない）
+        return []
+    if not hit:
+        return [f"この本が入る族が、測った族の中に **ありません**（`peers.family_of`）"
+                f" ＝ **天井が低いのではなく、測っていない**という意味です。"
+                f" 扉(b) は {need:,}回 要ります。**族の床は `trend` の「族の「床」」の行**"
+                f"（判定は立ったサブ）"]
+    top = hit[0]
+    mark = "**越えます**" if top["floor"] >= need else "**越えません**"
+    return [f"族 **{top['q']}**・床（下から1/4）**{top['floor']:,.0f}回**・中央 {top['median']:,.0f}回"
+            f"（{top['n']}本）。扉(b) は {need:,}回 ＝ この族の床だけで {mark}"
+            + ("" if len(hit) == 1 else f"（ほかに入る族 {len(hit) - 1}つ）")]
 
 
 def cmd_build(a):
