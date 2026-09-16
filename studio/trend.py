@@ -2442,6 +2442,18 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  `views_streak`）。**単位は「引き」＝ 周ではありません**（`trend.rev7_run` の註）。
     out.append(rev7_line(rows))
     out.append(rev_deadline_line(rows))
+    # **門の先（月20万）の距離**（2026-09-16 10:xx・optimizer・Fable 5.1・ultracode）。
+    #  `rev_deadline` が出すのは**門まで**で、オーナーの目標はその**先**です。
+    #  09/13〜09/16 に固定2 へ「できない」と答えた 7周 は、門の倍率だけを見ていました。
+    #  この 2行 は `data/niche_corpus.jsonl` を読むだけ（**API 0単位**）。決めと覆る条件は
+    #  `studio/peers.py` の `capacity` / `title_shape` の註 —— **§7 へ数を写さないこと**。
+    try:
+        from . import peers as _peers
+        _pl = _peers.corpus_longs()
+        out.append(_peers.capacity_line(_pl))
+        out.append(_peers.title_shape_line(_pl))
+    except Exception as e:  # noqa: BLE001
+        out.append(f"**門の先（月20万）の距離**は引けなかった: {str(e)[:80]}")
     out.append(sub_rate_line(rows))
     out.append(cta_line(rows))
     out.append(early_cta_line(rows))

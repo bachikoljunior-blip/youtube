@@ -237,3 +237,167 @@ def save(row: dict) -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     with PEERS.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+# ---- 門の**先**の距離（`trend.rev_deadline` が持っていない側）-----------------------
+#
+# **2026-09-16 10:xx・optimizer・Fable 5.1・ultracode が足した。**
+#
+# `trend.rev_deadline` は **門まで**の距離しか出しません（扉(a) 1,000万回／扉(b) 4,000時間・登録1,000人）。
+# **オーナーの目標は門ではなく「月収20万」** ＝ 門を通った**あと**の数で、そこは 09/13〜09/16 の
+# どの周も 1度も口を持っていませんでした。固定2（期限内に届くか）に「できない」と答えた 7周 は、
+# **門の倍率だけ**を見て答えています。**この口は、その残り半分を出します。**
+#
+# **やり方**: 要る再生 ＝ 200,000円 ÷ RPM × 1000。それを、同じニッチの他人の実測の分布に当てる
+# （`data/niche_corpus.jsonl` ＝ `demand` の種で引いた検索結果。**API 0単位**・ファイルを読むだけ）。
+#
+# **RPM は うちでは未測です**（収益化前 ＝ 1円も入っていない）。だから帯で出します。
+# 上端は `data/rpm_mix.jsonl` の `rpm_max`（長尺の取り分を上げたときの実効RPM・¥1,252〜1,420）。
+#
+# **覆る条件**:
+#  (1) 収益化が通って **実測のRPM が 1か月ぶん**たまったら、帯ではなくその数で引き直すこと
+#      （そこがこの口のいちばん大きい前提）。
+#  (2) `niche_corpus` は **検索結果の上位**なので、ニッチ全体ではなく「検索で当たる側」に寄っています
+#      ＝ この分布は**上振れの側**。中央値ではなく「何本が門を越えているか」で読むこと。
+#  (3) 1チャンネルあたりの本数が **2本 を越えた**ら、下の `title_shape` の「分けられない」を数え直すこと。
+
+#: 目標（円/月）。オーナーの本文（`docs/GOAL.md`）。
+GOAL_YEN = 200_000
+#: 引く RPM の帯（円/1000回）。下端は日本の解説系の下側・上端は `data/rpm_mix.jsonl` の `rpm_max`。
+RPM_BAND = (500.0, 1000.0, 1400.0)
+
+
+def corpus_longs() -> list[dict]:
+    """`niche_corpus` の長尺を、動画ごとに 1行 に畳む（同じ動画が何度も引かれている）。"""
+    best: dict[str, dict] = {}
+    if not CORPUS.exists():
+        return []
+    for ln in CORPUS.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        if r.get("form") != "long" or not isinstance(r.get("views"), int):
+            continue
+        if r["id"] not in best or r["views"] > best[r["id"]]["views"]:
+            best[r["id"]] = r
+    return list(best.values())
+
+
+def capacity(rows: list[dict] | None = None) -> dict:
+    """門の**先**（月20万）に、このニッチの 1本 が届くか。**判定はしない ＝ 数を並べるだけ**。"""
+    L = corpus_longs() if rows is None else rows
+    vs = sorted(r["views"] for r in L)
+    need = {rpm: int(GOAL_YEN / rpm * 1000) for rpm in RPM_BAND}
+    chans: dict[str, int] = {}
+    for r in L:
+        c = r.get("channel", "")
+        chans[c] = max(chans.get(c, 0), r["views"])
+
+    def over(n):
+        return sum(1 for v in vs if v >= n)
+
+    return {
+        "n": len(vs), "channels": len(chans),
+        "p50": vs[len(vs) // 2] if vs else 0,
+        "p75": vs[3 * len(vs) // 4] if vs else 0,
+        "p90": vs[9 * len(vs) // 10] if vs else 0,
+        "max": vs[-1] if vs else 0,
+        "need": need,
+        "over": {rpm: over(n) for rpm, n in need.items()},
+        "over_ch": {rpm: sum(1 for v in chans.values() if v >= n) for rpm, n in need.items()},
+        "gate_views": 60_000,        # 扉(b) 4,000時間 ÷ 4分/回（`trend.rev_deadline` の前提）
+        "over_gate": over(60_000),
+        "over_gate_ch": sum(1 for v in chans.values() if v >= 60_000),
+        "per_ch": (len(vs) / len(chans)) if chans else 0.0,
+    }
+
+
+def capacity_line(rows: list[dict] | None = None) -> str:
+    """毎周 印字する1行（**API 0単位**）。**§7 へ数を写さないこと。**"""
+    c = capacity(rows)
+    if not c["n"]:
+        return ("**門の先（月20万）の距離**: `data/niche_corpus.jsonl` に長尺が 1本 もありません "
+                "＝ この口は何も言えません（`demand` → `peers` を撃つこと）。")
+    need = c["need"]
+    parts = " ／ ".join(
+        f"RPM {int(r):,}円 なら **{need[r]:,}回/月** ＝ この族で越えている本 **{c['over'][r]}本**"
+        f"（{c['over'][r] / c['n']:.0%}）・チャンネル {c['over_ch'][r]}"
+        for r in RPM_BAND)
+    return (
+        f"**門の先（月20万）の距離**（`peers.capacity`・**API 0単位**・`niche_corpus` の長尺 "
+        f"**{c['n']}本 / {c['channels']}チャンネル**・再生 中央 {c['p50']:,}・"
+        f"上位1/4 {c['p75']:,}・上位1/10 {c['p90']:,}・最大 {c['max']:,}）: "
+        f"要る再生は **20万円 ÷ RPM** —— {parts}。"
+        f"**扉(b)（4,000時間 ＝ 60,000回・4分/回）を 1本 で越えている本 {c['over_gate']}本"
+        f"（{c['over_gate'] / c['n']:.0%}）・チャンネル {c['over_gate_ch']}**。"
+        f"＝ **月20万は、この族の「上位1/4 の1本」1本/月 と同じ大きさ**で、"
+        f"**門は その 1本 の 1/3 以下**です（`trend.rev_deadline` が出すのは門までで、ここは出しません）。"
+        f"**RPM はうちでは未測です**（収益化前 ＝ 帯で出しています・覆る条件 (1)）。"
+        f"**この分布は検索の上位に寄っています ＝ 上振れの側**（覆る条件 (2)）。")
+
+
+def title_shape(rows: list[dict] | None = None) -> dict:
+    """題の型（【】・！？・N選・改正・数）と再生の関係。**チャンネルの大きさで揃えた側も出します。**
+
+    **2026-09-16 10:xx に撃って分かったこと**: 生の比は **8〜54倍** 出ますが、
+    **同じチャンネルの中で比べると全部 消えます**（両側を持つチャンネルが 1〜4 しか無い）。
+    ＝ **生の比が測っているのは題ではなく、その型を使うチャンネルの大きさ**です。
+    **この口の数を「この題の型が効く」と読まないこと。**
+
+    答えを出すには corpus の **1チャンネルあたりの本数**（いま 1.5本）を増やす番です ——
+    `playlistItems` 1単位/50本 ＋ `videos` 1単位/50本 ＝ **1チャンネル 2単位**。
+    218チャンネル で **約 450単位**（日枠 10,000 の 4.5%）。**覆る条件 (3)**。
+    """
+    L = corpus_longs() if rows is None else rows
+    feats = {
+        "【】": lambda t: "【" in t,
+        "！？": lambda t: any(ch in t for ch in "！？!?"),
+        "損・失う": lambda t: any(w in t for w in ("損", "失う", "もらえ", "消え")),
+        "N選・Nつ": lambda t: bool(re.search(r"[0-9０-９]+(選|つ)", t)),
+        "改正・202x": lambda t: bool(re.search(r"202[0-9]|改正|変更|新制度", t)),
+        "解説": lambda t: "解説" in t,
+        "題に数": lambda t: bool(re.search(r"[0-9０-９,]{2,}(円|歳|万)", t)),
+    }
+    byc: dict[str, list[dict]] = {}
+    for r in L:
+        byc.setdefault(r.get("channel", ""), []).append(r)
+    out = {}
+    for name, f in feats.items():
+        a = [r["views"] for r in L if f(r.get("title", ""))]
+        b = [r["views"] for r in L if not f(r.get("title", ""))]
+        ma = st.median(a) if a else 0
+        mb = st.median(b) if b else 0
+        paired = []
+        for g in byc.values():
+            ga = [r["views"] for r in g if f(r.get("title", ""))]
+            gb = [r["views"] for r in g if not f(r.get("title", ""))]
+            if len(ga) >= 2 and len(gb) >= 2:
+                paired.append((st.median(ga) + 1) / (st.median(gb) + 1))
+        out[name] = {"n_yes": len(a), "med_yes": ma, "med_no": mb,
+                     "raw": (ma + 1) / (mb + 1),
+                     "paired_n": len(paired),
+                     "paired": st.median(paired) if paired else None}
+    return out
+
+
+def title_shape_line(rows: list[dict] | None = None) -> str:
+    """毎周 印字する1行（**API 0単位**）。**向きは言いません** —— 言えないことが答えです。"""
+    d = title_shape(rows)
+    if not d:
+        return ""
+    worst = max(d.values(), key=lambda v: v["raw"])
+    pn = max(v["paired_n"] for v in d.values())
+    body = " ／ ".join(f"{k} 生 {v['raw']:.1f}倍（{v['n_yes']}本）"
+                      + (f"・同じch内 {v['paired']:.2f}倍" if v["paired"] else "・同じch内 測れない")
+                      for k, v in d.items())
+    return (
+        f"**題の型と再生**（`peers.title_shape`・**API 0単位**）: {body}。"
+        f"!! **生の比（最大 {worst['raw']:.1f}倍）を「この型が効く」と読まないこと** —— "
+        f"**同じチャンネルの中で比べられる型は 0〜{pn}チャンネル分 しかなく、そこでは比が消えます**"
+        f"（＝ 生の比が測っているのは題ではなく、その型を使うチャンネルの大きさ）。"
+        f"**答えを出す番は corpus の深さ**（いま 1チャンネルあたり "
+        f"{capacity(rows)['per_ch']:.1f}本 ＝ `playlistItems`＋`videos` で 1チャンネル 2単位・"
+        f"218チャンネル 約450単位）。**判定は立ったサブとオーナー。**")
