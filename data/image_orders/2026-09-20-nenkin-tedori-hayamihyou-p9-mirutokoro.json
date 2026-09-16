@@ -1,0 +1,11 @@
+{
+ "id": "2026-09-20-nenkin-tedori-hayamihyou-p9-mirutokoro",
+ "asked_at": "2026-09-17T04:25:14+09:00",
+ "for": "2026-09-20 の本（2026-09-20-nenkin-tedori-hayamihyou）のコマ154〜163（部「p9-mirutokoro」）の絵",
+ "prompt": "日本の60代後半の女性が玄関先で郵便受けから取り出した封筒を手にしている様子。明るい日中。写実的な写真風。文字やロゴ、数字は一切入れない。横長。 写実的な写真風。横長。文字やロゴは一切入れない。",
+ "avoid": "文字・ロゴ・実在の人物・透かし・**人の顔**（人を出すなら後ろ姿か手もとだけ）",
+ "size": "1920x1080",
+ "format": "jpg",
+ "out": "assets/images/2026-09-20-nenkin-tedori-hayamihyou-p9-mirutokoro.jpg",
+ "status": "pending"
+}
