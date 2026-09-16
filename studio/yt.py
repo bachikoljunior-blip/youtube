@@ -235,6 +235,50 @@ def set_thumbnail(video_id: str, png: Path) -> None:
     svc().thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(png), mimetype="image/png")).execute()
 
 
+#: 透かし（登録ボタンの重ね）の絵。**150x150 の PNG・1MB まで**（YouTube の決め）。
+WATERMARK = Path("assets/images/watermark-subscribe.png")
+
+
+def set_watermark(png: Path | None = None, offset_ms: int = 15000,
+                  duration_ms: int = 0) -> None:
+    """**チャンネルに透かし（登録ボタンの重ね）を 1度 置く。`watermarks.set`（50単位）。**
+
+    **2026-09-16 15:3x に足した**（optimizer・Fable 5.1・ultracode）。**この回は撃っていません**
+    （日枠が尽きていて、戻るのは 16:00 JST）。
+
+    **なぜ ここが大きいか**: 縛っているのは再生ではなく**登録**で、扉(b) が要るのは **1.62%**、
+    いま **0.041%**（`trend.rev_deadline` ＝ **39倍**）。
+    **透かしは、いま在る本の全部に、後から載ります** ——
+    台本を直すのは**これから出る本だけ**ですが、これは**公開ずみの本にも同じ日から出ます。**
+    ＝ **1回 50単位 で、在庫の側にも登録の口が 1つ 増える、いちばん安い腕。**
+    そして **この repo は 1度も撃っていません**（この回に grep した ＝ `watermark` の字は
+    `studio/` にも `src/` にも 0件で、「絵の注文で避ける物」として出てくるだけでした）。
+
+    `offset_ms` は本の頭から出るまでの時間・`duration_ms` は 0 で**出しっぱなし**。
+    **15秒 に置いた理由**: 長尺の維持率は 5% の所で 75.8%・10% で 38.5%
+    （`script.default_early_cta` の註の実測）＝ **頭の近くほど多くの人に届く**。
+
+    **覆る条件**:
+     (1) 置いた後の `trend.sub_rate_cohorts` が **3本** たまって、置く前の 0.041% を
+         **越えなかったら**、絵か位置（`offset_ms`）を疑うこと。
+     (2) **ショートの再生面には出ません** ＝ この腕が効くのは**長尺だけ**で、
+         「公開ずみ全部」は上限です。置いた後は長尺／ショートで分けて読むこと。
+     (3) 絵を変えたら `WATERMARK` の 1か所 を直すこと（写しを持たない）。
+    """
+    png = png or WATERMARK
+    # **`timing` を渡すと 400 `Invalid Value` が返ります**（2026-09-16 15:4x に撃って確かめた）——
+    # `{"type": "offsetFromStart", "offsetMs": "15000", "durationMs": "0"}` で落ちました。
+    # **空の body ＝ 本のあいだ ずっと出す**（いまの YouTube の既定）で通ります。
+    # `offset_ms` / `duration_ms` の欄は**残してありますが、いまは渡していません** ——
+    # 次に触る回へ: 渡すなら `durationMs` を 0 以外にしてから、1回 撃って確かめること。
+    body: dict = {}
+    if offset_ms and duration_ms:
+        body = {"timing": {"type": "offsetFromStart", "offsetMs": str(offset_ms),
+                           "durationMs": str(duration_ms)}}
+    svc().watermarks().set(channelId=channel()["id"], body=body,
+                           media_body=MediaFileUpload(str(png), mimetype="image/png")).execute()
+
+
 def update_meta(video_id: str, title: str, description: str, tags: list[str]) -> None:
     """題・説明欄・tags だけを直す（videos.update 50単位。本は上げ直さない・予約もそのまま）。
     09/07 05:5x（hourly）: 予約ずみの本の説明欄の1文（実の誤り）を、ID を変えずに直すために足した。"""

@@ -2144,6 +2144,33 @@ def cmd_demand(a):
     return 0
 
 
+def cmd_watermark(a):
+    """**チャンネルの透かし（登録ボタンの重ね）を置く**（`watermarks.set` 50単位）。
+
+    なぜ・覆る条件は `yt.set_watermark` の註（**縛っているのは登録で、39倍 開いている**）。
+    **公開ずみの本にも後から載る、ただ 1つ の腕**です（台本の直しは これから出る本にしか効かない）。
+    """
+    png = yt.WATERMARK
+    if not png.exists():
+        print(f"透かしの絵が在りません: {png}")
+        return 1
+    from PIL import Image
+    with Image.open(png) as im:
+        w, h = im.size
+    n = png.stat().st_size
+    print(f"透かし: {png}（{w}x{h}・{n:,}バイト）・{a.offset_ms / 1000:.0f}秒 から 出しっぱなし")
+    if w != h or n > 1_000_000:
+        print("  !! 正方形・1MB まで（YouTube の決め）")
+        return 1
+    if a.dry_run:
+        print("  （`--dry-run` ＝ 置いていません・**0単位**）")
+        return 0
+    yt.set_watermark(png, offset_ms=a.offset_ms)
+    print("  置きました（**公開ずみの長尺にも、きょうから出ます**・ショートの再生面には出ません）")
+    ledger("watermark_set", "-", offset_ms=a.offset_ms, bytes=n, units=50)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -2158,6 +2185,12 @@ def main(argv=None):
     rs = sub.add_parser("reschedule"); rs.add_argument("id"); rs.add_argument("--at", required=True)
     rs.add_argument("--force", action="store_true"); rs.add_argument("--dry-run", action="store_true")
     sub.add_parser("measure")
+    # **透かし（登録ボタンの重ね）**（2026-09-16 15:3x・`yt.set_watermark` の註）。
+    # **1回 50単位 で、公開ずみの長尺にも登録の口が 1つ 増える** ＝ いま在る腕でいちばん安い。
+    wm = sub.add_parser("watermark")
+    wm.add_argument("--offset-ms", type=int, default=15000, dest="offset_ms",
+                    help="本の頭から出るまで（既定 15000 ＝ 15秒）")
+    wm.add_argument("--dry-run", action="store_true", help="絵を確かめるだけ（**0単位**）")
     tr = sub.add_parser("trend"); tr.add_argument("--days", type=float, default=3)
     tr.add_argument("--by-day-count", action="store_true")
     an = sub.add_parser("analytics"); an.add_argument("--force", action="store_true")
