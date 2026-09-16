@@ -701,6 +701,9 @@ def cmd_status(a):
     # 日枠が尽きていると `channel()` で落ちる周があり、そこで落ちると
     # 「刻を過ぎたのに出ていない本」が**いちばん見たい周に限って**見えなくなる（2026-09-16 23:3x に踏んだ形）。
     print(pubcheck_line())
+    # **詰まっている手を、1行 で名指しする**（2026-09-17 09:0x・`cmd_catchup` の註）。
+    # **`yt` より前に置くこと** —— いちばん要るのは日枠が尽きた周で、そこでは次の行が落ちます。
+    print(catchup_line(ledger_rows()))
     ch = yt.channel()
     vids = yt.all_videos()
     sids = studio_video_ids()
@@ -2367,6 +2370,22 @@ def cmd_watermark(a):
     print("  置きました（**公開ずみの長尺にも、きょうから出ます**・ショートの再生面には出ません）")
     ledger("watermark_set", "-", offset_ms=a.offset_ms, bytes=n, units=50)
     return 0
+
+
+def catchup_line(rows: list[dict], now: dt.datetime | None = None) -> str:
+    """**詰まっている手が在るか**の 1行（**API 0単位**・`cmd_catchup` の註）。
+
+    `status` の**いちばん上**（`yt` を撃つ前）で出すこと —— この行がいちばん要るのは
+    日枠が尽きた周で、そこでは `yt.channel()` から先が落ちます。
+    """
+    bad = pubcheck.missing(rows, now or now_jst())
+    wm = not any(r.get("event") == "watermark_set" for r in rows)
+    if not bad and not wm:
+        return "**詰まった手（`catchup`・API 0単位で数えた）**: 0件"
+    what = ([f"出ていない本 {len(bad)}本"] if bad else []) + (["透かし 未"] if wm else [])
+    return (f"**詰まった手 {'・'.join(what)}** ＝ 日枠が戻ったら "
+            f"`python -m studio.cli catchup`（**約{1 + len(bad) * 51 + (50 if wm else 0)}単位**・安い順・"
+            f"1,650単位 の `schedule --replace` は撃ちません）")
 
 
 def cmd_catchup(a):

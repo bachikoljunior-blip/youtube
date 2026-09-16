@@ -80,6 +80,14 @@ def test_透かしが置いてあれば撃たない(monkeypatch):
     assert cli.cmd_catchup(argparse.Namespace(dry_run=False)) == 0
 
 
+def test_catchup_line_は_詰まった手を1行で名指しする(monkeypatch):
+    monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [_bad()])
+    s = cli.catchup_line([])
+    assert "出ていない本 1本" in s and "透かし 未" in s and "約102単位" in s
+    monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [])
+    assert cli.catchup_line([{"event": "watermark_set"}]).endswith("0件")
+
+
 def test_meter_は_Data_APIの口だけ数える():
     from studio import meter
     rs = [{"at": "2026-09-17T08:00:00+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": True},
