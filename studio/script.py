@@ -492,6 +492,11 @@ LOOP_SIG_VERSION = 2
 BUILD_SIG_VERSION = 1
 
 
+def _viz_key(spec: dict) -> str:
+    """図の指定の、指紋に入れる字（鍵の順で並べる ＝ 書き方の順で動かない）。"""
+    return json.dumps(spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 class Segment(BaseModel):
     say: str = Field(..., description="声で読む文。ふつうの話し言葉。")
     show: str = Field("", description="画面の大きい字（16字まで）。数字か短い見出し。")
@@ -499,6 +504,10 @@ class Segment(BaseModel):
     tag: str = Field("", description="札（前提／しくみ／決まり／計算／結論／見る所）。声の言い回し（たとえば・決まりでは・計算すると）と同じ札。「しくみ」は『なぜそう決まっているか』のコマ。")
     image: str = Field("", description="このコマ（と、次に `image` を書いたコマの手前まで）の背景の絵の**部の名**。`assets/images/<本のid>-<image>.jpg` を引く。空なら 1つ前の部の絵、それも無ければ本の背景（`-bg`）。")
     board: list[str] = Field([], description="まん中の板。そのコマまでの前提と数の積み上がり（14字×5行まで）。最後の行がいまのコマ。")
+    # **動く図**（オーナー 2026-09-17 20:4x `d699098f`「わかりにくい仕組みとか計算とかを動く表とかいろんなグラフとか…
+    # アニメーションとかにしないと意味ないでしょ」）。形は `studio/viz.py` 冒頭（bars／waterfall／table）。
+    # 書いたコマは板の所に図が出て、コマの頭で動く。**空なら 1コマ 1枚 のまま**（既に在る本は 1画素も動かない）。
+    viz: dict = Field({}, description="動く図（`studio/viz.py`）。計算・しくみ のコマに。板と同じ所に出て、板より勝つ。")
 
 
 class Script(BaseModel):
@@ -614,7 +623,10 @@ class Script(BaseModel):
         # （語の途中で折れていたのを直しただけ ＝ sheet の折れの直し）。
         # **critique に渡るのは板の中身**（`critique_screen` は ' ／ ' で継いで渡す）で、
         # **行の割り方は渡らない**ので、継いで署名すれば中身の直しだけが指紋を動かします。
+        # **図の字と数も入れます**（2026-09-17 21:xx・`viz`）—— critique に渡る物（`critique_screen` の「図」の行）なので。
+        # **`viz` が空のあいだは 1字も変わりません** ＝ 既に在る本の指紋は動きません。
         body = "\n".join(f"{g.say}\x1f{g.show}\x1f{g.sub}\x1f{g.tag}\x1f{''.join(g.board)}"
+                         + (f"\x1f{_viz_key(g.viz)}" if g.viz else "")
                          for g in self.segments)
         return f"{LOOP_SIG_VERSION}:{hashlib.sha256(body.encode('utf-8')).hexdigest()[:12]}"
 
@@ -651,8 +663,11 @@ class Script(BaseModel):
         # 部を付け替えると背景が変わるので、入れないと**古い絵の mp4 が「新しい」と言われます**
         # （この註が名指ししている「絵が届く前に焼いた本」と同じ形の、部ごと版）。
         # **`image` が空のあいだは 1字も変わりません** ＝ 既に在る本の指紋は動きません。
+        # **図の指定も入れます**（2026-09-17 21:xx・`viz`）—— 図を直して焼き直さずに予約すると古い図の mp4 が出る。
+        # 空のあいだは 1字も変わらない（`image` と同じ形）。
         body = "\n".join(f"{g.say}\x1f{g.show}\x1f{g.sub}\x1f{g.tag}\x1f" + "\x1e".join(g.board)
                           + (f"\x1f{g.image}" if g.image else "")
+                          + (f"\x1f{_viz_key(g.viz)}" if g.viz else "")
                           for g in self.segments)
         yomi = "\x1f".join(f"{k}={v}" for k, v in sorted(self.yomi.items()))
         kana = "\x1f".join(sorted(self.kana_in_voice))
@@ -709,6 +724,9 @@ class Script(BaseModel):
                     out.append(f"コマ{i} board の行「{ln}」が {len(ln)}字（{MAX_BOARD_CHARS}まで）")
                 if TEN.search(ln):
                     out.append(f"コマ{i} board に「{TEN.search(ln).group()}」（点・小数）。整数で言い換える")
+            if s.viz:
+                from . import viz as _viz
+                out += _viz.check(s.viz, f"コマ{i}")
         gate, why = chars_gate(self.id, form=self.form)
         if self.total_chars() > gate:
             out.append(f"合計 {self.total_chars()}字（{why} ＝ build が測る秒数の上限"

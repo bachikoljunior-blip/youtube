@@ -913,7 +913,8 @@ def cmd_build(a):
     pimgs = part_images_for(s)
     r = render.build(s, img, pimgs)
     ps_ = script.parts(s.segments)
-    print(f"mp4: {r['mp4']}  {r['total']:.1f}秒  背景: {img.name if img else '無し（単色）'}")
+    print(f"mp4: {r['mp4']}  {r['total']:.1f}秒  背景: {img.name if img else '無し（単色）'}"
+          + (f"  動く図: {r['viz']}コマ（絵 {r['frames']}枚）" if r.get("viz") else ""))
     if ps_:
         miss = [nm for nm, _a, _b in ps_ if nm not in pimgs]
         print(f"  部の絵: {len(pimgs)}/{len(ps_)} 届いている"

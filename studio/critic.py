@@ -186,7 +186,11 @@ def critique_screen(s: Script) -> str:
     for i, seg in enumerate(s.segments, 1):
         head = f"コマ{i}" + (f" [札: {seg.tag}]" if seg.tag else "")
         out += f"{head} 画面「{seg.show}」{('/' + seg.sub) if seg.sub else ''}\n"
-        if seg.board:
+        if seg.viz:
+            # **動く図**（2026-09-17 21:xx・`studio/viz.py`）。図が在るコマは板の代わりに図が画面に出る
+            from .viz import describe
+            out += "  図（画面のまん中で動く）: " + describe(seg.viz) + "\n"
+        elif seg.board:
             out += "  板（そのコマまでの積み上がり・最後の行がいまのコマ）: " + " ／ ".join(seg.board) + "\n"
         out += f"  声: {seg.say}\n"
     return out

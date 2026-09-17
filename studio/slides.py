@@ -209,7 +209,27 @@ def _wrap_chars(text: str, n: int) -> list[str]:
     return _hang(["".join(ln) for ln in lines])
 
 
+_BG_CACHE: dict[tuple, Image.Image] = {}
+
+
 def background(image: Path | None, g: Geom = SHORT) -> Image.Image:
+    """本の背景。**同じ絵は 1度しか作らない**（2026-09-17 21:xx・`viz` の動く図で 1コマ に十数枚 描くため。
+    ぼかしが 1枚 100ms 級なので、憶えずに描くと 1コマ 2秒 が焼きに乗る）。返すのは写し（呼び手が上に描いてよい）。"""
+    key = (str(image) if image else None, g.w, g.h)
+    if image and image.exists():
+        try:
+            key += (image.stat().st_size,)
+        except OSError:
+            pass
+    im = _BG_CACHE.get(key)
+    if im is None:
+        im = _background(image, g)
+        _BG_CACHE.clear()          # 1本 の焼きの中で同時に要るのは 1〜2枚。貯めない
+        _BG_CACHE[key] = im
+    return im.copy()
+
+
+def _background(image: Path | None, g: Geom = SHORT) -> Image.Image:
     W, H = g.w, g.h
     if image and image.exists():
         im = Image.open(image).convert("RGB")
@@ -264,28 +284,44 @@ def board_layout(n_lines: int, show_bottom: int, g: Geom = SHORT) -> tuple[int, 
     return 42, max(46, room // max(n_lines, 1)), top
 
 
-def _slide_long_two_col(d, W, show, sub, tag, board, g):
-    """横（long）の上半分: 左列に板・右列に show と sub。字幕は呼び手が下に描く（縦と共通）。
+LONG_COL_TOP, LONG_COL_BOTTOM = 120, 700
+
+
+def viz_box(g: Geom, show_bottom: int = 0) -> tuple[int, int, int, int]:
+    """動く図（`studio/viz.py`）の置き場 (x, y, w, h) ＝ **板と同じ所**。
+    縦は show の下（`board_layout` と同じ上端）から板の下端まで・横は左の列。"""
+    if g is LONG:
+        return 50, LONG_COL_TOP, g.w // 2 - 110, LONG_COL_BOTTOM - LONG_COL_TOP
+    top = max(g.board_top_min, show_bottom + 50)
+    return 50, top, g.w - 100, g.board_bottom - top
+
+
+def _slide_long_two_col(im, d, W, show, sub, tag, board, g, viz=None):
+    """横（long）の上半分: 左列に板（か 動く図）・右列に show と sub。字幕は呼び手が下に描く（縦と共通）。
     列の下端は字幕 4行（44px）の箱の上端 734 より上（**700**）に収める。"""
-    col_top, col_bottom = 120, 700
+    col_top, col_bottom = LONG_COL_TOP, LONG_COL_BOTTOM
     mid = W // 2
-    # 左列: 板
+    # 左列: 板（か 図）
     left_w = mid - 110
-    for px in (48, 44, 40, 36):
-        bf = font(FONT_BOLD, px)
-        lh = int(px * 1.45)
-        if lh * len(board) + 60 <= col_bottom - col_top and \
-           max(d.textbbox((0, 0), "▶ " + ln, font=bf)[2] for ln in board) <= left_w - 80:
-            break
-    box_h = lh * len(board) + 60
-    top = col_top + (col_bottom - col_top - box_h) // 2
-    d.rounded_rectangle([50, top, 50 + left_w, top + box_h], radius=24, fill=(0, 0, 0, 140))
-    y = top + 30
-    for k, ln in enumerate(board):
-        last = k == len(board) - 1
-        fill = (255, 225, 120) if last else (235, 235, 235)
-        d.text((90, y), ("▶ " if last else "　 ") + ln, font=bf, fill=fill, stroke_width=3, stroke_fill=(0, 0, 0))
-        y += lh
+    if viz is not None:
+        x, y0, w, h = viz_box(g)
+        im.paste(viz, (x, y0 + (h - viz.height) // 2), viz)
+    elif board:
+        for px in (48, 44, 40, 36):
+            bf = font(FONT_BOLD, px)
+            lh = int(px * 1.45)
+            if lh * len(board) + 60 <= col_bottom - col_top and \
+               max(d.textbbox((0, 0), "▶ " + ln, font=bf)[2] for ln in board) <= left_w - 80:
+                break
+        box_h = lh * len(board) + 60
+        top = col_top + (col_bottom - col_top - box_h) // 2
+        d.rounded_rectangle([50, top, 50 + left_w, top + box_h], radius=24, fill=(0, 0, 0, 140))
+        y = top + 30
+        for k, ln in enumerate(board):
+            last = k == len(board) - 1
+            fill = (255, 225, 120) if last else (235, 235, 235)
+            d.text((90, y), ("▶ " if last else "　 ") + ln, font=bf, fill=fill, stroke_width=3, stroke_fill=(0, 0, 0))
+            y += lh
     # 右列: show（+sub）。列の幅に収まるまで字を下げる
     x0, right_w = mid + 30, W - mid - 80
     lines = show.split("\n") if show else []
@@ -323,7 +359,66 @@ def _slide_long_two_col(d, W, show, sub, tag, board, g):
 
 def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out: Path,
           progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = (),
-          form: str = "short") -> Path:
+          form: str = "short", viz: Image.Image | None = None, fast: bool = False) -> Path:
+    """1コマ 1枚。`viz` は動く図の 1枚（`studio/viz.draw` の RGBA）—— 在れば板の所に置き、板は描かない。
+
+    `fast` は**動く途中の絵**にだけ使う（2026-09-17 21:xx に実測して足した）: `optimize=True` の PNG は
+    写真の背景で **1枚 4秒** かかり（板だけの静止画も同じ ＝ 200コマ の長尺の焼きが 13分 の当のもの）、
+    22枚 の動く絵で 1コマ 100秒 になりました。途中の絵は圧縮を最小にして 0.2秒 に落とし、
+    **ffmpeg が読んだあと `render.build` が消します**（1枚 4MB × 数百枚 を残さない）。最後の 1枚 は今までどおり。"""
+    im = compose(show, sub, say, i, n, image, progress, tag, board, form, viz).convert("RGB")
+    if fast:
+        im.save(out, "PNG", compress_level=1)
+    else:
+        im.save(out, "PNG", optimize=True)
+    return out
+
+
+def slide_frames(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out_dir: Path,
+                 seconds: float, viz_spec: dict, progress: bool = True, tag: str = "",
+                 board: list[str] | tuple[str, ...] = (), form: str = "short") -> list[tuple[Path, float]]:
+    """**動く図のコマ**（オーナー 2026-09-17 20:4x `d699098f`・`studio/viz.py` 冒頭）。
+    (PNG, その絵を出す秒) の列 —— 合計はコマの秒数。最後の 1枚 が `slide-{i:02d}.png`（sheet と同じ名）。"""
+    from . import viz as V
+    g = geom_of(form)
+    _, _, w, h = viz_box(g, _show_bottom(show, sub, tag, True, g))
+    fr = V.frames(viz_spec, seconds, (w, h))
+    out = []
+    for k, (ov, t) in enumerate(fr):
+        last = k == len(fr) - 1
+        p = out_dir / (f"slide-{i:02d}.png" if last else f"slide-{i:02d}-{k:02d}.png")
+        slide(show, sub, say, i, n, image, p, progress, tag, board, form, viz=ov, fast=not last)
+        out.append((p, t))
+    return out
+
+
+def is_transient_frame(p: Path) -> bool:
+    """動く途中の絵の名（`slide-03-07.png`）か。最後の 1枚（`slide-03.png`）は違う。"""
+    return bool(re.fullmatch(r"slide-\d{2}-\d{2}\.png", p.name))
+
+
+def _show_bottom(show: str, sub: str, tag: str, with_board: bool, g: Geom) -> int:
+    """縦で板（か 図）が在るコマの show の下端（`compose` と同じ式・図の高さを決めるために先に要る）。"""
+    if not show or g is LONG:
+        return 0
+    lines = show.split("\n")
+    size = 124 if not with_board else 104
+    d = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    while size > 64:
+        fnt = font(FONT_BLACK, size)
+        if max(d.textbbox((0, 0), ln, font=fnt)[2] for ln in lines) <= g.w - 140:
+            break
+        size -= 8
+    fnt = font(FONT_BLACK, size)
+    sub_n = g.sub_ladder[0][0]
+    block_h = int(len(lines) * size * 1.25) + (int(56 * 1.25 * len(wrap(sub, sub_n))) + 20 if sub else 0)
+    top = g.show_top_with_board + (90 if tag else 0) if with_board else g.show_center - block_h // 2
+    return top + block_h + 40
+
+
+def compose(show: str, sub: str, say: str, i: int, n: int, image: Path | None,
+            progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = (),
+            form: str = "short", viz: Image.Image | None = None) -> Image.Image:
     g = geom_of(form)
     W, H = g.w, g.h
     SUB_BOTTOM = g.sub_bottom
@@ -334,20 +429,26 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
         d.rectangle([60, 70, W - 60, 82], fill=(255, 255, 255, 70))
         d.rectangle([60, 70, 60 + int((W - 120) * i / n), 82], fill=(255, 210, 60, 255))
     board = [b for b in board if b]
+    # **図が在るコマは板を描かない**（同じ所を使う・`viz.py` 冒頭）。show の置き方は板が在るときと同じ
+    if viz is not None:
+        board_like = True
+        board = []
+    else:
+        board_like = bool(board)
     show_bottom = 0
-    if g is LONG and board:
+    if g is LONG and (board or viz is not None):
         # **横（long）は 2列**（2026-09-14 22:4x・optimizer・Fable。長尺の 1本目 の sheet で踏んだ）:
         # 縦の並び（show → 板 → 字幕）を 1920x1080 にそのまま当てると、板の上端が show の下（≈650）に来て
         # `board_bottom`（660）を割り、板が字幕の箱（734〜1020）の上に重なって描かれました（34コマ 中 板 3行以上 の全部）。
         # 横では **左に板・右に show と sub・下に字幕** を置く（字幕は共通の側）。縦の絵は 1バイトも動かしません。
         # 覆る条件: (1) 板 5行 が 左列（幅 W/2-110）に収まらない本が出たら、行数ではなく字（ladder）を下げること。
         # (2) オーナーが横の画面に言葉を出したら、その言葉が正本。
-        _slide_long_two_col(d, W, show, sub, tag, board, g)
+        _slide_long_two_col(im, d, W, show, sub, tag, board, g, viz)
         show_bottom = -1   # 板は描いた（下の共通の枝を通らない）
     # 大きい字（行は書き手の \n で決まる。幅に収まるまで字を小さくする。語の途中で折らない）
     if show and show_bottom == 0:
         lines = show.split("\n")
-        size = 124 if not board else 104
+        size = 124 if not board_like else 104
         while size > 64:
             fnt = font(FONT_BLACK, size)
             if max(d.textbbox((0, 0), ln, font=fnt)[2] for ln in lines) <= W - 140:
@@ -356,7 +457,7 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
         fnt = font(FONT_BLACK, size)
         sub_n = g.sub_ladder[0][0]
         block_h = int(len(lines) * size * 1.25) + (int(56 * 1.25 * len(wrap(sub, sub_n))) + 20 if sub else 0)
-        top = g.show_top_with_board + (90 if tag else 0) if board else g.show_center - block_h // 2
+        top = g.show_top_with_board + (90 if tag else 0) if board_like else g.show_center - block_h // 2
         d.rounded_rectangle([40, top - 50, W - 40, top + block_h + 40], radius=30, fill=(0, 0, 0, 110))
         y = draw_text_block(d, lines, fnt, top, (255, 255, 255), stroke_w=6, width=W)
         if sub:
@@ -369,6 +470,11 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
             tx, ty = (W - tw) // 2, top - 50 - 84
             d.rounded_rectangle([tx - 36, ty - 8, tx + tw + 36, ty + 64], radius=32, fill=TAG_COLORS.get(tag, TAG_DEFAULT) + (255,))
             d.text((tx, ty), tag, font=tf, fill=(255, 255, 255))
+    # 動く図（まん中・板と同じ所）
+    if viz is not None and show_bottom >= 0:
+        x, y0, w, h = viz_box(g, show_bottom)
+        ov = viz if viz.size == (w, h) else viz.resize((w, h))
+        im.paste(ov, (x, y0), ov)
     # 板（まん中）: そのコマまでの前提と数の積み上がり。最後の行がいまのコマの行（黄色）
     if board and show_bottom >= 0:
         px, lh, top = board_layout(len(board), show_bottom, g)
@@ -399,8 +505,7 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
         top = SUB_BOTTOM - box_h
         d.rounded_rectangle([50, top, W - 50, SUB_BOTTOM], radius=24, fill=(0, 0, 0, 165))
         draw_text_block(d, lines, fnt, top + 25, (255, 255, 255), gap=1.35, width=W)
-    im.convert("RGB").save(out, "PNG", optimize=True)
-    return out
+    return im
 
 
 def contact_sheet(pngs: list[Path], out: Path, cols: int = 4) -> Path:

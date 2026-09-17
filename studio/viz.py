@@ -1,0 +1,408 @@
+"""動く図 —— 分かりにくい仕組みと計算を、**動く表・棒・引き算**で画面に置く。
+
+オーナー 2026-09-17 20:4x JST（受け取り帳 `d699098f`・**一字も変えないこと**）:
+
+    「アニメーションとか画像でイメージしやすくって言ったのはさ、わかりにくい仕組みとか計算とかを
+     動く表とかいろんなグラフとかあるいは何かを表したアニメーションとかにしないと意味ないでしょ。」
+
+**この回（2026-09-17 21:0x・optimizer・Fable 5.1・ultracode）に数えた事実**:
+  * 09/16 12:1x「説明のパートごとにアニメーションとか画像で」（`751f4947`）に当てたのは
+    **部ごとの背景の絵**（`Segment.image`・GPT Image 2.0 の写真）でした。**動く物は 1つも無く**、
+    画面で計算を見せているのは **板（`board`）の字だけ**です（実物: 16本・すべて 1コマ 1枚 の静止画）。
+  * オーナーが言っているのは背景ではなく、**分かりにくい所そのもの**（仕組み・計算）を
+    **動く表・グラフ・アニメーション**にすること。写真の背景は、それを 1つも持ちません。
+
+**形**: `Segment.viz` に図の指定を書くと、そのコマは **1枚 の静止画ではなく、動く数枚** になります
+（`render.build` が `slides.slide_frames` を呼び、ffmpeg の concat に短い刻で並べる）。
+書かなければ **1コマ 1枚 のまま**（既に在る本は 1画素も動かない・指紋も動かない）。
+
+    {"kind": "bars",      "title": "…", "items": [{"label": "…", "value": 75500}, …],
+                          "total": {"label": "…", "value": 153300}}         # 棒が順に伸び、数が数え上がる
+    {"kind": "waterfall", "title": "…", "start": {"label": "年金", "value": 1800000},
+                          "steps": [{"label": "控除", "value": 1100000}, …],
+                          "end": {"label": "所得", "value": 700000}}          # 1本 の棒から、引く分が赤く切れていく
+    {"kind": "table",     "title": "…", "head": ["…", "…"], "rows": [["…", "…"], …]}   # 行が 1つずつ出る（最後の行が黄色）
+
+    値は **円の整数**（`fmt_num` が 7万5500円 の形にする・`unit` で変えられる）。
+    `text` を書けばその字をそのまま出す（率や「0円にならない」のような字）。
+
+**置き場**: 板（`board`）と同じ所（縦は show の下 y 600〜1080・横は左の列）。
+**同じコマに `board` と `viz` が両方 在れば `viz` が勝ちます**（板の字は critique には渡り続ける）。
+
+**時間**: 動くのはコマの頭 `anim_seconds()`（0.6〜1.8秒・コマの 45%）で、残りは最後の絵で止まる
+（声がその数を言い終わるより先に絵が出来ている・止まってから読める）。刻は `FPS`。
+
+覆る条件:
+ (1) 図を入れた本 3本 の維持率（`data/retention.json` の 25%・50%）が、板だけの本 3本 を下回ったら、
+     図は気を散らす側 ＝ `anim_seconds` を 0 にして（動かない図）から疑うこと。**口は残す。**
+ (2) 図が要る所（計算・しくみ）で、この 3つ の形（棒・引き算・表）に収まらない本が 2本 出たら、
+     4つ目 の形（例: 齢 → 額 の折れ線・「何歳で元が取れるか」）を足すこと（`KINDS`）。
+ (3) オーナーが画面の動きに言葉を出したら、その言葉が正本。
+"""
+from __future__ import annotations
+
+import math
+import re
+
+from PIL import Image, ImageDraw, ImageFont
+
+FONT_BOLD = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+FONT_BLACK = "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc"
+
+KINDS = ("bars", "waterfall", "table")
+FPS = 12                 # 動く刻（1秒 12枚。ffmpeg は 30fps に伸ばす）
+MAX_ITEMS = 6            # 棒・行の数の上限（縦 480px に 7行 は入らない）
+MAX_LABEL = 14           # 札の字数（板の 1行 と同じ）
+MAX_CELL = 12            # 表の 1マス
+_TEN = re.compile(r"点|[0-9０-９]\.[0-9０-９]")
+
+BLUE = (70, 130, 220)
+RED = (220, 80, 70)
+YELLOW = (255, 225, 120)
+ORANGE = (220, 150, 40)
+GREEN = (60, 160, 90)
+WHITE = (245, 245, 245)
+GRAY = (170, 170, 170)
+COLORS = {"blue": BLUE, "red": RED, "yellow": YELLOW, "orange": ORANGE, "green": GREEN}
+
+
+def fmt_num(v: float, unit: str = "円") -> str:
+    """1800000 → 180万円・75500 → 7万5500円・153300 → 15万3300円・-12800 → −1万2800円。"""
+    v = int(round(v))
+    neg = v < 0
+    v = abs(v)
+    if v >= 10 ** 8:
+        oku, rest = divmod(v, 10 ** 8)
+        man, rest = divmod(rest, 10 ** 4)
+        s = f"{oku}億" + (f"{man}万" if man else "") + (f"{rest}" if rest else "")
+    elif v >= 10 ** 4:
+        man, rest = divmod(v, 10 ** 4)
+        s = f"{man}万" + (f"{rest}" if rest else "")
+    else:
+        s = f"{v}"
+    return ("−" if neg else "") + s + unit
+
+
+def _text(item: dict, unit: str, scale: float = 1.0) -> str:
+    """項目の字。`text` が在ればそのまま・無ければ値を `fmt_num`。数え上がりの途中は 100 の刻で丸める。"""
+    if item.get("text") and scale >= 1.0:
+        return str(item["text"])
+    v = float(item.get("value", 0)) * scale
+    if scale < 1.0 and abs(v) >= 10000:
+        v = round(v / 100) * 100
+    return fmt_num(v, unit)
+
+
+def check(spec: dict, where: str = "") -> list[str]:
+    """形の検査（`Script.problems()` が呼ぶ・**止める**）。空なら通る。"""
+    out = []
+    pre = f"{where} viz" if where else "viz"
+    if not isinstance(spec, dict):
+        return [f"{pre} は dict で書く"]
+    kind = spec.get("kind")
+    if kind not in KINDS:
+        return [f"{pre} kind「{kind}」は {'／'.join(KINDS)} のどれかに"]
+    labels: list[str] = [str(spec.get("title") or "")]
+    if kind == "bars":
+        items = spec.get("items") or []
+        if not items:
+            out.append(f"{pre} items が空")
+        if len(items) > MAX_ITEMS:
+            out.append(f"{pre} items が {len(items)}（{MAX_ITEMS}まで）")
+        for it in items + ([spec["total"]] if spec.get("total") else []):
+            labels.append(str(it.get("label", "")))
+            if "value" not in it and "text" not in it:
+                out.append(f"{pre} 「{it.get('label')}」に value も text も無い")
+    elif kind == "waterfall":
+        for key in ("start", "end"):
+            if not isinstance(spec.get(key), dict) or "value" not in spec[key]:
+                out.append(f"{pre} {key} に value が無い")
+            else:
+                labels.append(str(spec[key].get("label", "")))
+        steps = spec.get("steps") or []
+        if not steps:
+            out.append(f"{pre} steps が空")
+        if len(steps) > MAX_ITEMS - 2:
+            out.append(f"{pre} steps が {len(steps)}（{MAX_ITEMS - 2}まで）")
+        for st in steps:
+            labels.append(str(st.get("label", "")))
+            if "value" not in st:
+                out.append(f"{pre} step「{st.get('label')}」に value が無い")
+        if not out:
+            got = float(spec["start"]["value"]) - sum(abs(float(st["value"])) for st in steps)
+            want = float(spec["end"]["value"])
+            if abs(got - want) > 0.5:
+                out.append(f"{pre} start − steps ＝ {fmt_num(got)} で end の {fmt_num(want)} と合わない")
+    elif kind == "table":
+        rows = spec.get("rows") or []
+        head = spec.get("head") or []
+        if not rows:
+            out.append(f"{pre} rows が空")
+        if len(rows) > MAX_ITEMS:
+            out.append(f"{pre} rows が {len(rows)}（{MAX_ITEMS}まで）")
+        ncol = len(head) if head else (len(rows[0]) if rows else 0)
+        if ncol < 2 or ncol > 4:
+            out.append(f"{pre} 列は 2〜4（いま {ncol}）")
+        for r in rows:
+            if len(r) != ncol:
+                out.append(f"{pre} 行「{'/'.join(map(str, r))}」の列数が {len(r)}（見出しは {ncol}）")
+            for c in r:
+                if len(str(c)) > MAX_CELL:
+                    out.append(f"{pre} マス「{c}」が {len(str(c))}字（{MAX_CELL}まで）")
+                labels.append(str(c))
+        labels += [str(h) for h in head]
+    for lb in labels:
+        if len(lb) > MAX_LABEL and kind != "table":
+            out.append(f"{pre} 札「{lb}」が {len(lb)}字（{MAX_LABEL}まで）")
+        m = _TEN.search(lb)
+        if m:
+            out.append(f"{pre} に「{m.group()}」（点・小数）。整数で言い換える")
+    return out
+
+
+def describe(spec: dict) -> str:
+    """critique と 指紋 に渡す 1行（**画面に出る数と字を全部 含む**・絵の寸法は含まない）。"""
+    unit = spec.get("unit", "円")
+    kind = spec.get("kind")
+    t = f"{spec['title']}: " if spec.get("title") else ""
+    if kind == "bars":
+        parts = [f"{it.get('label', '')} {_text(it, unit)}" for it in spec.get("items", [])]
+        if spec.get("total"):
+            parts.append(f"＝ {spec['total'].get('label', '')} {_text(spec['total'], unit)}")
+        return f"棒グラフ（順に伸びる）{t}" + " ／ ".join(parts)
+    if kind == "waterfall":
+        st, en = spec.get("start", {}), spec.get("end", {})
+        parts = [f"{st.get('label', '')} {_text(st, unit)}"]
+        parts += [f"− {s.get('label', '')} {fmt_num(abs(float(s.get('value', 0))), unit)}" for s in spec.get("steps", [])]
+        parts.append(f"＝ {en.get('label', '')} {_text(en, unit)}")
+        return f"引き算の棒（引く分が赤く切れる）{t}" + " ".join(parts)
+    if kind == "table":
+        head = spec.get("head") or []
+        rows = [" | ".join(map(str, r)) for r in spec.get("rows", [])]
+        return f"表（行が 1つずつ出る）{t}" + (f"[{' | '.join(map(str, head))}] " if head else "") + " ／ ".join(rows)
+    return f"図 {kind}"
+
+
+def anim_seconds(seconds: float) -> float:
+    """動く長さ。コマの 45%・0.6〜1.8秒。1秒 に満たないコマは動かない（最後の絵だけ）。"""
+    if seconds < 1.0:
+        return 0.0
+    return max(0.6, min(1.8, seconds * 0.45))
+
+
+def _font(path: str, size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(path, size, index=0)
+
+
+def _fit(d: ImageDraw.ImageDraw, text: str, path: str, size: int, width: int, floor: int = 22) -> ImageFont.FreeTypeFont:
+    """幅に収まるまで字を下げる。"""
+    while size > floor:
+        f = _font(path, size)
+        if d.textbbox((0, 0), text, font=f)[2] <= width:
+            return f
+        size -= 2
+    return _font(path, floor)
+
+
+def _title(d: ImageDraw.ImageDraw, spec: dict, W: int, pad: int) -> int:
+    t = spec.get("title") or ""
+    if not t:
+        return pad
+    f = _fit(d, t, FONT_BOLD, 40, W - 2 * pad)
+    d.text((pad, pad), t, font=f, fill=WHITE, stroke_width=2, stroke_fill=(0, 0, 0))
+    return pad + int(f.size * 1.35) + 6
+
+
+def _slot(k: int, n: int, p: float) -> float:
+    """k 番目（0〜）の項目の進み（0〜1）。全体の進み p を n 等分し、順に動かす。"""
+    if n <= 0:
+        return 1.0
+    a, b = k / n, (k + 1) / n
+    return 0.0 if p <= a else (1.0 if p >= b else (p - a) / (b - a))
+
+
+def _ease(x: float) -> float:
+    return 1 - (1 - x) ** 3
+
+
+def _value_w(d, vf, values: list[float], unit: str, texts: list[str] = ()) -> int:
+    """値の字のために右に空ける幅。**数え上がりの途中の字（96万2500円）は最後の字（110万円）より長い**ので、
+    途中の値も測る（実物: 動く途中で右端が箱から出た・2026-09-17 21:xx）。"""
+    cands = list(texts)
+    for v in values:
+        for f in (1.0, 0.93, 0.71, 0.37):
+            vv = v * f
+            if f < 1.0 and abs(vv) >= 10000:
+                vv = round(vv / 100) * 100
+            cands.append(fmt_num(vv, unit))
+    return max((d.textbbox((0, 0), c, font=vf)[2] for c in cands if c), default=0) + 16
+
+
+def _bar_rows(d, W, H, top, pad, rows: list[tuple[str, str, float, tuple, float]], maxv: float, unit: str = "円"):
+    """rows: (札, 値の字, 値, 色, 進み)。札 → 棒 → 値 の 1行 を、行の数に合わせた字で描く。"""
+    n = len(rows)
+    row_h = min(100, (H - top - pad) // max(n, 1))
+    fsz = max(24, min(40, int(row_h * 0.42)))
+    lf = _font(FONT_BOLD, fsz)
+    vf = _font(FONT_BLACK, fsz + 2)
+    label_w = min(int(W * 0.34), max(d.textbbox((0, 0), lb, font=lf)[2] for lb, *_ in rows) + 16)
+    value_w = _value_w(d, vf, [v for _, _, v, *_ in rows], unit, [vt for _, vt, *_ in rows])
+    x0 = pad + label_w
+    bar_w = max(60, W - pad - value_w - x0 - 16)
+    bh = int(row_h * 0.52)
+    y = top
+    for lb, vt, v, color, prog in rows:
+        cy = y + row_h // 2
+        d.text((pad, cy - fsz // 2 - 4), lb, font=lf, fill=WHITE, stroke_width=2, stroke_fill=(0, 0, 0))
+        if prog > 0:
+            wv = int(bar_w * (abs(v) / maxv if maxv else 0) * _ease(prog))
+            d.rounded_rectangle([x0, cy - bh // 2, x0 + max(wv, 6), cy + bh // 2], radius=8, fill=color)
+            d.text((x0 + max(wv, 6) + 14, cy - fsz // 2 - 4), vt, font=vf, fill=color if color != BLUE else YELLOW,
+                   stroke_width=2, stroke_fill=(0, 0, 0))
+        y += row_h
+
+
+def _draw_bars(d, spec, W, H, p, unit, pad):
+    top = _title(d, spec, W, pad)
+    items = list(spec.get("items") or [])
+    total = spec.get("total")
+    n = len(items) + (1 if total else 0)
+    vals = [abs(float(it.get("value", 0))) for it in items] + ([abs(float(total.get("value", 0)))] if total else [])
+    maxv = max(vals) if vals else 1.0
+    rows = []
+    for k, it in enumerate(items):
+        pr = _slot(k, n, p)
+        rows.append((str(it.get("label", "")), _text(it, unit, _ease(pr)) if pr > 0 else "",
+                     float(it.get("value", 0)), COLORS.get(it.get("color", ""), BLUE), pr))
+    if total:
+        pr = _slot(n - 1, n, p)
+        rows.append((str(total.get("label", "")), _text(total, unit, _ease(pr)) if pr > 0 else "",
+                     float(total.get("value", 0)), COLORS.get(total.get("color", ""), YELLOW), pr))
+    _bar_rows(d, W, H, top, pad, rows, maxv, unit)
+
+
+def _draw_waterfall(d, spec, W, H, p, unit, pad):
+    top = _title(d, spec, W, pad)
+    st, en = spec["start"], spec["end"]
+    steps = list(spec.get("steps") or [])
+    n = 2 + len(steps)
+    row_h = min(110, (H - top - pad) // n)
+    fsz = max(24, min(40, int(row_h * 0.40)))
+    lf = _font(FONT_BOLD, fsz)
+    vf = _font(FONT_BLACK, fsz + 2)
+    labels = [str(st.get("label", ""))] + [f"− {s.get('label', '')}" for s in steps] + [str(en.get("label", ""))]
+    label_w = min(int(W * 0.34), max(d.textbbox((0, 0), lb, font=lf)[2] for lb in labels) + 16)
+    total = abs(float(st.get("value", 0))) or 1.0
+    value_w = _value_w(d, vf, [total] + [abs(float(s.get("value", 0))) for s in steps] + [float(en.get("value", 0))],
+                       unit, [_text(st, unit), _text(en, unit)])
+    x0 = pad + label_w
+    bar_w = max(60, W - pad - value_w - x0 - 16)
+    bh = int(row_h * 0.50)
+    y = top
+    # 1行目: もとの棒
+    pr = _slot(0, n, p)
+    cy = y + row_h // 2
+    d.text((pad, cy - fsz // 2 - 4), labels[0], font=lf, fill=WHITE, stroke_width=2, stroke_fill=(0, 0, 0))
+    if pr > 0:
+        wv = int(bar_w * _ease(pr))
+        d.rounded_rectangle([x0, cy - bh // 2, x0 + max(wv, 6), cy + bh // 2], radius=8, fill=BLUE)
+        d.text((x0 + max(wv, 6) + 14, cy - fsz // 2 - 4), _text(st, unit, _ease(pr)), font=vf, fill=YELLOW,
+               stroke_width=2, stroke_fill=(0, 0, 0))
+    y += row_h
+    # 引く分: 残りの棒（青）の右端が赤く切れていく
+    remain = total
+    for k, s in enumerate(steps, 1):
+        pr = _slot(k, n, p)
+        cy = y + row_h // 2
+        d.text((pad, cy - fsz // 2 - 4), labels[k], font=lf, fill=WHITE, stroke_width=2, stroke_fill=(0, 0, 0))
+        cut = abs(float(s.get("value", 0)))
+        if pr > 0:
+            w_rem = int(bar_w * remain / total)
+            w_cut = int(bar_w * cut / total * _ease(pr))
+            d.rounded_rectangle([x0, cy - bh // 2, x0 + max(w_rem, 6), cy + bh // 2], radius=8, fill=BLUE)
+            if w_cut > 0:
+                d.rounded_rectangle([x0 + w_rem - w_cut, cy - bh // 2, x0 + w_rem, cy + bh // 2], radius=8, fill=RED)
+            d.text((x0 + max(w_rem, 6) + 14, cy - fsz // 2 - 4), fmt_num(cut * _ease(pr), unit) if pr < 1 else fmt_num(cut, unit),
+                   font=vf, fill=RED, stroke_width=2, stroke_fill=(0, 0, 0))
+        remain -= cut
+        y += row_h
+    # 最後: 残り（黄色）
+    pr = _slot(n - 1, n, p)
+    cy = y + row_h // 2
+    d.text((pad, cy - fsz // 2 - 4), labels[-1], font=lf, fill=WHITE, stroke_width=2, stroke_fill=(0, 0, 0))
+    if pr > 0:
+        wv = int(bar_w * max(remain, 0) / total * _ease(pr))
+        d.rounded_rectangle([x0, cy - bh // 2, x0 + max(wv, 6), cy + bh // 2], radius=8, fill=YELLOW)
+        d.text((x0 + max(wv, 6) + 14, cy - fsz // 2 - 4), _text(en, unit, _ease(pr)), font=vf, fill=YELLOW,
+               stroke_width=2, stroke_fill=(0, 0, 0))
+
+
+def _draw_table(d, spec, W, H, p, unit, pad):
+    # 箱が低い（縦で show が 4行 のコマ ＝ 約 300px）ときは題を描かない —— 題＋見出し＋4行 を 300px に入れると
+    # 字が 24px まで落ちる（実物: 09/18 ショートのコマ8・sheet）。題は show が同じ字を持っている。
+    top = _title(d, spec, W, pad) if H >= 360 else pad
+    head = [str(h) for h in (spec.get("head") or [])]
+    rows = [[str(c) for c in r] for r in (spec.get("rows") or [])]
+    ncol = len(head) if head else len(rows[0])
+    n = len(rows) + (1 if head else 0)
+    row_h = min(96, (H - top - pad) // max(n, 1))
+    fsz = max(24, min(40, int(row_h * 0.55)))     # 表は棒より行に余白が無いので、字は行の 55%（実物で 0.42 は小さすぎた）
+    widths = spec.get("widths") or [1] * ncol
+    tw = sum(widths)
+    col_x = [pad]
+    for wgt in widths:
+        col_x.append(col_x[-1] + int((W - 2 * pad) * wgt / tw))
+    # 字は、いちばん狭いマスに収まる大きさ
+    for r in ([head] if head else []) + rows:
+        for j, c in enumerate(r):
+            f = _fit(d, c, FONT_BOLD, fsz, col_x[j + 1] - col_x[j] - 20)
+            fsz = min(fsz, f.size)
+    f = _font(FONT_BOLD, fsz)
+    y = top
+    shown = int(math.floor(p * len(rows) + 1e-9)) if p < 1 else len(rows)
+    if head:
+        d.rectangle([pad, y, W - pad, y + row_h], fill=(255, 255, 255, 40))
+        for j, c in enumerate(head):
+            d.text((col_x[j] + 10, y + (row_h - fsz) // 2 - 4), c, font=f, fill=GRAY)
+        y += row_h
+    for k, r in enumerate(rows):
+        if k >= shown:
+            break
+        last = k == shown - 1 and k == len(rows) - 1 or (k == shown - 1 and p < 1)
+        if last:
+            d.rectangle([pad, y, W - pad, y + row_h], fill=(255, 225, 120, 45))
+        d.line([(pad, y + row_h), (W - pad, y + row_h)], fill=(255, 255, 255, 60), width=2)
+        for j, c in enumerate(r):
+            d.text((col_x[j] + 10, y + (row_h - fsz) // 2 - 4), c, font=f,
+                   fill=YELLOW if last else WHITE, stroke_width=2, stroke_fill=(0, 0, 0))
+        y += row_h
+
+
+_DRAW = {"bars": _draw_bars, "waterfall": _draw_waterfall, "table": _draw_table}
+
+
+def draw(spec: dict, size: tuple[int, int], progress: float = 1.0) -> Image.Image:
+    """図の 1枚（RGBA・黒い半透明の箱つき）。`progress` 0〜1 が動きの進み。"""
+    W, H = size
+    im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im, "RGBA")
+    d.rounded_rectangle([0, 0, W - 1, H - 1], radius=24, fill=(0, 0, 0, 150))
+    _DRAW[spec["kind"]](d, spec, W, H, max(0.0, min(1.0, progress)), spec.get("unit", "円"), 28)
+    return im
+
+
+def frames(spec: dict, seconds: float, size: tuple[int, int]) -> list[tuple[Image.Image, float]]:
+    """(絵, その絵を出す秒) の列。**合計はコマの秒数と同じ**（最後の絵が残りを持つ）。"""
+    a = anim_seconds(seconds)
+    if a <= 0:
+        return [(draw(spec, size, 1.0), seconds)]
+    n = max(1, int(round(a * FPS)))
+    dt = a / n
+    out = [(draw(spec, size, (k + 1) / n), dt) for k in range(n)]
+    hold = seconds - a
+    if hold > 1e-6:
+        out.append((draw(spec, size, 1.0), hold))
+    else:
+        im, t = out[-1]
+        out[-1] = (im, t + hold)
+    return out
