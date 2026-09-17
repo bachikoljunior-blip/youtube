@@ -26,18 +26,40 @@ def test_透かしの絵が在って_YouTubeの決めに合っている():
     assert p.stat().st_size <= 1_000_000, "1MB まで"
 
 
-def test_timingは渡さない():
-    """**渡すと 400 `Invalid Value` が返ります**（2026-09-16 15:4x に撃って確かめた）。
+def test_timingは渡す_durationは0にしない():
+    """**2026-09-17 16:0x に、日枠が戻った窓で 4通り 撃って、通る形を 1つ 見つけました。**
 
-    `{"type": "offsetFromStart", "offsetMs": "15000", "durationMs": "0"}` で落ちた。
-    **空の body ＝ 本のあいだ ずっと出す**で通します。
-    次に触る回へ: 渡すなら `durationMs` を 0 以外にしてから、1回 撃って確かめること。
+    この検査は **`test_timingは渡さない` を置き換えたもの**です。前の名前と中身は
+    「空の body ＝ ずっと出す」という読みの上に立っていましたが、**その読みは撃たれていません**
+    （09/16 15:4x は日枠が尽きた窓で、`timing` の 400 を見て `{}` に替えただけ）。
+
+        `{"timing": {..., "durationMs": "0"}}`   400 `Invalid Value`
+        `{}`（空の body）                         400 `No filter selected. Expected one of: resource`
+        `{"position": ...}` のみ                  400 `Required`
+        **`timing`（durationMs > 0）＋ `position`   通った**
+
+    ＝ **要るのは `timing` で、`durationMs` は 0 にできません。**
+    「出しっぱなし」は**長い `durationMs`** で作ります（既定 30分 ＝ 長尺の狙い 15〜30分 を覆う）。
+
+    **覆る条件**: `channels`／`watermarks` の口が変わって `{}` や `durationMs: 0` が通るように
+    なったら、**撃って確かめてから**この検査を書き直すこと（**撃たずに書き替えないこと** ——
+    この検査が置き換えた側が、まさにそれでした）。
     """
     import inspect
     src = inspect.getsource(yt.set_watermark)
-    assert "if offset_ms and duration_ms:" in src, \
-        "既定（duration_ms=0）で `timing` を渡さないこと ＝ 400 になります"
-    assert yt.set_watermark.__defaults__[2] == 0, "duration_ms の既定は 0（＝ timing を渡さない）"
+    assert "position" in src, "`position` を渡すこと（body が空だと 400）"
+    assert '"timing"' in src, "`timing` を渡すこと（無いと 400 `Required`）"
+    d = yt.set_watermark.__defaults__[2]
+    assert d and d > 0, f"duration_ms の既定は 0 より大きいこと（いま {d}・0 は 400 `Invalid Value`）"
+
+
+def test_透かしの長さは長尺の狙いを覆う():
+    """**陽性対照**: 既定の `duration_ms` が、長尺の狙い（`script.LONG_TARGET_SECONDS`）より短いと、
+    本の途中で登録の口が消えます。**狙いを伸ばした回が、ここも一緒に見るための行。**"""
+    from studio import script
+    d_ms = yt.set_watermark.__defaults__[2]
+    assert d_ms / 1000.0 >= script.LONG_TARGET_SECONDS, \
+        f"透かし {d_ms / 60000:.0f}分 が長尺の狙い {script.LONG_TARGET_SECONDS / 60:.0f}分 を覆っていません"
 
 
 def test_絵の出どころは1か所():
