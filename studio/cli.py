@@ -243,6 +243,19 @@ def meta_drift(video_id: str, rd: dict, rows: list[dict] | None = None) -> list[
     return drift_fields(rd, s)
 
 
+def script_of(video_id: str, rows: list[dict] | None = None):
+    """その video に紐づく**台本そのもの**（`script_title_of` と同じ引き方）。無ければ None。"""
+    rows = ledger_rows() if rows is None else rows
+    sid = next((r.get("id") for r in reversed(rows)
+                if r.get("event") == "scheduled" and r.get("video_id") == video_id), None)
+    if not sid:
+        return None
+    try:
+        return script.load(sid)
+    except FileNotFoundError:
+        return None
+
+
 def script_title_of(video_id: str, rows: list[dict] | None = None) -> str | None:
     """その video に紐づく**台本の題**（台帳 `scheduled` の `video_id` → `id` → `script.load`）。
 
@@ -275,6 +288,37 @@ def drift_fields(rd: dict, s) -> list[str]:
     if set(rd.get("tags") or []) != {t[:30] for t in s.tags[:15]}:
         out.append("tags")
     return out
+
+
+def desc_appended(rd: dict, s) -> str | None:
+    """**live の説明欄が、台本の説明欄の後ろに何かを足した形**なら、その足された分を返す。
+
+    2026-09-18 05:xx（optimizer・Fable 5.1・ultracode）に足した。**実物で踏みかけたから**です ——
+    09/18 の 5本 は 3周 続けて `!! 台本と食い違い: 説明欄 → update_meta(...)` と印字していました。
+    引いて見ると（`videos.list` 1単位）、**live は台本を 1字も変えずに含んでいて、
+    後ろに §33 の橋（【くわしい計算（長尺）】＋ 連作の URL）が 4行 足されている**だけでした
+    （script 2,374字 → live 2,654字）。
+
+    **＝ そこで `update_meta(<videoId>, s.title, s.description, s.tags)` を撃つと、
+    橋が 5本 とも消えます**（50単位 × 5 を払って、前の周の仕事を壊す）。
+    `meta_mark` は **題**についてだけ同じ向きを見分けていました（台帳 `retitled`）——
+    **説明欄には、その向きを見る口がありませんでした**（`meta_mark` の覆る条件 (2) が
+    「説明欄・tags にも出たら欄ごとに広げること」と名指ししていた当の穴）。
+
+    **なぜ台帳ではなく字で見るか**: 橋を足した回は台帳に印を残していません
+    （`retitled` に当たる `redescribed` が無い）。**字の形（前方一致）は、印が無くても引けます。**
+
+    **覆る条件**:
+     (1) 説明欄を**書き換える**（足すのではなく直す）回が出たら、前方一致では引けません
+         ＝ そのときは台帳に `redescribed` を 1行 足してから撃つこと（`retitled` と同じ形・門は 1か所）。
+     (2) 台本の側を直したら、この行は自分で消えます（前方一致が全一致になる）。
+     (3) **足された分が空白だけなら、これは食い違いではありません** —— `_trim` が先に当てます。
+    """
+    live = _trim(rd.get("description"))
+    mine = _trim(getattr(s, "description", None))
+    if not mine or live == mine or not live.startswith(mine):
+        return None
+    return live[len(mine):].strip()
 
 
 def _trim(x: str | None) -> str:
@@ -322,7 +366,8 @@ def retitled_title(vid: str, rows: list[dict] | None = None) -> str | None:
 
 
 def meta_mark(drift: list[str] | None, vid: str | None = None,
-              rows: list[dict] | None = None, script_title: str | None = None) -> str:
+              rows: list[dict] | None = None, script_title: str | None = None,
+              added: str | None = None) -> str:
     """食い違いの行。**`retitled` の本は、向きが逆です。**
 
     2026-09-16 01:4x（optimizer・Fable・ultracode）に向きを足した。**踏みかけたから**です ——
@@ -343,6 +388,19 @@ def meta_mark(drift: list[str] | None, vid: str | None = None,
         return ""
     if not drift:
         return "台本と一致（題・説明欄・tags）"
+    # **説明欄に足された分が在る ＝ live が新・台本が旧**（`desc_appended` の註）。
+    # **`update_meta` を撃つと、足した分が消えます。**
+    if added and "説明欄" in drift:
+        head = added.split("\n", 1)[0][:40]
+        rest = [d for d in drift if d != "説明欄"]
+        tail = (f"\n             （ほかの欄の食い違い: {'・'.join(rest)}"
+                " —— そちらは `update_meta` でよい）") if rest else ""
+        return ("!! 台本と食い違い: 説明欄 —— **live のほうが新しい**"
+                f"（台本を丸ごと含み、後ろに {len(added)}字 足されています: 「{head}…」）。"
+                "\n             **`update_meta` を撃つと、その足した分が消えます**"
+                "（§33 の橋・50単位 を払って前の周の仕事を壊す側）。"
+                "\n             → 直すのは台本の `description`"
+                "（`data/studio/scripts/<id>.json`）。**API 0単位**" + tail)
     was = retitled_title(vid, rows) if vid else None
     if was is not None and "題" in drift and _trim(was) != _trim(script_title or ""):
         return (f"!! 台本と食い違い: {'・'.join(drift)} —— **この本は台帳 `retitled` の本です"
@@ -748,7 +806,9 @@ def cmd_status(a):
                 mark = f"!! 処理 {rd['upload']}/{rd['processing']} 失敗 {rd['failure'] or rd['rejection']}"
             print(f"           {mark}（upload {rd['upload']}・processing {rd['processing']}）")
             drift = meta_drift(v["id"], rd)
-            mm = meta_mark(drift, v["id"], script_title=script_title_of(v["id"]))
+            _s = script_of(v["id"])
+            mm = meta_mark(drift, v["id"], script_title=script_title_of(v["id"]),
+                           added=(desc_appended(rd, _s) if _s is not None else None))
             if mm:
                 print(f"           {mm}")
             # 印字だけにしないこと（`record_ready` の註 ＝ 同じ族の 4つ目）。**追加 0単位。**
