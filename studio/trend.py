@@ -2460,6 +2460,14 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  ＝ 毎周 自分に訊く数を 1つ にするための行。**決めと覆る条件は `long_per_video` の註と
     #  GOAL (4-s) ＝ ここへ数を写さないこと。**（**API 0単位**・台帳と台本を読むだけ）
     out.append(long_per_video_line(rows, now=now))
+    # **形ごとの 1本あたり再生**（2026-09-17 19:xx に足した・METHOD §5「形の配り」）——
+    #  すぐ上の行は**長尺だけ**を分母にするので、「その形に配りの口が在るか」を訊けません。
+    #  同じ作り・同じ族・同じ齢の門で、**ショートと長尺を並べて出す**のがこの行です
+    #  （09/17 の実測: ショート 中央 719回/本 対 長尺 中央 1回/本）。
+    #  **決めと覆る条件は `form_yield` の註と METHOD §5 ＝ ここへ数を写さないこと。**
+    #  **この行は「ショートにしろ」と言いません** —— 扉(b)（4,000時間）にショートの視聴は
+    #  1秒も入らないので、形の配りは 1つ の数では決まりません（GOAL (4-g) 1）。
+    out.append(form_yield_line(rows))
     # **題材の段**（2026-09-17 17:4x・optimizer・Fable 5.1・ultracode。**API 0単位**・disk だけ）。
     #  すぐ上の 1つ の数（長尺 1本あたりの再生）を、**いちばん大きく動かす入力**です ——
     #  同じ corpus を検索語ごとに割ると、**中央が 3,187倍 違います**
@@ -7669,3 +7677,112 @@ def long_per_video_line(rows: list[dict], now: "dt.datetime | None" = None,
     gap = d["need"][mid_rpm] / max(d["median"], 1.0)
     return (head + f"いま **{d['median']:,.0f}回/本**（測った長尺 {d['n_measured']}本 / {d['n_long']}本）"
             f" 対 {band} ＝ **{gap:,.0f}倍**")
+
+
+# ---------------------------------------------------------------------------
+# **形ごとの歩留り —— 同じ台本の作りで、どちらの形に再生が付いているか**
+# （2026-09-17 19:xx・optimizer・Fable 5.1・ultracode。決めと覆る条件は `docs/METHOD.md` §5 の
+#   「形の配り」と `docs/JOURNAL.md` 2026-09-17 19:xx）
+#
+# **なぜ足したか**（固定 2「期限内にできるか → できる以外なら やり方を疑え」で、この回が疑った先）:
+#   すぐ上の `long_per_video` は **長尺だけ**を分母にします。分母が 1つ の形しか無い数は、
+#   「その形に再生が付いているか」を**訊けません** —— 09/17 15:0x の §5 が
+#   「手を選ぶときに訊く数は 1つ ＝ 長尺 1本あたりの再生」と決めたあと、
+#   **10:00 の枠（ショート）が予定から消え**、09/17 は 3枠 とも長尺になりました。
+#   同じ台本の作り・同じ声・同じ族で、**齢24h 以上の実測**は:
+#       ショート 中央 719回/本（n=11） 対 長尺 中央 1回/本（n=3）
+#   ＝ **配りの口が形で桁違い**で、長尺の側だけを見ている限りこの差は 1度も印字されません。
+#   **門（登録1,000人）は扉(a)(b) の両方の前に立つ AND 条件**（`docs/GOAL.md` の実測）なので、
+#   登録を運べる形を落とすと、扉(b) の側も開きません。
+#
+# **この行は「ショートにしろ」と言いません** —— 扉(b)（4,000時間）にショートの視聴は
+#   1秒も入らない（GOAL (4-g) 1）ので、**形の配りは 1つ の数では決まりません。**
+#   この行が言うのは **「いまどちらに再生が付いているか」だけ**で、決めは §5 です。
+#
+# **覆る条件**:
+#  (1) 長尺の中央が ショートの中央の **1/10 以上**に上がったら、この差は配りの口の話ではなく
+#      本の中身の話 ＝ §5 の「形の配り」を引き直すこと。
+#  (2) **n が片側 3本 未満のあいだは、倍率を読まないこと**（`FORM_MIN_N`）。
+#      中央は 1本 の当たりで跳ねます —— 実際 09/17 の長尺は n=3 で、うち 2本 が 1回 です。
+#  (3) `form` を書いていない古い台本は **`short` に倒れます**（`studio/script.py` の既定）。
+#      その既定が変わったら、この関数の `or "short"` も同じ所を読むこと。
+#  (4) オーナーが形・尺・本数に言葉を出したら、その言葉が正本。
+# ---------------------------------------------------------------------------
+
+#: 片側がこれ未満のときは倍率を印字しない（上の覆る条件 (2)）。
+FORM_MIN_N = 3
+
+
+def videos_by_form(rows: list[dict], scripts_dir: "Path | None" = None) -> dict[str, list[dict]]:
+    """台本の `form` ごとに、いま生きている video_id（台本 id ごとに最後の `scheduled` 行）。
+
+    `long_videos` の一般化です（あちらは `form == "long"` だけを返す）。
+    **`form` の無い台本は `short`**（`studio/script.py` の既定・覆る条件 (3)）。
+    """
+    latest: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") == "scheduled" and r.get("id") and r.get("video_id"):
+            latest[r["id"]] = r
+    out: dict[str, list[dict]] = {}
+    for sid, r in latest.items():
+        path = (scripts_dir or SCRIPTS_DIR) / f"{sid}.json"
+        if not path.exists():
+            continue
+        try:
+            form = json.loads(path.read_text(encoding="utf-8")).get("form") or "short"
+        except ValueError:
+            continue
+        out.setdefault(str(form), []).append(
+            {"id": sid, "video_id": r["video_id"], "publish_at": r.get("publish_at") or ""})
+    for v in out.values():
+        v.sort(key=lambda x: x["publish_at"])
+    return out
+
+
+def form_yield(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
+    """形ごとの **1本あたり再生**（齢 `LPV_MIN_AGE_H` 超の実測だけ・**API 0単位**）。
+
+    分母は `long_per_video` と**同じ齢の門**を使います（出したその周の本を 0回 と数えない）。
+    返り: `{form: {"n": 置いた本数, "n_measured": 測れた本数, "median": 中央, "views": [...]}}`
+    """
+    by = videos_by_form(rows, scripts_dir)
+    seen: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") == "measured" and r.get("id"):
+            if float(r.get("age_h") or 0) >= LPV_MIN_AGE_H:
+                seen[r["id"]] = r
+    out: dict[str, dict] = {}
+    for form, vids in by.items():
+        views = sorted(int(seen[v["video_id"]].get("views") or 0)
+                       for v in vids if v["video_id"] in seen)
+        mid = (None if not views else
+               float(views[len(views) // 2]) if len(views) % 2 else
+               (views[len(views) // 2 - 1] + views[len(views) // 2]) / 2.0)
+        out[form] = {"n": len(vids), "n_measured": len(views), "median": mid, "views": views}
+    return out
+
+
+def form_yield_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
+    """毎周 1行。**決めと覆る条件は `docs/METHOD.md` §5 ＝ ここへ決めを書かないこと。**"""
+    d = form_yield(rows, scripts_dir)
+    if not d:
+        return ("**形ごとの 1本あたり再生**（METHOD §5「形の配り」）: "
+                "**台本の付いた本が 1本 もありません**（`scheduled` の台帳が空）")
+    parts = []
+    for form in sorted(d, key=lambda f: -(d[f]["median"] or -1)):
+        v = d[form]
+        mid = "測り 0本" if v["median"] is None else f"**{v['median']:,.0f}回/本**"
+        parts.append(f"{form} {mid}（測 {v['n_measured']}/{v['n']}本）")
+    head = "**形ごとの 1本あたり再生**（齢{:.0f}h 超・METHOD §5「形の配り」・**API 0単位**）: ".format(
+        LPV_MIN_AGE_H)
+    body = " ／ ".join(parts)
+    s, l = d.get("short"), d.get("long")
+    tail = ""
+    if s and l and s["median"] and l["median"] is not None:
+        if s["n_measured"] >= FORM_MIN_N and l["n_measured"] >= FORM_MIN_N:
+            tail = (f" ＝ ショートが長尺の **{s['median'] / max(l['median'], 1.0):,.0f}倍**"
+                    f"（**配りの口の差であって、扉(b) の話ではありません** ——"
+                    f" ショートの視聴は 4,000時間 に 1秒も入りません・GOAL (4-g) 1）")
+        else:
+            tail = (f" —— **倍率は読まないこと**（片側が {FORM_MIN_N}本 未満 ＝ 覆る条件 (2)）")
+    return head + body + tail

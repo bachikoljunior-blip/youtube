@@ -759,7 +759,8 @@ def cmd_status(a):
             print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['title'][:40]}{lineup_mark(v, sids)}")
     lsl = long_slot_line(vids, now_jst())
     if lsl:
-        print("  " + lsl)
+        # **2行 返る**（長尺の枠・ショートの枠。2026-09-17 19:xx）—— 字下げは行ごとに当てること。
+        print("\n".join("  " + x for x in lsl.splitlines()))
     print("直近 公開 10本:")
     lrows = ledger_rows()
     for v in yt.published()[:10]:
@@ -1411,22 +1412,58 @@ def cmd_schedule(a):
 #   （どちらも 3本 以上）なら、フィードの側に上限が在る ＝ 1日 1本 へ戻す。(2) オーナーが本数・時刻に言葉を出したら、その言葉が正本。
 #   (3) 判定（`trend.plan_branch`・最初の 3本）は publish_at 順なので、刻を動かすと「最初の 3本」の顔ぶれが変わる
 #   —— それでよい（どの 3本 でも「この口で長尺が配られるか」の問いは同じ）。
-LONG_SLOTS = ("12:00", "19:00", "21:00")
+#
+# **【2026-09-17 19:xx・optimizer・Fable 5.1・ultracode】3枠 → 1枠 に戻しました。理由は下**
+#   上の 09/15 の決めは「扉(b) は時計で、届く本が多いほど早い」で 1枠 → 3枠 にしました。
+#   **そこで数えていなかったのは「その本が届くか」です。** 同じ齢の門（24h）で測った実測
+#   （`trend.form_yield_line` が毎周 印字・**API 0単位**）:
+#
+#       ショート  中央 **719回/本**（測 11本）      ← 10:00 の枠
+#       長尺      中央 **1回/本**（測 3本）         ← 12:00・19:00・21:00 の枠
+#
+#   **＝ 3枠 に増やして届いたのは 3回/日 です。** そして 3枠 が埋まった 09/17 に、
+#   **10:00 の枠（ショート）が予定から消えました** —— 焼ける本数は 1周 1本 で変わらないので、
+#   長尺を 3枠 にした分だけ、719回/本 の側が 0本 になります。
+#   門（登録 1,000人）は扉(a)(b) の**両方の前に立つ AND** なので、登録を運べる形を
+#   0本 にすると扉(b) の側も開きません（`docs/GOAL.md` の実測・`docs/METHOD.md` §5「形の配り」）。
+#   **長尺を捨てません** —— 扉(b)（4,000時間）の唯一の口で、族の corpus では
+#   登録 1,000〜10,000 の帯の**中央の 1本**が扉(b) を 1本 で越えます（GOAL §(4-o) の表）。
+#   残すのは **1日 1枠**（19:00）で、残りの capacity を 719回/本 の側へ回します。
+#   **覆る条件**: (1) `form_yield` の長尺の中央が ショートの **1/10 以上**に上がったら、
+#   配りの口の差は消えている ＝ この配りを引き直すこと（門は `trend.FORM_MIN_N` の n も見る）。
+#   (2) 1日に置いたショートが `src/day_cap.py` の実測（**再生が付く上限 10本/日**）を越えたら、
+#   11本目 から先は 0〜3再生 ＝ 枠を増やさず中身へ回すこと。
+#   (3) オーナーが本数・時刻・形に言葉を出したら、その言葉が正本。
+#   (4) 上の 09/15 の「閉じた本が枠で 3〜4日 座る」は**本当に起きた欠陥**です ——
+#   1枠 に戻したこの形でまた座ったら、畳むのは枠ではなく**焼く速さ**の側
+#   （`schedule --force` で同じ日に 2本目 を置けます）。
+LONG_SLOTS = ("19:00",)
+# ショートの枠（**1日に複数**。同じ 2026-09-17 19:xx の決め）。
+# 5枠 は `src/day_cap.py` の実測（再生が付く上限 **10本/日**）の半分で、
+# **焼ける速さ（1周 1本・1日 約11周）から取れる数**です。**枠は上限であって床ではありません** ——
+# 埋まらない枠は空のままで、`status` はそれを欠陥として鳴らしません（覆る条件 (2)）。
+SHORT_SLOTS = ("07:00", "10:00", "12:00", "15:00", "18:00")
 # 予約を置ける最小の先（YouTube 側の処理は済んでいる前提 ＝ `readiness`。上げ直しではなく刻だけ動かす）。
 LONG_SLOT_LEAD_H = 2.0
 # 同じ枠に「本が在る」と見る幅（分）。
 LONG_SLOT_NEAR_MIN = 60
 
 
-def next_long_slots(taken: list[dt.datetime], now: dt.datetime, n: int = 3) -> list[dt.datetime]:
-    """`LONG_SLOTS` のうち、いまから `LONG_SLOT_LEAD_H` 以上 先で、`taken`（予約ずみ・公開ずみの刻）の
-    ±`LONG_SLOT_NEAR_MIN`分 に本が無い刻を、早い順に `n` 個。**API 0単位**（刻の計算だけ）。"""
+def next_slots(taken: list[dt.datetime], now: dt.datetime, n: int = 3,
+               slots: "tuple[str, ...]" = LONG_SLOTS) -> list[dt.datetime]:
+    """`slots` のうち、いまから `LONG_SLOT_LEAD_H` 以上 先で、`taken`（予約ずみ・公開ずみの刻）の
+    ±`LONG_SLOT_NEAR_MIN`分 に本が無い刻を、早い順に `n` 個。**API 0単位**（刻の計算だけ）。
+
+    **形ごとに別の枠を渡すこと**（`LONG_SLOTS` / `SHORT_SLOTS`）——
+    2026-09-17 19:xx に一般化しました。それまで `LONG_SLOTS` を直に読んでおり、
+    ショートの枠を置く所が 1つ もありませんでした（`SLOT_AT` の 1刻 だけ）。
+    """
     out: list[dt.datetime] = []
     floor = now + dt.timedelta(hours=LONG_SLOT_LEAD_H)
     near = dt.timedelta(minutes=LONG_SLOT_NEAR_MIN)
     for d in range(0, 8):
         day = (now + dt.timedelta(days=d)).date()
-        for hhmm in LONG_SLOTS:
+        for hhmm in slots:
             hh, mm = map(int, hhmm.split(":"))
             at = dt.datetime(day.year, day.month, day.day, hh, mm, tzinfo=JST)
             if at < floor:
@@ -1437,6 +1474,16 @@ def next_long_slots(taken: list[dt.datetime], now: dt.datetime, n: int = 3) -> l
             if len(out) >= n:
                 return out
     return out
+
+
+def next_long_slots(taken: list[dt.datetime], now: dt.datetime, n: int = 3) -> list[dt.datetime]:
+    """`LONG_SLOTS` 側の口（呼び手を書き換えないための薄い包み）。**写しを持たないこと。**"""
+    return next_slots(taken, now, n, LONG_SLOTS)
+
+
+def next_short_slots(taken: list[dt.datetime], now: dt.datetime, n: int = 3) -> list[dt.datetime]:
+    """`SHORT_SLOTS` 側の口。**枠は上限であって床ではありません**（埋まらない枠は空のまま）。"""
+    return next_slots(taken, now, n, SHORT_SLOTS)
 
 
 def pubcheck_line(now: dt.datetime | None = None) -> str:
@@ -1460,11 +1507,21 @@ def long_slot_line(vids: list[dict], now: dt.datetime) -> str:
     """`status` の 1行: 次に長尺を置く枠（空いている順に 3つ）。**API 0単位**（`all_videos` は status がもう引いている）。"""
     taken = [yt.when(v) for v in vids if v.get("publish_at") or v.get("published_at")]
     taken = [t for t in taken if t > now - dt.timedelta(days=1)]
+    out = []
     slots = next_long_slots(taken, now)
-    if not slots:
-        return ""
-    return ("次の長尺の枠（空いている順・`LONG_SLOTS`・閉じた本は座らせず ここへ `schedule --force`／`reschedule`）: "
-            + "・".join(f"{s:%m/%d %H:%M}" for s in slots))
+    if slots:
+        out.append("次の長尺の枠（空いている順・`LONG_SLOTS`・閉じた本は座らせず ここへ "
+                   "`schedule --force`／`reschedule`）: "
+                   + "・".join(f"{s:%m/%d %H:%M}" for s in slots))
+    # **ショートの枠**（2026-09-17 19:xx に足した）—— この行が無かったあいだ、
+    # ショートを置く先は `SLOT_AT` の 1刻 だけで、長尺が 3枠 に増えた日に予定から消えました。
+    # **枠は上限であって床ではありません**（埋まらない枠は空のままでよい・`SHORT_SLOTS` の註）。
+    shorts = next_short_slots(taken, now, n=3)
+    if shorts:
+        out.append("次のショートの枠（空いている順・`SHORT_SLOTS`・**いま 1本あたり再生は"
+                   "こちらが上です** ＝ `trend` の `form_yield_line`）: "
+                   + "・".join(f"{s:%m/%d %H:%M}" for s in shorts))
+    return "\n".join(out)
 
 
 def cmd_reschedule(a):

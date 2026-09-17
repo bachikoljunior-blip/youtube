@@ -21,28 +21,58 @@ def _t(m, d, hh, mm=0):
     return dt.datetime(2026, m, d, hh, mm, tzinfo=JST)
 
 
+# **【2026-09-17 19:xx】下の 4件 は `LONG_SLOTS == ("12:00","19:00","21:00")` を直に書いていました。**
+# `LONG_SLOTS` を **1枠（19:00）**に戻し `SHORT_SLOTS` を足したので、**刻を引数で渡す形**に置き換えます
+# （元の期待値は各 test の docstring に残す。理由は `cli.LONG_SLOTS` の註・METHOD §5「形の配り」・JOURNAL 09/17 19:xx）。
+# **挟んでいる性質は 1つ も減らしていません** —— 早い順・2時間の先・±60分・門は 1か所。
+_SLOTS3 = ("12:00", "19:00", "21:00")      # 09/15〜09/17 の `LONG_SLOTS`（この検査の中だけで使う）
+
+
 def test_2時間より先の空いている枠を早い順に():
+    """元の字: `next_long_slots(taken, NOW) == [09/15 21:00, 09/16 12:00, 09/16 21:00]`（枠 3つ の頃）。"""
     taken = [_t(9, 15, 10), _t(9, 15, 19), _t(9, 16, 10), _t(9, 16, 19)]
-    got = cli.next_long_slots(taken, NOW)
+    got = cli.next_slots(taken, NOW, slots=_SLOTS3)
     assert got == [_t(9, 15, 21), _t(9, 16, 12), _t(9, 16, 21)]
 
 
 def test_2時間より先():
     """いま 14:30 → 16:30 より前の刻は出ない（処理と差し替えの余地）。"""
-    assert cli.next_long_slots([], _t(9, 15, 17, 30))[0] == _t(9, 15, 21)
-    assert cli.next_long_slots([], _t(9, 15, 9, 30))[0] == _t(9, 15, 12)
+    assert cli.next_slots([], _t(9, 15, 17, 30), slots=_SLOTS3)[0] == _t(9, 15, 21)
+    assert cli.next_slots([], _t(9, 15, 9, 30), slots=_SLOTS3)[0] == _t(9, 15, 12)
+    # いまの `LONG_SLOTS`（1枠）でも同じ性質が立つこと。
+    assert cli.next_long_slots([], _t(9, 15, 9, 30))[0] == _t(9, 15, 19)
+    assert cli.next_long_slots([], _t(9, 15, 16, 30))[0] == _t(9, 15, 19)   # 16:30 + 2h = 18:30 ≦ 19:00
+    assert cli.next_long_slots([], _t(9, 15, 17, 30))[0] == _t(9, 16, 19)   # 17:30 + 2h = 19:30 → 次の日
 
 
 def test_近い刻に本が在れば埋まっている():
     """19:30 に本が在れば 19:00 の枠は取らない（±60分）。"""
-    got = cli.next_long_slots([_t(9, 16, 19, 30)], _t(9, 16, 8))
+    got = cli.next_slots([_t(9, 16, 19, 30)], _t(9, 16, 8), slots=_SLOTS3)
     assert _t(9, 16, 19) not in got
     assert got[0] == _t(9, 16, 12)
+    # いまの `LONG_SLOTS`（1枠）では、その日は飛んで次の日へ。
+    assert cli.next_long_slots([_t(9, 16, 19, 30)], _t(9, 16, 8))[0] == _t(9, 17, 19)
 
 
 def test_門の数は1か所():
-    assert cli.LONG_SLOTS == ("12:00", "19:00", "21:00")
+    """元の字: `cli.LONG_SLOTS == ("12:00", "19:00", "21:00")`。
+
+    **2026-09-17 19:xx に 1枠 へ戻しました**（`form_yield` の実測: ショート 中央 719回/本 対 長尺 1回/本）。
+    ここで挟むのは「刻の綴りが 1か所 から来ること」と「2つ の枠が重ならないこと」。
+    """
+    assert cli.LONG_SLOTS == ("19:00",)
+    assert cli.SHORT_SLOTS == ("07:00", "10:00", "12:00", "15:00", "18:00")
+    assert not set(cli.LONG_SLOTS) & set(cli.SHORT_SLOTS)    # 同じ刻に 2つ の形を置かない
     assert cli.LONG_SLOT_LEAD_H >= 1.0
+    # **`day_cap` の実測（再生が付く上限 10本/日）を越えないこと**（`SHORT_SLOTS` の覆る条件 (2)）。
+    assert len(cli.LONG_SLOTS) + len(cli.SHORT_SLOTS) <= 10
+
+
+def test_ショートの枠も同じ口から出る():
+    """`next_short_slots` は `SHORT_SLOTS` を読む（`SLOT_AT` の 1刻 だけではない）。"""
+    got = cli.next_short_slots([], _t(9, 15, 5, 0), n=3)
+    assert got == [_t(9, 15, 7), _t(9, 15, 10), _t(9, 15, 12)]
+    assert cli.next_short_slots([_t(9, 15, 10, 20)], _t(9, 15, 5, 0), n=2) == [_t(9, 15, 7), _t(9, 15, 12)]
 
 
 def _stage(monkeypatch, tmp_path, privacy="private", publish_at="2026-09-18T10:00:00Z"):
@@ -130,8 +160,16 @@ def test_刻が入らなかったら台帳に書かない(monkeypatch, tmp_path,
 
 
 def test_statusの1行は空いている枠を3つ言う():
+    """元の字: 長尺の 1行 だけを見て `09/15 21:00` と `09/16 12:00` を挟んでいた（枠 3つ の頃）。
+
+    **2026-09-17 19:xx**: `long_slot_line` は**長尺の行 ＋ ショートの行**の 2行 を返します。
+    挟むのは (a) 埋まっている刻（09/15 19:00 ＝ B の 10:00Z）が出ないこと、
+    (b) **ショートの枠が印字されること**（この行が無かったあいだ、ショートを置く先が 1刻 しか無かった）。
+    """
     vids = [{"id": "A", "privacy": "public", "publish_at": None, "published_at": "2026-09-15T01:00:00Z"},
             {"id": "B", "privacy": "private", "publish_at": "2026-09-15T10:00:00Z", "published_at": "2026-09-15T02:00:00Z"}]
     line = cli.long_slot_line(vids, NOW)
-    assert "09/15 21:00" in line and "09/16 12:00" in line
+    assert "次の長尺の枠" in line and "次のショートの枠" in line
+    assert "09/16 19:00" in line          # B が 09/15 19:00 を埋めている ＝ 次の日へ
     assert "09/15 19:00" not in line
+    assert "09/15 18:00" in line          # ショート側の、いちばん早い空き
