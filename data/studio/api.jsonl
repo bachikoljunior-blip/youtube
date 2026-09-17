@@ -67,3 +67,51 @@
 {"at": "2026-09-17T12:39:08+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
 {"at": "2026-09-17T12:54:53+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
 {"at": "2026-09-17T14:49:34+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T16:00:24+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:24+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:24+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:24+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:24+09:00", "api": "youtube", "method": "watermarks.set", "units": 50, "ok": false, "status": 400, "reason": "missingRequiredParameter", "message": "No filter selected. Expected one of: resource"}
+{"at": "2026-09-17T16:00:27+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:27+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:27+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:28+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:29+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:29+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:30+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:30+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:30+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:31+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:31+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:31+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:31+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:32+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:32+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:32+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:33+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:34+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:34+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:35+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:35+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:35+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:36+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:36+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:36+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:37+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:37+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:00:37+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:01:21+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:01:21+09:00", "api": "youtube", "method": "watermarks.set", "units": 50, "ok": false, "status": 400, "reason": "required", "message": "Required"}
+{"at": "2026-09-17T16:02:08+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:02:10+09:00", "api": "youtube", "method": "watermarks.set", "units": 50, "ok": true}
+{"at": "2026-09-17T16:02:30+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:02:32+09:00", "api": "youtube", "method": "watermarks.set", "units": 50, "ok": true}
+{"at": "2026-09-17T16:03:23+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:03:25+09:00", "api": "youtube", "method": "watermarks.set", "units": 50, "ok": true}
+{"at": "2026-09-17T16:03:30+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:03:30+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:03:30+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:03:30+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:03:31+09:00", "api": "youtube", "method": "channels.update", "units": 50, "ok": true}
+{"at": "2026-09-17T16:03:31+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T16:03:59+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}

@@ -2334,7 +2334,14 @@ def cmd_rename_channel(a):
     r = yt.set_channel_title(new)
     print(f"  `{r['before']}` → `{r['after']}`  読み返し {'通った' if r['ok'] else '**落ちた**'}")
     if not r["ok"]:
+        # **落ちた回を、必ず 1行 残すこと**（2026-09-17 16:1x に足した）——
+        # 残さないと、`rename_pending()` が次の周も True を返し、**毎周 51単位 を黙って捨てます**。
+        ledger("channel_rename_refused", "-", target=new, before=r["before"],
+               after=r["after"], units=51)
+        n = sum(1 for x in ledger_rows() if x.get("event") == "channel_rename_refused")
         print("  !! 打った題が読み返せません ＝ 台帳にも config にも書きません（`reschedule` と同じ型）")
+        print(f"  （落ちた回 {n}回目 / 門 {RENAME_REFUSE_CAP}回。門に届いたら `rename_pending` は"
+              f" False を返し、**この手はオーナーの側へ移ります**）")
         return 1
     cfg = Path("config/channel.yaml")
     txt = cfg.read_text(encoding="utf-8")
@@ -2360,7 +2367,10 @@ def cmd_watermark(a):
     with Image.open(png) as im:
         w, h = im.size
     n = png.stat().st_size
-    print(f"透かし: {png}（{w}x{h}・{n:,}バイト）・{a.offset_ms / 1000:.0f}秒 から 出しっぱなし")
+    # **「出しっぱなし」ではありません**（2026-09-17 16:0x に撃って確かめた）——
+    # `durationMs` は 0 にできず（400 `Invalid Value`）、長い数で覆う形です（`yt.set_watermark` の註）。
+    print(f"透かし: {png}（{w}x{h}・{n:,}バイト）・{a.offset_ms / 1000:.0f}秒 から "
+          f"{yt.set_watermark.__defaults__[2] / 60000:.0f}分")
     if w != h or n > 1_000_000:
         print("  !! 正方形・1MB まで（YouTube の決め）")
         return 1
@@ -2389,6 +2399,12 @@ def cmd_watermark(a):
 RENAME_TARGET = "カワウソの年金計算室"
 
 
+#: 題の打ち直しが**読み返しで落ちた**回の上限。ここに届いたら `rename_pending` は False
+#: ＝ `catchup` は撃たなくなり、手はオーナーの側（YouTube Studio）へ移ります。
+#: **1 ではなく 2 にしたのは、1回目が伝播待ちだった目を残すため**（2回 続けて落ちれば伝播ではない）。
+RENAME_REFUSE_CAP = 2
+
+
 def rename_pending(rows: list[dict]) -> bool:
     """**題の打ち直しが まだ済んでいないか**（**API 0単位**・台帳と `config` の 2つ で見る）。
 
@@ -2400,6 +2416,19 @@ def rename_pending(rows: list[dict]) -> bool:
     **迷ったら撃たない側へ倒します**。
     """
     if any(r.get("event") == "channel_renamed" for r in rows):
+        return False
+    # **`channels.update` は題を黙って無視します**（2026-09-17 16:0x に撃って確かめた）——
+    # 200 が返り、例外も出ず、**2分 後に読み直しても `snippet.title` も
+    # `brandingSettings.channel.title` も 1文字も動いていません**（`お金と仕事の教科書` のまま）。
+    # ＝ **この手は機械の側では撃てません。オーナーが YouTube Studio で変える側です。**
+    # **それでも 1回 は撃ちます**（この口が将来 開く／別のチャンネルでは通る、を閉じないため）が、
+    # **`RENAME_REFUSE_CAP` 回 落ちたら、毎周 51単位 を捨てるのをやめます。**
+    #
+    # **覆る条件**: (1) オーナーが Studio で変えたら、`config/channel.yaml` の `name` を
+    #   同じ回に直すこと ＝ この関数は自然に False を返します。
+    #   (2) YouTube が題を書ける口を出したら（`channels.update` が通るようになったら）、
+    #   **落ちた回の行を消さずに** `RENAME_REFUSE_CAP` を上げ直すこと（数は台帳に在ります）。
+    if sum(1 for r in rows if r.get("event") == "channel_rename_refused") >= RENAME_REFUSE_CAP:
         return False
     try:
         txt = Path("config/channel.yaml").read_text(encoding="utf-8")

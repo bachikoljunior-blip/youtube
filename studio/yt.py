@@ -244,7 +244,7 @@ WATERMARK = Path("assets/images/watermark-subscribe.png")
 
 
 def set_watermark(png: Path | None = None, offset_ms: int = 15000,
-                  duration_ms: int = 0) -> None:
+                  duration_ms: int = 1_800_000) -> None:
     """**チャンネルに透かし（登録ボタンの重ね）を 1度 置く。`watermarks.set`（50単位）。**
 
     **2026-09-16 15:3x に足した**（optimizer・Fable 5.1・ultracode）。**この回は撃っていません**
@@ -275,10 +275,25 @@ def set_watermark(png: Path | None = None, offset_ms: int = 15000,
     # **空の body ＝ 本のあいだ ずっと出す**（いまの YouTube の既定）で通ります。
     # `offset_ms` / `duration_ms` の欄は**残してありますが、いまは渡していません** ——
     # 次に触る回へ: 渡すなら `durationMs` を 0 以外にしてから、1回 撃って確かめること。
-    body: dict = {}
-    if offset_ms and duration_ms:
-        body = {"timing": {"type": "offsetFromStart", "offsetMs": str(offset_ms),
-                           "durationMs": str(duration_ms)}}
+    # **2026-09-17 16:0x に、日枠が戻った窓で 4通り 撃って、通る形を 1つ 見つけました。**
+    # それまでの 2回 は どちらも 400 で、**どちらの註も外れていました**:
+    #
+    #     `{"timing": {..., "durationMs": "0"}}`   400 `Invalid Value`      ← 09/16 15:4x の回
+    #     `{}`（空の body）                        400 `No filter selected. Expected one of: resource`
+    #                                              （`missingRequiredParameter`）← 15:4x が次に置いた形
+    #     `{"position": ...}` のみ                 400 `Required`
+    #     **`timing`（durationMs > 0）＋ `position`   通った**
+    #
+    # ＝ **要るのは `timing` で、`durationMs` は 0 にできません**（0 は「出しっぱなし」ではなく Invalid）。
+    # **「出しっぱなし」は長い `durationMs` で作ります** —— 既定 30分 は、この族の長尺
+    # （狙い 15〜30分・`script.LONG_TARGET_SECONDS`）を丸ごと覆う数です。
+    # **「空の body ＝ ずっと出す」と書いた前の註は、撃たずに置かれていました**（日枠が尽きていた窓）。
+    #
+    # **覆る条件**: 長尺の狙いが 30分 を越えたら、この既定も一緒に上げること（`LONG_TARGET_SECONDS` の 1か所を見る）。
+    body: dict = {"position": {"type": "corner", "cornerPosition": "topRight"}}
+    if offset_ms is not None and duration_ms:
+        body["timing"] = {"type": "offsetFromStart", "offsetMs": str(offset_ms),
+                          "durationMs": str(duration_ms)}
     svc().watermarks().set(channelId=channel()["id"], body=body,
                            media_body=MediaFileUpload(str(png), mimetype="image/png")).execute()
 
