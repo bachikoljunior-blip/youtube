@@ -2340,6 +2340,7 @@ def cmd_rename_channel(a):
     txt = cfg.read_text(encoding="utf-8")
     cfg.write_text(re.sub(r'(?m)^(\s*name:\s*)".*"$', lambda m: m.group(1) + f'"{new}"', txt, count=1),
                    encoding="utf-8")
+    ledger("channel_renamed", "-", before=r["before"], after=r["after"], units=52)
     print(f"  `config/channel.yaml` の `channel.name` も直しました。"
           f"**変えた日を `docs/GOAL.md` (4-r) に刻み、前後 14日 の 登録/日 を並べること**")
     return 0
@@ -2372,6 +2373,42 @@ def cmd_watermark(a):
     return 0
 
 
+#: **`catchup` が撃つ題**（2026-09-17 12:5x・optimizer・Opus。**決めは `docs/GOAL.md` (4-r) 4**）。
+#: (4-r) は「題を `named_topic` の升の形へ変える」まで決め、**最後の 1つ を選ぶのは「次に立つ回か
+#: オーナー」**と置きました。**この回が選びました** —— 候補 3つ は `--dry-run` で 3つ とも
+#: `named_topic`（升の中央 登録/日 **78.8**・うちの升は **1.6**）に入るので、升では割れません。
+#: 割った 3つ（derivation は `docs/JOURNAL.md` 2026-09-17 12:5x）:
+#:   (a) **短さ** —— ショートのフィードでチャンネル名は途中で切れます。10字 が 3つ の中でいちばん短い
+#:   (b) **制度名の正直さ** —— 出した＋控えの本 22本 のうち **年金が約20本**・給付金は 1本
+#:       ＝ `年金・給付金` は持っていない物を名乗ります（`給付金` は `高年齢求職者給付金` 1本だけ）
+#:   (c) **ぶつからない** —— 実測の同族に `タヌキの年金相談室`・`フクロウの年金・給付金解説室` が居ます。
+#:       `ふくろう` は既に在る口と紛れます。`カワウソ` は corpus 218口 に 0件
+#: `計算` を残したのは `config/channel.yaml` の「制度を解説するのではなく、自分で計算した結果を発表する」
+#: ＝ **うちが実際に持っている唯一の差**（(4-r) 4 の字）。
+#: **オーナーの言葉が来たらそちらが正本**（(4-r) 4）＝ ここを書き換えること。
+RENAME_TARGET = "カワウソの年金計算室"
+
+
+def rename_pending(rows: list[dict]) -> bool:
+    """**題の打ち直しが まだ済んでいないか**（**API 0単位**・台帳と `config` の 2つ で見る）。
+
+    **2つ とも見るのは、どちらか片方では取り違えるから**です:
+    台帳だけだと `rename-channel` を手で撃った回（台帳に書く前の版）を見落とし、
+    `config` だけだと `cmd_rename_channel` が config を書いてから落ちた回を見落とします。
+    **どちらかが「済んだ」と言っていれば、撃ちません** —— YouTube は題の変更を
+    **14日 に 3回** までしか通さないので（`yt.set_channel_title` の覆る条件 (1)）、
+    **迷ったら撃たない側へ倒します**。
+    """
+    if any(r.get("event") == "channel_renamed" for r in rows):
+        return False
+    try:
+        txt = Path("config/channel.yaml").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    m = re.search(r'(?m)^\s*name:\s*"(.*)"\s*$', txt)
+    return bool(m) and m.group(1) != RENAME_TARGET
+
+
 def catchup_line(rows: list[dict], now: dt.datetime | None = None) -> str:
     """**詰まっている手が在るか**の 1行（**API 0単位**・`cmd_catchup` の註）。
 
@@ -2380,11 +2417,14 @@ def catchup_line(rows: list[dict], now: dt.datetime | None = None) -> str:
     """
     bad = pubcheck.missing(rows, now or now_jst())
     wm = not any(r.get("event") == "watermark_set" for r in rows)
-    if not bad and not wm:
+    rn = rename_pending(rows)
+    if not bad and not wm and not rn:
         return "**詰まった手（`catchup`・API 0単位で数えた）**: 0件"
-    what = ([f"出ていない本 {len(bad)}本"] if bad else []) + (["透かし 未"] if wm else [])
+    what = ([f"出ていない本 {len(bad)}本"] if bad else []) + (["透かし 未"] if wm else []) \
+        + ([f"題 未（`{RENAME_TARGET}`）"] if rn else [])
     return (f"**詰まった手 {'・'.join(what)}** ＝ 日枠が戻ったら "
-            f"`python -m studio.cli catchup`（**約{1 + len(bad) * 51 + (50 if wm else 0)}単位**・安い順・"
+            f"`python -m studio.cli catchup`"
+            f"（**約{1 + len(bad) * 51 + (50 if wm else 0) + (52 if rn else 0)}単位**・安い順・"
             f"1,650単位 の `schedule --replace` は撃ちません）")
 
 
@@ -2405,6 +2445,17 @@ def cmd_catchup(a):
         3  `reschedule --at <空き枠>` × 同   **50単位/本** 消えていれば打ち直す（`cmd_reschedule` を通す
                                                         ＝ 読み返し・台帳・門は 1か所のまま）
         4  `watermark`                     **50単位**    1度も置かれていなければ置く
+        5  `rename-channel <RENAME_TARGET>`  **52単位**   題がまだ `named_topic` の升に居なければ打つ
+                                                        （**いちばん後ろ** ＝ GOAL (4-r-6) が
+                                                          「50単位 の `reschedule` が先」と決めた）
+
+    **5 を足しました**（2026-09-17 12:5x・optimizer・Opus）。**下の覆る条件 (3) の「題」は
+    本の題（題材・尺・本数と並んでいる ＝ 毎本の判断）で、チャンネルの題は別の物です** ——
+    `docs/GOAL.md` (4-r) 4 が「変える」と決め、**残っていたのは文字列 1つ だけ**で、
+    それは `RENAME_TARGET` の註が決めました。**＝ どの周に撃っても同じ答えになる手**です。
+    **2度 撃てません** —— `rename_pending()` が台帳（`channel_renamed`）と
+    `config/channel.yaml` の 2つ を見て、**どちらかが「済んだ」と言えば撃ちません**
+    （YouTube は題の変更を 14日 に 3回 まで ＝ `yt.set_channel_title` の覆る条件 (1)）。
 
     **1,650単位 の `schedule --replace` は撃ちません** —— 本も題も絵も、上がっている物のままです。
     **判定はしません** —— 撃つのは「どの周に撃っても同じ答えになる手」だけ。
@@ -2415,19 +2466,25 @@ def cmd_catchup(a):
      (2) 2 で `publishAt` が **在るのに** 刻を過ぎている本が出たら、それは「刻が消えた」ではない
          ＝ 打ち直しても同じ所で止まるので、この口は触らず `pubcheck` の鳴りを残すこと。
      (3) ここへ手を足すときは「どの周に撃っても同じ答えになる手」だけ。
-         判断の要る手（題材・尺・本数・題）は入れないこと（§5 の持ち場）。
+         判断の要る手（題材・尺・**本の題**・本数）は入れないこと（§5 の持ち場）。
+     (4) **5（題）は 1度 きりの手です。** 撃ったあと 14日 で 登録/日 が 1.6 を越えなかったら、
+         直すのは `RENAME_TARGET` ではなく **GOAL (4-r-4)**（升ではなく作りの側へ移る）。
+         **題を撃ち直して試さないこと** —— 14日 に 3回 の枠を、判定の前に使い切ります。
     """
     now = now_jst()
     rows = ledger_rows()
     bad = pubcheck.missing(rows, now)
     done_wm = any(r.get("event") == "watermark_set" for r in rows)
+    rn = rename_pending(rows)
     print(f"catchup（安い順・**判定はしません**）: 出ていない本 {len(bad)}本・"
-          f"透かし {'置いてある' if done_wm else '**未**'}")
-    if not bad and done_wm:
+          f"透かし {'置いてある' if done_wm else '**未**'}・"
+          f"題 {'打ってある' if not rn else f'**未**（`{RENAME_TARGET}`）'}")
+    if not bad and done_wm and not rn:
         print("  撃つものがありません（**0単位**）")
         return 0
     if getattr(a, "dry_run", False):
-        print(f"  [dry-run] 撃てば 約{1 + len(bad) * 51 + (0 if done_wm else 50)}単位（**いまは 0単位**）")
+        print(f"  [dry-run] 撃てば 約{1 + len(bad) * 51 + (0 if done_wm else 50) + (52 if rn else 0)}単位"
+              f"（**いまは 0単位**）")
         return 0
     ch = yt.channel()                      # **1単位**。尽きていれば ここで 403 ＝ `main()` が受ける
     print(f"  口は開いています（1単位）: 登録 {ch['subscriberCount']}・総再生 {ch['viewCount']}")
@@ -2449,6 +2506,10 @@ def cmd_catchup(a):
               f" ＝ 残りは次の周（`LONG_SLOTS` は {'/'.join(LONG_SLOTS)}）")
     if not done_wm:
         cmd_watermark(argparse.Namespace(offset_ms=15000, dry_run=False))
+    if rn:
+        # **いちばん後ろ**: (4-r-6) が「50単位 の `reschedule` が この節の 51単位 より先」と決めた
+        # （出ていない本 2本 は 扉(b) の判定そのものを止めている）。
+        cmd_rename_channel(argparse.Namespace(title=RENAME_TARGET, dry_run=False, anyway=False))
     print(f"  打ち直した本 {fixed}本 / {len(bad)}本")
     return 0
 

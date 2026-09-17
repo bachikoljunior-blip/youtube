@@ -5,6 +5,11 @@
   (2) **`publishAt` が在る本は打ち直さない**（`cmd_catchup` の覆る条件 (2)）。
   (3) **透かしは 1度だけ** —— 台帳に `watermark_set` が在れば撃たない。
 `--dry-run` は **0単位**（`yt` を 1度も呼ばない）。
+
+**2026-09-17 12:5x に 4つ目 が入りました**（題の打ち直し ＝ `rename_pending`）。
+この節の検査は **その 3つ** を守るものなので、**題の側は明示で止めます**
+（止めないと、`config/channel.yaml` の実物を読んで毎回 True になり、**この 3つ とは別の物**を測ります）。
+題そのものの検査は `tests/test_studio_rename_catchup.py`。順番は下の 1件 が見ています。
 """
 from __future__ import annotations
 
@@ -48,6 +53,7 @@ def test_刻が在る本は打ち直さない(monkeypatch, capsys):
     monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [_bad()])
     monkeypatch.setattr(cli.pubcheck, "taken_slots", lambda *a, **k: [])
     monkeypatch.setattr(cli, "ledger_rows", lambda: [{"event": "watermark_set"}])
+    monkeypatch.setattr(cli, "rename_pending", lambda rows: False)
     monkeypatch.setattr(cli.yt, "channel", lambda: {"subscriberCount": 32, "viewCount": 1})
     monkeypatch.setattr(cli.yt, "readiness", lambda vid: {
         "no_publish_at": False, "publish_at": "2026-09-18T10:00:00Z", "privacy": "private"})
@@ -63,25 +69,33 @@ def test_刻が無い本は空き枠へ打ち直し_透かしも置く(monkeypat
     monkeypatch.setattr(cli, "next_long_slots",
                         lambda taken, now, n=3: [dt.datetime(2026, 9, 18, 19, 0, tzinfo=JST)])
     monkeypatch.setattr(cli, "ledger_rows", lambda: [])
+    monkeypatch.setattr(cli, "rename_pending", lambda rows: True)
     monkeypatch.setattr(cli.yt, "channel", lambda: {"subscriberCount": 32, "viewCount": 1})
     monkeypatch.setattr(cli.yt, "readiness", lambda vid: {
         "no_publish_at": True, "publish_at": None, "privacy": "private"})
     monkeypatch.setattr(cli, "cmd_reschedule", lambda ns: calls.append(("reschedule", ns.id, ns.at)) or 0)
     monkeypatch.setattr(cli, "cmd_watermark", lambda ns: calls.append(("watermark",)) or 0)
+    monkeypatch.setattr(cli, "cmd_rename_channel", lambda ns: calls.append(("rename", ns.title)) or 0)
     assert cli.cmd_catchup(argparse.Namespace(dry_run=False)) == 0
-    assert calls == [("reschedule", "script-1", "2026-09-18 19:00"), ("watermark",)]
+    # **順番が検査の当のもの** —— GOAL (4-r-6): 50単位 の `reschedule` が 52単位 の題より先
+    #（出ていない本 2本 は 扉(b) の判定そのものを止めている）。題は**いちばん後ろ**。
+    assert calls == [("reschedule", "script-1", "2026-09-18 19:00"), ("watermark",),
+                     ("rename", cli.RENAME_TARGET)]
 
 
 def test_透かしが置いてあれば撃たない(monkeypatch):
     monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [])
     monkeypatch.setattr(cli, "ledger_rows", lambda: [{"event": "watermark_set"}])
+    monkeypatch.setattr(cli, "rename_pending", lambda rows: False)
     monkeypatch.setattr(cli.yt, "channel", lambda: pytest.fail("撃つものが無いのに口を撃った"))
     monkeypatch.setattr(cli, "cmd_watermark", lambda *a, **k: pytest.fail("2度目 の透かし"))
+    monkeypatch.setattr(cli, "cmd_rename_channel", lambda *a, **k: pytest.fail("2度目 の題"))
     assert cli.cmd_catchup(argparse.Namespace(dry_run=False)) == 0
 
 
 def test_catchup_line_は_詰まった手を1行で名指しする(monkeypatch):
     monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [_bad()])
+    monkeypatch.setattr(cli, "rename_pending", lambda rows: False)
     s = cli.catchup_line([])
     assert "出ていない本 1本" in s and "透かし 未" in s and "約102単位" in s
     monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [])

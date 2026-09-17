@@ -62,3 +62,7 @@
 {"at": "2026-09-17T10:31:30+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
 {"at": "2026-09-17T10:31:32+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
 {"at": "2026-09-17T10:36:59+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T12:38:46+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T12:38:58+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T12:39:08+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T12:54:53+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
