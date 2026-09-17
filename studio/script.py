@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from .common import DATA
+from .common import BRAND_NAME, DATA
 
 SCRIPTS = DATA / "scripts"
 
@@ -1013,10 +1013,17 @@ def default_cta(next_topic: str = "") -> "Segment":
     割れる語を 1つ 置くと毎日 鳴ります。**覆る条件**: 助数詞を戻した本の `hear` が 3本 続けて鳴らなければ、戻してよい。
     """
     nxt = f"あすは{next_topic}です。" if next_topic else ""
+    # **名乗りを頭に置く**（2026-09-18 00:3x・`common.BRAND_NAME` の註）: 登録は「誰に」登録するかで、
+    # それまでの出口は「誰」を 1度も言っていませんでした（画面にも声にも名が無い）。
+    # 名 → 何を毎日出しているか → 登録の理由、の順。`yomi` は `CTA_YOMI` に「計算室」を足してある。
+    # あすの題を言う本は「毎日出しています」を落とす（名乗り 14字 の分・70字 に収めるため。題が長くて溢れたら題を落とす）
+    say = f"{BRAND_NAME}でした。{nxt or '年金と税金の計算を毎日出しています。'}登録しておくと、あすの分がとどきます。"
+    if len(say) > MAX_SAY:
+        say = f"{BRAND_NAME}でした。年金と税金の計算を毎日出しています。登録しておくと、あすの分がとどきます。"
     return Segment(
-        say=f"年金と税金の、こういう計算を毎日出しています。{nxt}登録しておくと、あすの分がとどきます。",
-        show="毎日1本\n年金と税金の計算",
-        sub="年金と税金の計算を毎日出しています",
+        say=say,
+        show=BRAND_NAME.replace("の", "の\n", 1),
+        sub="年金と税金の計算を毎日出しています 登録で あすの分がとどきます",
         tag="",
         board=[],
     )
@@ -1055,6 +1062,13 @@ def default_early_cta() -> "Segment":
 #: （検査 `tests/test_studio_clarity_gates.py::test_前の一手の型は自分が要る読みを連れてくる` が、
 #:  型の `say` の漢字が この辞書だけで全部 覆えることを見ています ＝ 片方だけ動かすと落ちます）。
 EARLY_CTA_YOMI = {"数字": "すうじ"}
+
+#: **出口の型（`default_cta`）が連れてくる読み**（2026-09-18 00:3x に名乗りを足したときに置いた）。
+#: 名（`common.BRAND_NAME`）の漢字は、それまでのどの本の `yomi` にも無い語なので、型の側が言う。
+#: **覆る条件**: `BRAND_NAME` を変えたら、その名の漢字の読みをここへ足すこと
+#: （検査 `tests/test_studio_brand.py::test_出口の型は名の読みを連れてくる` が、名の漢字が
+#:  この辞書だけで覆えることを見ています）。
+CTA_YOMI = {"計算室": "けいさんしつ"}
 
 
 def long_sentences(say: str) -> list[str]:

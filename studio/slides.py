@@ -264,6 +264,16 @@ def draw_text_block(d: ImageDraw.ImageDraw, lines: list[str], fnt, top: int, fil
 TAG_COLORS = {"前提": (70, 130, 220), "しくみ": (0, 150, 160), "決まり": (60, 160, 90), "計算": (220, 150, 40),
               "結論": (220, 80, 70), "見る所": (140, 90, 200)}
 TAG_DEFAULT = (110, 110, 110)
+
+# **名乗りの札**（2026-09-18 00:3x・optimizer・Fable 5.1・ultracode。名は `common.BRAND_NAME` の 1か所）。
+# 毎コマ 左上（縦: 進み具合の線の下 y 100〜158・横: 線の上 y 8〜60）に、チャンネル名の小さい札を置く。
+# 色は札（tag）のどれとも 12 以上 離す（`tests/test_studio_slides_board.py` が tag の色を x 380〜700 で探す ＝ 重ねない）。
+# 幅は 30px × 10字 ＋ 余白 ＝ 約 340px → 縦の tag の札（まん中・x ≥ 438）に当たらない。
+# **覆る条件**: (1) sheet で 札 と tag が重なった本が出たら、字を 28px に落とす（位置は動かさない）。
+# (2) 名乗りを入れた本の維持率（10% の点・`trend` の維持率カーブ）が入れていない本より 0.05 以上 低ければ、
+#     札ではなく**大きさ**を疑う（Shorts の UI の上の帯と重なっていないかを sheet で見る）。
+BRAND_COLOR = (150, 95, 45)
+BRAND_PX = 30
 BOARD_TOP_MIN = 600          # 板の上端（show の下）
 BOARD_BOTTOM = 1080          # 板の下端（字幕 4行 の上端 1108 より上）
 BOARD_LEFT = 110
@@ -357,16 +367,32 @@ def _slide_long_two_col(im, d, W, show, sub, tag, board, g, viz=None):
         d.text((tx, ty), tag, font=tf, fill=(255, 255, 255))
 
 
+def brand_strip(d: ImageDraw.ImageDraw, g: Geom, name: str | None = None) -> tuple[int, int, int, int]:
+    """名乗りの札を左上に描き、その箱 (x0, y0, x1, y1) を返す（`BRAND_COLOR` の註）。`name` が空なら描かない。"""
+    from .common import BRAND_NAME
+    name = BRAND_NAME if name is None else name
+    if not name:
+        return (0, 0, 0, 0)
+    f = font(FONT_BOLD, BRAND_PX)
+    tw = d.textbbox((0, 0), name, font=f)[2]
+    x0, y0 = 60, (100 if g is not LONG else 8)
+    box = (x0, y0, x0 + tw + 40, y0 + BRAND_PX + 24)
+    d.rounded_rectangle(list(box), radius=18, fill=BRAND_COLOR + (235,))
+    d.text((x0 + 20, y0 + 8), name, font=f, fill=(255, 255, 255))
+    return box
+
+
 def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out: Path,
           progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = (),
-          form: str = "short", viz: Image.Image | None = None, fast: bool = False) -> Path:
+          form: str = "short", viz: Image.Image | None = None, fast: bool = False,
+          brand: bool = True) -> Path:
     """1コマ 1枚。`viz` は動く図の 1枚（`studio/viz.draw` の RGBA）—— 在れば板の所に置き、板は描かない。
 
     `fast` は**動く途中の絵**にだけ使う（2026-09-17 21:xx に実測して足した）: `optimize=True` の PNG は
     写真の背景で **1枚 4秒** かかり（板だけの静止画も同じ ＝ 200コマ の長尺の焼きが 13分 の当のもの）、
     22枚 の動く絵で 1コマ 100秒 になりました。途中の絵は圧縮を最小にして 0.2秒 に落とし、
     **ffmpeg が読んだあと `render.build` が消します**（1枚 4MB × 数百枚 を残さない）。最後の 1枚 は今までどおり。"""
-    im = compose(show, sub, say, i, n, image, progress, tag, board, form, viz).convert("RGB")
+    im = compose(show, sub, say, i, n, image, progress, tag, board, form, viz, brand=brand).convert("RGB")
     if fast:
         im.save(out, "PNG", compress_level=1)
     else:
@@ -418,7 +444,7 @@ def _show_bottom(show: str, sub: str, tag: str, with_board: bool, g: Geom) -> in
 
 def compose(show: str, sub: str, say: str, i: int, n: int, image: Path | None,
             progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = (),
-            form: str = "short", viz: Image.Image | None = None) -> Image.Image:
+            form: str = "short", viz: Image.Image | None = None, brand: bool = True) -> Image.Image:
     g = geom_of(form)
     W, H = g.w, g.h
     SUB_BOTTOM = g.sub_bottom
@@ -428,6 +454,9 @@ def compose(show: str, sub: str, say: str, i: int, n: int, image: Path | None,
     if progress and n > 1:
         d.rectangle([60, 70, W - 60, 82], fill=(255, 255, 255, 70))
         d.rectangle([60, 70, 60 + int((W - 120) * i / n), 82], fill=(255, 210, 60, 255))
+    # 名乗りの札（左上・毎コマ。`brand=False` は陰性対照 ＝ 前の絵と 1画素も違わない）
+    if brand:
+        brand_strip(d, g)
     board = [b for b in board if b]
     # **図が在るコマは板を描かない**（同じ所を使う・`viz.py` 冒頭）。show の置き方は板が在るときと同じ
     if viz is not None:
