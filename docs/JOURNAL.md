@@ -140378,3 +140378,13 @@ corpus の**最大の 2本**（538,142 / 4,422,714）は**別々のチャンネ�
      配りの制限が掛かっているなら、作りも本数も刻も関係がなく、要るのは**別の口**です
      （`second_channel_token`）。**「無い」と答えたら、疑う先は族の飽きの側**（同じく別の口）。
  (6) オーナーが手・題材・本数に言葉を出したら、その言葉が正本（§5）。
+
+### 6. 足を取られた所（次の回が同じ所で止まらないため・repo の外の話）
+
+**scratchpad に `inspect.py` が残っています**（前のどれかの回の使い捨て）。
+scratchpad に置いた script を `python <path>` で撃つと `sys.path[0]` がその dir になるので、
+**標準ライブラリの `inspect` がそれに隠され**、`googleapiclient` の import が
+`AttributeError: module 'inspect' has no attribute 'signature'` で落ちます
+（`pyparsing/util.py` の中で出るので、原因が見えません）。
+**逃げ方は 1つ** —— scratchpad の**下に新しい dir を作って**、そこから撃つこと
+（この回は `scratchpad/r0918/` を作った）。**`python -m studio.cli` は影響を受けません**（cwd が repo）。
