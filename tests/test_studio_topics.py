@@ -80,6 +80,34 @@ def test_題がどの段に居るか(tmp_path, text, want):
     assert (got["q"] if got else None) == want
 
 
+def test_頭1語だけの一致は_strongにしない(tmp_path):
+    """**配線した直後の実物で踏んだ側**（2026-09-17 18:0x）: うちの長尺 11本 が 11本 とも
+    `年金 手取り いくら`（中央 605,548・面）に当たった。`年金` はこの族のほとんどの題に在る。
+    ＝ 頭 1語 だけの一致は「その段に居る」ではなく「否定できない」まで。"""
+    rows = ([_v(f"n{i}", 600_000, "年金 手取り いくら") for i in range(6)]
+            + [_v(f"i{i}", 190, "医療費控除 いくら戻る") for i in range(6)])
+    c = _corpus(tmp_path, rows)
+    weak = topics.tier_of("【65歳以上で辞める方へ】高年齢求職者給付金は年金と両方もらえます", c)
+    assert weak["hits"] == 1 and weak["strong"] is False, \
+        "`年金` 1語 だけで、いちばん高い段に居ると言っている"
+    strong = topics.tier_of("年金が毎月15万円の人の手取りは13万7000円", c)
+    assert strong["hits"] == 2 and strong["strong"] is True
+
+
+def test_陽性対照_頭の錨を外すと別の段に当たる(tmp_path):
+    """**錨（`q` の頭の語）も要る**: 重なりの数だけで選ぶと、`退職金…手取り` が
+    `年金 手取り いくら` に当たる（この回に踏んだ実物）。いまは錨があるので割れる。"""
+    rows = ([_v(f"n{i}", 600_000, "年金 手取り いくら") for i in range(6)]
+            + [_v(f"t{i}", 300_000, "退職金 税金 いくら") for i in range(6)])
+    c = _corpus(tmp_path, rows)
+    assert topics.tier_of("【退職金2000万円】30年勤めた人の手取り", c)["q"] == "退職金 税金 いくら"
+    # 錨が無い（重なりの数だけの）選び方を、その場で組んで当てる ＝ 何が違うかを測る
+    by = topics.by_query(c)
+    naive = max(by, key=lambda d: (sum(1 for w in d["q"].split()
+                                       if w in "【退職金2000万円】30年勤めた人の手取り"), d["median"]))
+    assert naive["q"] == "年金 手取り いくら", "錨なしの選び方が外れない ＝ この検査は何も測っていない"
+
+
 def test_毎周の1行は段の比を出す(tmp_path):
     rows = ([_v(f"n{i}", 600_000, "年金 手取り いくら") for i in range(6)]
             + [_v(f"i{i}", 190, "医療費控除 いくら戻る") for i in range(6)])
