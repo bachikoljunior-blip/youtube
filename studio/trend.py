@@ -2449,6 +2449,12 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  **コマ1 が何秒で中に何が書いてあるか**は誰も数えていない）。**判定は立ったサブ（いま 1体）とオーナー**。
     out.append(hook_line(rows))
     out.append(analytics_line(rows, now=now))
+    # **配りの向き**（2026-09-18 05:xx に足した・`channel_trajectory` の註）——
+    #  すぐ上の行は**いまの高さ**（最後の 3日・維持率・流入）で、**向き**を持ちません。
+    #  この repo の 180行 の印字は どれも「先週より増えたか」を言わず、
+    #  実測では **再生/日 が 3週間で 10分の1**・同じ窓で **1回あたり視聴が 3倍** でした
+    #  ＝ **作りの手だけが測られ、配りは測られていなかった**側。**API 0単位**・台帳だけ。
+    out.append(channel_trajectory_line(rows))
     # §7 の収益の節の 覆る条件 (4)（直近7日の平均が続けて上がったら、分子はチャンネルの回復の側）の連
     #  —— **同じ族の 6例目**（`late_run`・`blind_run`・`reporting_empty_run`・`outside_runs`・
     #  `views_streak`）。**単位は「引き」＝ 周ではありません**（`trend.rev7_run` の註）。
@@ -2770,6 +2776,123 @@ def analytics_line(rows: list[dict], now: dt.datetime | None = None) -> str:
             f"——**%と秒で向きが逆になります**（判定は立ったサブ（いま 1体）・§5）。"
             f"窓の中の**登録の増え 合計 {a['subs']}**{sp}。{empty}")
 
+
+#: **配りの向き**（`channel_trajectory`）の窓 —— 頭と尻に何日ずつ取るか。
+#: **1日 を点で読まないため**に、両端をこの日数で均します（`analytics_day` は 1日 1点 しかない）。
+TRAJ_EDGE_DAYS = 5
+#: その窓から外す日（**引きが埋まらなかった日**）。`analytics_day` は再生 0 の日も書きますが、
+#: 両隣が 3桁 で自分だけ 0 の日は**チャンネルが止まった日ではなく、引けなかった日**です
+#: （実測 2026-09-13: 09/12 240回・09/14 292回 のあいだで 0回・`analytics_days_to_log` の註）。
+TRAJ_DROP_ZERO = True
+
+
+def channel_trajectory(rows: list[dict]) -> dict:
+    """**チャンネルの日ごとの再生と視聴分が、どちらへ向いているか**（**API 0単位**・台帳だけ）。
+
+    **なぜこの行が要るか**（2026-09-18 05:xx・optimizer・Fable 5.1・ultracode が足した）——
+    `trend` は 180行 を印字しますが、**そのどれも「先週より増えたか減ったか」を言いません**。
+    本ごとの再生・形ごとの配り・門までの倍率は全部「いまの高さ」で、**向き**を持たない数です。
+    実測（この口を足した回に台帳から引いた `analytics_day` 19日）:
+
+        2026-08-27  2,949回 / 295分（1回あたり  6.0秒）
+        2026-09-14    292回 /  86分（1回あたり 17.7秒）
+
+    ＝ **再生は 10分の1 に落ち、1回あたりの視聴は 3倍 に伸びています。**
+    **作りの良さ（秒）と配りの量（回）は、この 3週間 逆向きに動いていました。**
+    METHOD が 09/05 から積んだ手（分かりやすさの輪・読み照合・動く図・連作）は
+    **前者だけを動かす手**で、後者は測られないまま 10分の1 になっています。
+    **この行は「作りをやめろ」と言いません** —— 言うのは
+    **「作りの手を撃った周に、配りが増えたかどうかを、誰も見ていない」**ことだけです。
+
+    返り: `days`（日ごとの (日, 再生, 分, 1回あたり秒)）・`head`/`tail`（両端 `TRAJ_EDGE_DAYS` 日 の均し）・
+    `views_ratio`（尻 ÷ 頭）・`sec_ratio`・`peak`（台帳の最大の日）・`zero_days`（外した日）。
+
+    **覆る条件**:
+     (1) `analytics_day` が **`TRAJ_EDGE_DAYS` × 2 日 に満たない**あいだ、この行は倍率を出しません
+         （両端が同じ日を食べる ＝ 1.00 が必ず出る）。
+     (2) **これは因果ではありません。** 3週間 のあいだに変わったのは作りだけではありません
+         （本数・形・題材・刻・チャンネルの齢）。**向きを見せるだけの行**です。
+     (3) 台帳の `analytics_day` は **Analytics API の遅れ 4日** の側なので、**きょうの手には答えません**。
+         きょう出した本の効きは、この行に 4日 後 に入ります。
+     (4) `views_ratio` が **1.0 を越えて 2窓 続いた**ら、配りは戻っている側 ＝ この行は役目を終えます
+         （そのときは `docs/JOURNAL.md` にそう書いて、印字から外してよい）。
+     (5) **1回あたり秒 は `minutes × 60 ÷ views`** で、Analytics の `averageViewDuration` とは
+         別の口です（分の丸めが入る）。**2つ を同じ表に並べないこと。**
+     (6) **`door_b_days` は上端の楽観です** —— 分母の視聴分には**ショートが入っています**。
+         扉(b)（4,000時間）に数えられるのは長尺の視聴だけで、うちの長尺は 1回/本
+         （`long_per_video_line`）＝ **本当の日数はこれより大きい**。
+         **長尺だけの視聴分が台帳に入ったら、その数で割り直すこと**（門は 1か所・ここ）。
+    """
+    day_rows = {}
+    for r in rows:
+        if r.get("event") != "analytics_day":
+            continue
+        d = r.get("id")
+        if d:
+            day_rows[d] = r            # 同じ日を 2度 引いた回は、あとの行だけ
+    days = []
+    zero = 0
+    for d in sorted(day_rows):
+        r = day_rows[d]
+        v = int(r.get("views") or 0)
+        m = int(r.get("minutes") or 0)
+        if TRAJ_DROP_ZERO and v == 0:
+            zero += 1
+            continue
+        days.append((d, v, m, (m * 60.0 / v) if v else 0.0))
+    out = {"days": days, "zero_days": zero, "edge": TRAJ_EDGE_DAYS,
+           "head": None, "tail": None, "views_ratio": None, "sec_ratio": None,
+           "peak": None}
+    if days:
+        out["peak"] = max(days, key=lambda x: x[1])
+    if len(days) < TRAJ_EDGE_DAYS * 2:
+        return out                      # 覆る条件 (1)
+    head = days[:TRAJ_EDGE_DAYS]
+    tail = days[-TRAJ_EDGE_DAYS:]
+    def _mean(xs, i):
+        return sum(x[i] for x in xs) / float(len(xs))
+    out["head"] = (head[0][0], head[-1][0], _mean(head, 1), _mean(head, 2), _mean(head, 3))
+    out["tail"] = (tail[0][0], tail[-1][0], _mean(tail, 1), _mean(tail, 2), _mean(tail, 3))
+    out["views_ratio"] = out["tail"][2] / out["head"][2] if out["head"][2] else None
+    out["sec_ratio"] = out["tail"][4] / out["head"][4] if out["head"][4] else None
+    out["min_ratio"] = out["tail"][3] / out["head"][3] if out["head"][3] else None
+    # **扉(b) までの日数**（4,000時間 ＝ 240,000分）を、いまの視聴分/日 で割ったもの。
+    # **上端の楽観です** —— この分には**ショートの視聴が入っており、扉(b) には 1秒も数えられません**
+    # （GOAL (4-g) 1）。**「この日数なら間に合う」と読まないこと**（覆る条件 (6)）。
+    out["door_b_days"] = (REV_LONG_HOURS * 60.0 / out["tail"][3]) if out["tail"][3] else None
+    return out
+
+
+def channel_trajectory_line(rows: list[dict]) -> str:
+    """毎周 1行。**決めと覆る条件は `channel_trajectory` の註 ＝ ここへ数を写さないこと。**"""
+    t = channel_trajectory(rows)
+    if not t["days"]:
+        return ("**配りの向き**: `analytics_day` が 1日 も在りません ＝ "
+                "`python -m studio.cli analytics`（**Data API 0単位**）")
+    n = len(t["days"])
+    if t["views_ratio"] is None:
+        return (f"**配りの向き**（`channel_trajectory`・**API 0単位**・台帳だけ）: "
+                f"日が **{n}日** しか在りません（要る {t['edge'] * 2}日）＝ **まだ向きを出しません**"
+                f"（覆る条件 (1)）")
+    h, tl = t["head"], t["tail"]
+    pk = t["peak"]
+    arrow = "落ちて" if t["views_ratio"] < 1 else "増えて"
+    sarrow = "伸びて" if (t["sec_ratio"] or 1) >= 1 else "縮んで"
+    z = f"・引きが埋まらなかった日 {t['zero_days']}日 は外しました" if t["zero_days"] else ""
+    return (f"**配りの向き**（`channel_trajectory`・**API 0単位**・台帳 `analytics_day` {n}日{z}）: "
+            f"再生/日 **{h[0][5:]}〜{h[1][5:]} {h[2]:,.0f}回 → {tl[0][5:]}〜{tl[1][5:]} {tl[2]:,.0f}回**"
+            f" ＝ **{1 / t['views_ratio']:.1f}分の1 に{arrow}います**"
+            f"（台帳の最大は {pk[0][5:]} の {pk[1]:,}回）。"
+            f"同じ窓で **1回あたりの視聴 {h[4]:.1f}秒 → {tl[4]:.1f}秒**"
+            f"（**{t['sec_ratio']:.1f}倍 に{sarrow}います**）。"
+            f"**視聴分/日 {h[3]:,.0f}分 → {tl[3]:,.0f}分 ＝ {t['min_ratio']:.2f}倍**"
+            f"（**この 2つ は打ち消し合っています ＝ 3週間 ぶんの手で、"
+            f"扉(b) に積まれる量は動いていません**）。"
+            f"この速さだと 4,000時間 まで **{t['door_b_days']:,.0f}日**"
+            f"（**上端の楽観** —— この分にはショートが入っており、扉(b) には 1秒も数えられません・覆る条件 (6)）。"
+            f"＝ **作りの良さと配りの量は逆向きに動いています** —— "
+            f"**作りの手を撃った周に配りが増えたか**を、`trend` の他の行は 1つ も見ていません"
+            f"（因果ではありません・覆る条件 (2)(3)）。**判定は立ったサブ（いま 1体）**")
 
 #: §7 の収益の節の 覆る条件 (4) の門。**単位は「引き」で、周ではありません**（`rev7_run` の註）。
 REV7_RUN_GATE = 3

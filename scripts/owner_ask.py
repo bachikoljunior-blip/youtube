@@ -102,7 +102,40 @@ def state(asks: list[dict], rounds: list[dict], inbox: list[dict]) -> list[dict]
     return out
 
 
-def lines(asks: list[dict], rounds: list[dict], inbox: list[dict]) -> list[str]:
+#: **問いがオーナーに届く唯一の道**（`docs/FOR_OWNER.md` の「出す」の窓）。
+#: 親が読むのはその節だけで、**この台帳（`data/owner_ask.jsonl`）は子しか読みません。**
+FOR_OWNER = ROOT / "docs" / "FOR_OWNER.md"
+
+
+def undelivered(st: list[dict], text: str | None = None) -> list[str]:
+    """**返事待ちなのに `docs/FOR_OWNER.md` に 1度も書かれていない問い**の id（古い順）。
+
+    **なぜ要るか**（2026-09-18 05:xx・optimizer・Fable 5.1・ultracode が踏んだ）——
+    `channel_rename_studio` は 09/17 16:0x から **8周** この台帳に在り、毎周
+    「**まだ引けません / オーナーが言葉を出しています**」と印字されていました。
+    **その 8周 のあいだ、オーナーには 1文字も届いていません** ——
+    親が読むのは `docs/FOR_OWNER.md` の「出す」の節だけで、**この台帳は子しか読まない**からです。
+    ＝ この道具は「何周 待ったか」を数えていたのに、**待っていたのは返事ではなく、自分が出し忘れた文**でした。
+    **この repo でいちばん多い壊れ方**（「N回 続いたら」と書いて N を数える物が無い）の裏返しで、
+    **数えていた N が、そもそも始まっていなかった**形です。
+
+    **印は id の字**（`docs/FOR_OWNER.md` のどこかに `<id>` が在れば「置いた」と見なす）——
+    窓の本文は言い換えるので、文で突き合わせると必ず外れます。**id は言い換えません。**
+
+    **覆る条件**:
+     (1) 「出す」の窓を機械が読めるようになったら（`scripts/for_owner.py --list` に id が出るなら）、
+         この当てを id の grep から**窓の id** へ移すこと（門は 1か所・ここ）。
+     (2) **オーナーの手が要らない問いをこの台帳に置いたら**、この行は偽で鳴ります
+         ＝ そのときは台帳の側が間違い（この台帳は「オーナーの手でしかできないこと」だけ）。
+    """
+    if text is None:
+        text = FOR_OWNER.read_text(encoding="utf-8") if FOR_OWNER.is_file() else ""
+    return [s["id"] for s in st
+            if not s["answered"] and not s["replies"] and s["id"] not in text]
+
+
+def lines(asks: list[dict], rounds: list[dict], inbox: list[dict],
+          for_owner: str | None = None) -> list[str]:
     st = state(asks, rounds, inbox)
     open_ = [s for s in st if not s["answered"]]
     out = [f"**オーナーの手が要る問い: 返事待ち {len(open_)}件**"
@@ -124,6 +157,11 @@ def lines(asks: list[dict], rounds: list[dict], inbox: list[dict]) -> list[str]:
             out.append(f"        {s['text'][:78]}")
     if not open_:
         out.append("  **返事待ちは 0件 ＝ この道具は仕事を終えています**（覆る条件 (1) ＝ 畳んでよい）")
+    miss = undelivered(st, for_owner)
+    if miss:
+        out.append(f"  !! **オーナーに届いていない問い {len(miss)}件**: `{'`・`'.join(miss)}`"
+                   " —— **`docs/FOR_OWNER.md` の「出す」に窓を 1つ 足すまで、この問いは"
+                   "オーナーの目に 1度も入りません**（親が読むのはその節だけ・`undelivered` の註）")
     return out
 
 

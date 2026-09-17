@@ -112,3 +112,42 @@ def test_実物の台帳が読めて_答えの出た問いは引かれない():
         line = next(x for x in body if f"`{s['id']}`" in x)
         assert "返事ずみ" in line, f"{s['id']}: 印字が 返事ずみ になっていない"
     assert f"返事待ち {len(st) - len(answered)}件" in body[0]
+
+
+def test_FOR_OWNER_に書かれていない問いは_届いていないと言う():
+    """**この道具が 8周 数えていたのは、返事ではなく自分が出し忘れた文でした**
+    （2026-09-18 05:xx・`undelivered` の註）。
+
+    `data/owner_ask.jsonl` は**子しか読まない台帳**で、オーナーへ届く道は
+    `docs/FOR_OWNER.md` の「出す」の窓 1つ だけです。
+    **陽性対照つき** —— 置いたら黙り、外したら鳴ること。
+    """
+    st = owner_ask.state([_ask("2026-09-17T16:06:00+09:00", "channel_rename_studio")],
+                         _laps("2026-09-17T17:00:00+09:00"), [])
+    # 置いていない ＝ 鳴る
+    assert owner_ask.undelivered(st, "（この列に窓はありません）") == ["channel_rename_studio"]
+    # 置いた ＝ 黙る（**陽性対照**）
+    assert owner_ask.undelivered(st, "### 出す … channel_rename_studio の窓") == []
+    # 印字にも出ること
+    out = "\n".join(owner_ask.lines([_ask("2026-09-17T16:06:00+09:00", "channel_rename_studio")],
+                                    _laps("2026-09-17T17:00:00+09:00"), [],
+                                    for_owner="（窓はありません）"))
+    assert "オーナーに届いていない問い 1件" in out
+
+
+def test_オーナーが言葉を出した問いは_届いていないとは言わない():
+    """返事の側は `lines` が別の行で扱います —— **2つ を同じ行で鳴らさないこと**。"""
+    inbox = [{"at": "2026-09-17T20:54:00+09:00", "id": "d699098f", "source": "owner",
+              "text": "アニメーションの話"}]
+    st = owner_ask.state([_ask("2026-09-17T16:06:00+09:00", "q9")],
+                         _laps("2026-09-17T17:00:00+09:00"), inbox)
+    assert owner_ask.undelivered(st, "（窓はありません）") == []
+
+
+def test_実物_返事待ちの問いは全部_FOR_OWNER_に在る():
+    """**実物で撃つ** —— 開いている問いが 1件でも `docs/FOR_OWNER.md` に無ければ、
+    それは「返事が来ない」ではなく「**出していない**」側です。"""
+    st = owner_ask.state(owner_ask._rows(owner_ask.ROOT / "data/owner_ask.jsonl"),
+                         owner_ask._rows(owner_ask.ROOT / "data/rounds.jsonl"),
+                         owner_ask._rows(owner_ask.ROOT / "data/inbox.jsonl"))
+    assert owner_ask.undelivered(st) == []
