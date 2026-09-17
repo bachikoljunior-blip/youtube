@@ -2474,6 +2474,11 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  **この行は「ショートにしろ」と言いません** —— 扉(b)（4,000時間）にショートの視聴は
     #  1秒も入らないので、形の配りは 1つ の数では決まりません（GOAL (4-g) 1）。
     out.append(form_yield_line(rows))
+    # **同じ日の散らばり**（2026-09-18 05:xx に足した・`same_day_spread` の註）——
+    #  すぐ上の行は「形ごとの 1本あたり」で、**同じ形の中で本数を増やした効き**を訊けません。
+    #  実測 09/16: 同じ日・同じ形・同じ族で 10:00 **1,191回** 対 12:00 **1回**。
+    #  **賭けは JOURNAL 2026-09-18 05:1x の 4 に先に書いてあります**（あとから読み方を選ばないため）。
+    out.append(same_day_spread_line(rows))
     # **題材の段**（2026-09-17 17:4x・optimizer・Fable 5.1・ultracode。**API 0単位**・disk だけ）。
     #  すぐ上の 1つ の数（長尺 1本あたりの再生）を、**いちばん大きく動かす入力**です ——
     #  同じ corpus を検索語ごとに割ると、**中央が 3,187倍 違います**
@@ -7860,6 +7865,109 @@ def videos_by_form(rows: list[dict], scripts_dir: "Path | None" = None) -> dict[
     for v in out.values():
         v.sort(key=lambda x: x["publish_at"])
     return out
+
+
+# ---------------------------------------------------------------------------
+# **同じ日に何本 出しても、配られるのは 1本 だけではないか**
+# （2026-09-18 05:xx・optimizer・Fable 5.1・ultracode。決めと賭けは `docs/JOURNAL.md` 2026-09-18 05:1x の 4）
+#
+# **なぜ足したか**: 手もとの数が、1日 1本 だった頃と 3〜4本 にした後で、こう割れています:
+#
+#     09/06〜09/14（1日 1本・10:00）  146/66/719/960/4/1041/830/178/1026   中央 719回
+#     09/15（3本）  10:01 **245** ／ 19:00 8 ／ 21:00 1
+#     09/16（4本）  10:00 **1191** ／ 12:00 **1** ／ 19:00 2 ／ 21:00 0
+#
+# **09/16 の 10:00 と 12:00 は、同じ日・同じ形・同じ族で 1191 対 1 です。**
+# これが本当なら、**2本目 以降の 1本 1,650単位 は 1回 を買っています**
+# （同じ 1,650単位 は `videos.update` 33回 ぶん）。
+# **賭けは先に書いてあります**（あとから読み方を選ばないため ＝ §5 の形）:
+#
+#     読み A「1日 1本 しか配られない」  中央 < `SPREAD_A_MEDIAN` かつ 最大 ≧ `SPREAD_A_TOP`
+#     読み B「本数は効く」              最大 ÷ 中央 < `SPREAD_B_RATIO`
+#
+# **この行は判定しません** —— 数と、どちらの賭けに当たったかを印字するだけです（§5 ＝ 判定は立ったサブ）。
+#
+# **覆る条件**:
+#  (1) **n が `SPREAD_MIN_N` 本 未満の日は読みません**（2本 では中央も比も意味を持ちません）。
+#  (2) **形を混ぜないこと** —— 19:00・21:00 は長尺で、長尺はどの日も 1回/本 です
+#      （`form_yield_line`）。混ぜると「2本目 は 0回」が必ず出ます ＝ この関数は `form` で絞ります。
+#  (3) **刻の側と分けられません** —— 07:00 と 18:00 では配りの相手が違い得ます。
+#      A にも B にも寄らない日が出たら、次は**同じ刻に 2本**を 1日 だけ置いて分けること。
+#  (4) 齢の門は `SPREAD_MIN_AGE_H`〜`SPREAD_MAX_AGE_H`。**その窓の外の測りは読みません**
+#      （出したその周の 0回 と、1週間 後の尾を同じ表に入れない）。
+# ---------------------------------------------------------------------------
+
+#: 同じ日の本を読むための齢の窓（24h の判定）。
+SPREAD_MIN_AGE_H = 20.0
+SPREAD_MAX_AGE_H = 48.0
+#: 読める日の最少本数（覆る条件 (1)）。
+SPREAD_MIN_N = 3
+#: 読み A の門（中央がこれ未満・かつ最大がこれ以上）。
+SPREAD_A_MEDIAN = 20
+SPREAD_A_TOP = 100
+#: 読み B の門（最大 ÷ 中央 がこれ未満）。
+SPREAD_B_RATIO = 3.0
+
+
+def same_day_spread(rows: list[dict], form: str = "short",
+                    scripts_dir: "Path | None" = None) -> list[dict]:
+    """**同じ日に出した同じ形の本の、24h の散らばり**（古い順・**API 0単位**）。
+
+    返り: `[{"day", "views": [...], "n", "median", "top", "verdict"}]`。
+    `verdict` は `"A"`（1本 しか配られない）／`"B"`（本数は効く）／`None`（どちらにも寄らない）。
+    **決めと賭けは上の註 ＝ ここへ数を写さないこと。**
+    """
+    vids = {v["video_id"]: v for v in videos_by_form(rows, scripts_dir).get(form, [])}
+    seen: dict[str, int] = {}
+    for r in rows:
+        if r.get("event") != "measured" or r.get("id") not in vids:
+            continue
+        age = float(r.get("age_h") or 0)
+        if SPREAD_MIN_AGE_H <= age <= SPREAD_MAX_AGE_H:
+            seen[r["id"]] = int(r.get("views") or 0)
+    byday: dict[str, list[int]] = {}
+    for vid, n in seen.items():
+        day = (vids[vid].get("publish_at") or "")[:10]
+        if day:
+            byday.setdefault(day, []).append(n)
+    out = []
+    for day in sorted(byday):
+        vs = sorted(byday[day])
+        if len(vs) < SPREAD_MIN_N:
+            continue
+        mid = (float(vs[len(vs) // 2]) if len(vs) % 2
+               else (vs[len(vs) // 2 - 1] + vs[len(vs) // 2]) / 2.0)
+        top = vs[-1]
+        verdict = None
+        if mid < SPREAD_A_MEDIAN and top >= SPREAD_A_TOP:
+            verdict = "A"
+        elif top / max(mid, 1.0) < SPREAD_B_RATIO:
+            verdict = "B"
+        out.append({"day": day, "views": vs, "n": len(vs),
+                    "median": mid, "top": top, "verdict": verdict})
+    return out
+
+
+def same_day_spread_line(rows: list[dict], form: str = "short",
+                         scripts_dir: "Path | None" = None) -> str:
+    """毎周 1行。**決めと賭けは `same_day_spread` の上の註 ＝ ここへ数を写さないこと。**"""
+    ds = same_day_spread(rows, form, scripts_dir)
+    head = (f"**同じ日の散らばり**（`same_day_spread`・**API 0単位**・{form}・"
+            f"齢{SPREAD_MIN_AGE_H:.0f}〜{SPREAD_MAX_AGE_H:.0f}h・1日 {SPREAD_MIN_N}本 以上）: ")
+    if not ds:
+        return (head + f"**まだ読める日が 1日 もありません**（同じ形を 1日 {SPREAD_MIN_N}本 以上 出して、"
+                f"その 24h を `measure` で読むまで）—— **賭けは JOURNAL 2026-09-18 05:1x の 4 に"
+                "先に書いてあります**（あとから読み方を選ばないため）")
+    d = ds[-1]
+    say = {"A": "**読み A ＝ 1日 1本 しか配られない**（2本目 以降の 1,650単位 は 1回 を買っています）",
+           "B": "**読み B ＝ 本数は効く**（いまの出し方のままでよい）",
+           None: "**どちらの賭けにも寄りません**（覆る条件 (3) ＝ 次は同じ刻に 2本 を 1日 だけ）"}[d["verdict"]]
+    rest = ("" if len(ds) < 2 else
+            "。前の日: " + "・".join(f"{x['day'][5:]} {x['verdict'] or '—'}" for x in ds[:-1][-3:]))
+    return (head + f"直近は **{d['day'][5:]} {d['n']}本** ＝ "
+            + "／".join(f"{v:,}" for v in d["views"])
+            + f"（中央 {d['median']:,.0f}回・最大 {d['top']:,}回）＝ {say}{rest}。"
+            "**判定は立ったサブ（いま 1体）**")
 
 
 def form_yield(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
