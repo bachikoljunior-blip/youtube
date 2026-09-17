@@ -69,3 +69,75 @@ def test_日が足りないうちは倍率を出さない():
     t = trend.channel_trajectory(rows)
     assert t["views_ratio"] is None
     assert "まだ向きを出しません" in trend.channel_trajectory_line(rows)
+
+
+# ---------------------------------------------------------------------------
+# **尻が古い台帳**（2026-09-18 08:xx JST・optimizer・Opus・**API 0単位**）
+#
+# 前の形は、**視聴分/日 の倍率と無関係に**「この 2つ は打ち消し合っています ＝
+# 扉(b) に積まれる量は動いていません」と印字していました。
+# 実物で **1.57倍**（増えている）の回にも同じ文が出ます ＝ **数が否定しても覆らない文**。
+# 原因は 2つ とも `analytics_day` の**尻**にありました:
+#   (1) 09-13 が **0回** のまま（引けなかった日）・(2) 09-15 が**台帳に無い**（撃っていない）
+# 撃ち直したら 09-13 は 1,154回/447分・09-15 は 1,269回/494分 で、
+# 倍率は **1.01倍 → 1.57倍**、扉(b) までは **1,223日 → 790日** に変わりました。
+#
+# ここで止めるのは 4つ:
+#   (5) **尻が古い回は「暫定」と言うこと**（陽性対照）
+#   (6) **尻が新しい回は言わないこと**（陰性対照 ＝ 必ず暫定と言う行ではない）
+#   (7) **遅れは台帳の `lag_days` から取ること**（前提の 3日 を決め打ちしない）
+#   (8) **視聴分/日 の向きの文が、倍率から出ること**（増えた／横ばい／減った の 3つ）
+# ---------------------------------------------------------------------------
+import datetime as _dt
+
+from studio.common import JST as _JST
+
+
+def _now(d):
+    return _dt.datetime.fromisoformat(d + "T08:00:00").replace(tzinfo=_JST)
+
+
+def _flat(views=500, minutes=150, start=1, n=10):
+    return [_day("2026-09-%02d" % (start + i), views, minutes) for i in range(n)]
+
+
+def test_陽性対照_尻が古い回は暫定と言う():
+    rows = _flat()                                   # 最後の日は 09-10
+    # 遅れ 3日 なら、09-18 に引けるはずの日は 09-15 ＝ 5日 手前
+    t = trend.channel_trajectory(rows, now=_now("2026-09-18"))
+    assert t["last_day"] == "2026-09-10"
+    assert t["stale_days"] == 5
+    assert "【暫定】" in trend.channel_trajectory_line(rows, now=_now("2026-09-18"))
+
+
+def test_陰性対照_尻が新しい回は暫定と言わない():
+    rows = _flat()                                   # 最後の日は 09-10
+    # 遅れ 3日 なら、09-13 に引けるはずの日は 09-10 ＝ ちょうど追いついている
+    t = trend.channel_trajectory(rows, now=_now("2026-09-13"))
+    assert t["stale_days"] == 0
+    assert "【暫定】" not in trend.channel_trajectory_line(rows, now=_now("2026-09-13"))
+
+
+def test_遅れは台帳のlag_daysから取る():
+    rows = _flat() + [{"event": "analytics_traffic", "id": "2026-09-10",
+                       "at": "2026-09-13T08:00:00+09:00", "lag_days": 6}]
+    t = trend.channel_trajectory(rows, now=_now("2026-09-16"))
+    assert t["lag_days"] == 6                        # 3 ではない
+    assert t["stale_days"] == 0                      # 09-16 − 6日 ＝ 09-10
+
+
+def test_視聴分の向きの文は倍率から出る():
+    head = [_day("2026-08-%02d" % (27 + i), 3000, 300) for i in range(5)]
+
+    def line(v, m):
+        rows = head + [_day("2026-09-%02d" % (10 + i), v, m) for i in range(5)]
+        return trend.channel_trajectory_line(rows, now=_now("2026-09-17"))
+
+    # 増えた側（実測 09/18 の形: 回は落ちたが 分 は 1.57倍）
+    up = line(300, 470)
+    assert "積まれる量は増えています" in up
+    assert "動いていません" not in up
+    # 横ばい（帯の中）
+    assert "打ち消し合っています" in line(300, 300)
+    # 減った側
+    assert "積まれる量は減っています" in line(300, 90)

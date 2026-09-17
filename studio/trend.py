@@ -2789,9 +2789,18 @@ TRAJ_EDGE_DAYS = 5
 #: 両隣が 3桁 で自分だけ 0 の日は**チャンネルが止まった日ではなく、引けなかった日**です
 #: （実測 2026-09-13: 09/12 240回・09/14 292回 のあいだで 0回・`analytics_days_to_log` の註）。
 TRAJ_DROP_ZERO = True
+#: **Analytics の遅れ**（`analytics.py` の註・実測 3日）。台帳に `analytics_traffic` の
+#: `lag_days` が在ればそちらを使い、無いときだけこの数を使います。
+TRAJ_LAG_DAYS = 3
+#: **尻が古いと言い始める日数。** `analytics_day` の最後の日が「いま引けるはずの日」より
+#: この日数 以上 手前なら、**尻の平均はまだ動く** ＝ 倍率を「暫定」と印字します。
+#: **この行の言い分は全部 尻の 5日 で決まる**ので、尻が古いと言い分ごと古くなります。
+TRAJ_STALE_GATE = 1
+#: **視聴分/日 の倍率が「横ばい」と言える帯**（この外なら増えた／減ったと言う）。
+TRAJ_FLAT_BAND = (0.9, 1.1)
 
 
-def channel_trajectory(rows: list[dict]) -> dict:
+def channel_trajectory(rows: list[dict], now: dt.datetime | None = None) -> dict:
     """**チャンネルの日ごとの再生と視聴分が、どちらへ向いているか**（**API 0単位**・台帳だけ）。
 
     **なぜこの行が要るか**（2026-09-18 05:xx・optimizer・Fable 5.1・ultracode が足した）——
@@ -2827,6 +2836,16 @@ def channel_trajectory(rows: list[dict]) -> dict:
          扉(b)（4,000時間）に数えられるのは長尺の視聴だけで、うちの長尺は 1回/本
          （`long_per_video_line`）＝ **本当の日数はこれより大きい**。
          **長尺だけの視聴分が台帳に入ったら、その数で割り直すこと**（門は 1か所・ここ）。
+     (7) **尻が古いと、この行は必ず「落ちた」と言います**（2026-09-18 08:xx・optimizer・Opus が実物で踏んだ）。
+         `analytics_day` は `cli analytics` を撃った回にしか増えず、門は 20時間 なので、
+         **撃たない周が続くと尻の 5日 だけが古くなります**（頭の 5日 はもう動かない）。
+         実測: 09/18 06:2x の台帳は最後の日が **09-14**（引けるはずの日は **09-15**）で、
+         そのうえ **09-13 は 0回 のまま**でした。撃ち直したら 09-13 は **1,154回/447分**・
+         09-15 は **1,269回/494分** で、**視聴分/日 の倍率は 1.01倍 → 1.57倍**、
+         扉(b) までの日数は **1,223日 → 790日** に変わりました
+         ＝ **前の周の「3週間 ぶんの手は扉に 1分 も積んでいない」は、撃っていない尻の数でした。**
+         → `stale_days` を返し、**尻が古い回は倍率を「暫定」と印字します**（`TRAJ_STALE_GATE`）。
+         **この行を読む前に `python -m studio.cli analytics`（Data API 0単位）を撃つこと。**
     """
     day_rows = {}
     for r in rows:
@@ -2845,9 +2864,20 @@ def channel_trajectory(rows: list[dict]) -> dict:
             zero += 1
             continue
         days.append((d, v, m, (m * 60.0 / v) if v else 0.0))
+    # **尻がどれだけ古いか**（覆る条件 (7)）—— `analytics_day` の最後の日と、
+    # 「いま引けるはずの日」（きょうの JST − 遅れ）の差。**負にはしません。**
+    lag = TRAJ_LAG_DAYS
+    tr = [r for r in rows if r.get("event") == "analytics_traffic" and r.get("lag_days")]
+    if tr:
+        lag = int(max(tr, key=lambda r: r["at"])["lag_days"])
+    last_day = max(day_rows) if day_rows else None
+    stale = None
+    if last_day:
+        want = (now or now_jst()).date() - dt.timedelta(days=lag)
+        stale = max(0, (want - dt.date.fromisoformat(last_day)).days)
     out = {"days": days, "zero_days": zero, "edge": TRAJ_EDGE_DAYS,
            "head": None, "tail": None, "views_ratio": None, "sec_ratio": None,
-           "peak": None}
+           "peak": None, "last_day": last_day, "lag_days": lag, "stale_days": stale}
     if days:
         out["peak"] = max(days, key=lambda x: x[1])
     if len(days) < TRAJ_EDGE_DAYS * 2:
@@ -2868,9 +2898,9 @@ def channel_trajectory(rows: list[dict]) -> dict:
     return out
 
 
-def channel_trajectory_line(rows: list[dict]) -> str:
+def channel_trajectory_line(rows: list[dict], now: dt.datetime | None = None) -> str:
     """毎周 1行。**決めと覆る条件は `channel_trajectory` の註 ＝ ここへ数を写さないこと。**"""
-    t = channel_trajectory(rows)
+    t = channel_trajectory(rows, now=now)
     if not t["days"]:
         return ("**配りの向き**: `analytics_day` が 1日 も在りません ＝ "
                 "`python -m studio.cli analytics`（**Data API 0単位**）")
@@ -2884,15 +2914,34 @@ def channel_trajectory_line(rows: list[dict]) -> str:
     arrow = "落ちて" if t["views_ratio"] < 1 else "増えて"
     sarrow = "伸びて" if (t["sec_ratio"] or 1) >= 1 else "縮んで"
     z = f"・引きが埋まらなかった日 {t['zero_days']}日 は外しました" if t["zero_days"] else ""
-    return (f"**配りの向き**（`channel_trajectory`・**API 0単位**・台帳 `analytics_day` {n}日{z}）: "
+    # **尻が古い回は、この行ぜんぶが暫定です**（覆る条件 (7)）——
+    # 言い分は尻の 5日 で決まり、頭の 5日 はもう動きません。
+    stale = ""
+    if (t.get("stale_days") or 0) >= TRAJ_STALE_GATE:
+        stale = (f"**【暫定】台帳の最後の日は {t['last_day'][5:]} で、いま引けるはずの日より "
+                 f"{t['stale_days']}日 手前です ＝ **尻の 5日 はまだ動きます**。"
+                 f"`python -m studio.cli analytics`（**Data API 0単位**）を撃ってから読むこと"
+                 f"（覆る条件 (7)）。** ")
+    # **視聴分/日 の向きは、数から言うこと**（前の形は「打ち消し合っています」を
+    # 倍率と無関係に印字しており、1.57倍 の回にも「動いていません」と言いました・覆る条件 (7)）。
+    mr = t["min_ratio"]
+    if mr is None:
+        mword = "（視聴分は数えられません）"
+    elif mr < TRAJ_FLAT_BAND[0]:
+        mword = ("**＝ 秒の伸びは 回の落ちを埋めきれず、扉(b) に積まれる量は減っています**")
+    elif mr > TRAJ_FLAT_BAND[1]:
+        mword = ("**＝ 秒の伸びが 回の落ちを上回り、扉(b) に積まれる量は増えています** "
+                 "（**回が落ちたことは、扉(b) の側では損になっていません**）")
+    else:
+        mword = ("**＝ この 2つ は打ち消し合っています ＝ 扉(b) に積まれる量は動いていません**")
+    return (f"{stale}**配りの向き**（`channel_trajectory`・**API 0単位**・台帳 `analytics_day` {n}日{z}）: "
             f"再生/日 **{h[0][5:]}〜{h[1][5:]} {h[2]:,.0f}回 → {tl[0][5:]}〜{tl[1][5:]} {tl[2]:,.0f}回**"
             f" ＝ **{1 / t['views_ratio']:.1f}分の1 に{arrow}います**"
             f"（台帳の最大は {pk[0][5:]} の {pk[1]:,}回）。"
             f"同じ窓で **1回あたりの視聴 {h[4]:.1f}秒 → {tl[4]:.1f}秒**"
             f"（**{t['sec_ratio']:.1f}倍 に{sarrow}います**）。"
             f"**視聴分/日 {h[3]:,.0f}分 → {tl[3]:,.0f}分 ＝ {t['min_ratio']:.2f}倍**"
-            f"（**この 2つ は打ち消し合っています ＝ 3週間 ぶんの手で、"
-            f"扉(b) に積まれる量は動いていません**）。"
+            f"（{mword}）。"
             f"この速さだと 4,000時間 まで **{t['door_b_days']:,.0f}日**"
             f"（**上端の楽観** —— この分にはショートが入っており、扉(b) には 1秒も数えられません・覆る条件 (6)）。"
             f"＝ **作りの良さと配りの量は逆向きに動いています** —— "
