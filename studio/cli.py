@@ -669,9 +669,15 @@ def record_ready(vid: str, rd: dict, drift) -> None:
     公開**前**の 1単位 は毎周 撃たなくてよい（`zero_probe` の (2) と同じ数え方 ＝
     そのときは予約の直後と 09:xx の周だけにする）。
     """
+    # **`privacy` と `publish_at` も残すこと**（2026-09-17 16:1x に足した）——
+    # `pubcheck.confirmed_public()` がここを読みます。**oEmbed は public を public と
+    # 言わないことが在り**（この回の実測 2本・41.8時間 と 26.8時間 鳴り続けた）、
+    # **1単位 の `videos.list part=status` のほうが本当**なので、その答えを覚えて
+    # `missing()` から外すため。**この 2つ を落とすと、偽陽性がまた 2日 鳴ります。**
     ledger("ready_checked", vid, ok=bool(rd.get("ok")), upload=rd.get("upload"),
            processing=rd.get("processing"),
            failure=rd.get("failure") or rd.get("rejection"),
+           privacy=rd.get("privacy"), publish_at=rd.get("publish_at"),
            meta_drift=(None if drift is None else list(drift)))
 
 
@@ -2521,6 +2527,9 @@ def cmd_catchup(a):
     fixed = 0
     for b, at in zip(bad, slots):
         rd = yt.readiness(b["video_id"])   # **1単位**
+        # **答えを台帳に残すこと**（2026-09-17 16:1x）—— 残さないと、この 1単位 の答えが
+        # 周をまたいで消え、**oEmbed の偽陽性が次の周もまた鳴ります**（`pubcheck.confirmed_public`）。
+        record_ready(b["video_id"], rd, None)
         if not rd["no_publish_at"]:
             print(f"  {b['video_id']} は publishAt を持っています（{rd['publish_at']}・privacy {rd['privacy']}）"
                   f" ＝ 刻は消えていません・**打ち直しません**（覆る条件 (2)）")

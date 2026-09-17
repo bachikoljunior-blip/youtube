@@ -72,7 +72,7 @@ def test_reasonを持たない古い行は数えない():
     rows = [{"at": "2026-09-17T16:01:00+09:00", "api": "youtube", "method": "channels.list",
              "units": 1, "ok": False, "status": 403}]
     assert meter.reasons(SINCE, rows) == []
-    assert "403 の `reason`" not in (meter.line(SINCE, 10_000, rows) or "")
+    assert "失敗の `reason`" not in (meter.line(SINCE, 10_000, rows) or "")
 
 
 def test_通った口はreasonに数えない():

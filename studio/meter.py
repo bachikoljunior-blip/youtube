@@ -290,7 +290,9 @@ def line(since: str, day_units: int, rows_: list[dict] | None = None) -> str | N
     # **出どころの無い行は数えません**（`reason` の列は この回より前の行には在りません）。
     rs = reasons(since, rows_)
     if rs:
-        head += ("\n    403 の `reason`: " + " ／ ".join(f"**{k}** {v}本" for k, v in rs)
+        # **`403 の` と書かないこと**（2026-09-17 16:1x に直した）—— 実際に出たのは
+        # `missingRequiredParameter`／`required` の **400** で、行の字が嘘になっていました。
+        head += ("\n    失敗の `reason`: " + " ／ ".join(f"**{k}** {v}本" for k, v in rs)
                  + "（`quotaExceeded`／`dailyLimitExceeded` ＝ 日枠・"
                    "`rateLimitExceeded`／`userRateLimitExceeded` ＝ **短い窓の絞り ＝ 待てば戻る**）")
     return head

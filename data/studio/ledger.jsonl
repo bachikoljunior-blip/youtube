@@ -6242,3 +6242,10 @@
 {"publish_at": "2026-09-17T21:00:00+09:00", "title": "【60代の夫婦へ】ねんきん定期便に載っていないお金6つ｜申請しないと382万円が", "at": "2026-09-17T16:00:37+09:00", "id": "9WdbGJaI2hU", "event": "pending"}
 {"publish_at": "2026-09-17T19:00:00+09:00", "title": "【65歳すぎて働く方へ】給料と年金が月65万円を超えると年金は減ります｜在職老齢", "at": "2026-09-17T16:00:37+09:00", "id": "xyMsBJxaj4M", "event": "pending"}
 {"offset_ms": 15000, "bytes": 6273, "units": 50, "at": "2026-09-17T16:03:25+09:00", "id": "-", "event": "watermark_set"}
+{"subs": 32, "views": 91185, "videos": 276, "title": "お金と仕事の教科書", "at": "2026-09-17T16:12:16+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-17T16:12:16+09:00", "id": "xyMsBJxaj4M", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "meta_drift": [], "at": "2026-09-17T16:12:16+09:00", "id": "9WdbGJaI2hU", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-17T16:12:17+09:00", "id": "ukEFxTt1PEY", "event": "zero_probe"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "public", "publish_at": null, "meta_drift": null, "at": "2026-09-17T16:13:28+09:00", "id": "FLLHpj27v7s", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "public", "publish_at": null, "meta_drift": null, "at": "2026-09-17T16:13:28+09:00", "id": "4MpH3QliNi4", "event": "ready_checked"}
+{"target": "カワウソの年金計算室", "before": "お金と仕事の教科書", "after": "お金と仕事の教科書", "units": 51, "at": "2026-09-17T16:13:28+09:00", "id": "-", "event": "channel_rename_refused"}

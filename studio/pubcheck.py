@@ -120,6 +120,39 @@ def overdue(rows: list[dict], now: dt.datetime | None = None,
                   key=lambda x: x[2])
 
 
+def confirmed_public(rows: list[dict]) -> set[str]:
+    """**`videos.list part=status`（1単位）が public と言った video_id**（**API 0単位**・台帳を読むだけ）。
+
+    **踏んだ当のもの**（2026-09-17 16:0x）: `FLLHpj27v7s`（41.8時間 超過）と `4MpH3QliNi4`（26.8時間 超過）は、
+    **oEmbed では 401 が返り**、`missing()` が **2日 のあいだ**「本 1本 と 枠 1つ が黙って消えています」と
+    鳴らし続けていました。**日枠が戻った窓で `videos.list part=status` を撃ったら、2本 とも
+    `privacy: public`・`publishAt: None`** ＝ **刻は消えておらず、本は出ていました。**
+
+    **oEmbed は public を public と言わないことが在ります**（この回の実測 2本）。
+    **1単位 の `videos.list part=status` のほうが本当**なので、そちらが public と言った本は
+    この関数が覚えて、`missing()` から外します。
+
+    **覆る条件**:
+     (1) public と言われた本が**後から private に戻された**ら、この覚えは嘘になります ——
+         `unscheduled`／`replaced` の行が後に在る本は、覚えを捨てること（下でそうしています）。
+     (2) **oEmbed の側を直せるなら、そちらが先**です（この関数は覚えであって、直しではありません）。
+         **ただし oEmbed は YouTube の口で、こちらからは直せません。**
+     (3) `ready_checked` の形が変わったら、ここの読み方も変えること（`yt.readiness` の 1か所）。
+    """
+    ok: set[str] = {}.keys().__class__() if False else set()
+    gone: set[str] = set()
+    for r in rows:
+        vid = r.get("id")
+        if not vid:
+            continue
+        ev = r.get("event")
+        if ev in ("unscheduled", "replaced", "comment_gone"):
+            gone.add(vid)
+        elif ev == "ready_checked" and r.get("privacy") == "public":
+            ok.add(vid)
+    return ok - gone
+
+
 def missing(rows: list[dict], now: dt.datetime | None = None, grace_min: int = GRACE_MIN,
             probe_fn=probe) -> list[dict]:
     """**刻が過ぎたのに public でない本**（＝ 黙って出ていない本）。API 0単位。
@@ -127,8 +160,13 @@ def missing(rows: list[dict], now: dt.datetime | None = None, grace_min: int = G
     番号が 0（届かない）の本は**入れません**（覆る条件 (1) の誤報の側）。
     """
     now = now or now_jst()
+    # **`videos.list part=status` が public と言った本は、二度と鳴らしません**
+    # （2026-09-17 16:0x に撃って確かめた・`confirmed_public()` の註）。
+    ok = confirmed_public(rows)
     out = []
     for vid, sid, at, title in overdue(rows, now, grace_min):
+        if vid in ok:
+            continue
         code = probe_fn(vid)
         if code in (200, 0):
             continue
