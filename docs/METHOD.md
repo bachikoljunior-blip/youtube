@@ -7178,7 +7178,7 @@ critique 3周（並列）・build 各 91〜92秒・hear 8/10・10/10・5/10・8/
 **決め（次の長尺が読む側）**:
  * **長尺の計算のコマは `viz` を書く** —— 形は `studio/viz.py` の 3つ のまま。型: 一覧は `table`（行が増える）・内訳＋合計は `bars`・「年金 − 引かれる分 ＝ 手取り」は `waterfall`。**数は `say`／`board` の写しだけ**（`viz.check` が waterfall を検算する）。札は 14字 まで（越えると lint が止める）。
  * **同じ族のショートと長尺は、説明欄で両向きに結ぶ**（0単位）。長尺 → ショート 5本 の URL・ショート → 長尺の URL（長尺を先に出して id を取ってからショートを予約する順）。効きは `analytics_traffic` の `YT_OTHER_PAGE`／`RELATED_VIDEO`／`EXT_URL`。
- * 公開前の長尺の順: **hayamihyou（09/18 19:00・受け皿）→ kounenrei（`viz` 57コマ 入れた・**build 済**・09/19 19:00）→ fuyou（`viz` 56コマ 入れた・build 未）**。**3本 とも build は `python -m studio.cli build <id>`（1本 約15分・直列）。**
+ * 公開前の長尺の順: **hayamihyou（09/18 19:00・受け皿）→ kounenrei（`viz` 57コマ 入れた・**build 済**・09/19 19:00）→ fuyou（`viz` 56コマ 入れた・**build 済**）**。**＝ 3本 とも build 済・予約 未**（日枠が 09/18 16:00 JST に戻ってから）。**3本 とも build は `python -m studio.cli build <id>`（1本 約15分・直列）。**
 
 **申し送り**: 日枠が 09/18 16:00 JST に戻ったら JOURNAL 01:4x §4 の順（status → 長尺を出す → その id を 25万 の説明欄へ → 25万 を予約 → 5本 の説明欄に長尺 URL（250単位）→ kounenrei）。`hear` は撃っていない（声のキャッシュは同じ）。
 
