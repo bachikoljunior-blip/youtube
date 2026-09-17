@@ -92,15 +92,27 @@ def test_升の中の題は_dry_run_で通る():
     assert cli.cmd_rename_channel(a) == 0
 
 
-def test_題を書く口は読んでから書き_読み返す():
+def test_題を書く口は読んでから書き_書いた返りで読み返す():
     """`channels.update` は渡した部を**丸ごと置き換えます** ——
-    読まずに書くと `keywords` と `unsubscribedTrailer`（紹介動画）が黙って消えます。"""
+    読まずに書くと `keywords` と `unsubscribedTrailer`（紹介動画）が黙って消えます。
+
+    **2026-09-17 17:2x（optimizer・Fable 5.1・ultracode）に、読み返しの口を替えました。**
+    ここは **`channels().list` が 2回**（書く前 ＋ 読み返し）であることを見ていましたが、
+    **その 2回目 は遅れた複製から返ります** —— 実測（この回の実物・`9WdbGJaI2hU`）:
+    `videos.update` の直後の `videos.list` は **旧の題**、**45秒 後**は新しい題。
+    ＝ **直後の読み返しは「落ちた」の偽陰性**で、`list` の回数は正しさの印ではありません。
+    いまは `update` の**返り**で読み返します（**1単位 安く、複製の遅れを踏まない**）。
+    中身の検査は `tests/test_studio_readback_from_response.py`（陽性対照つき）。
+    """
     import inspect
 
     from studio import yt
     src = inspect.getsource(yt.set_channel_title)
     assert 'part="brandingSettings", mine=True' in src, "読まずに書いています"
-    assert src.count("channels().list") == 2, "打った題を読み返していません"
+    assert src.count("channels().list") == 1, \
+        "`channels.list` が 2回 ＝ 読み返しを遅れた複製から引いています（1単位 も無駄）"
+    assert "resp = svc().channels().update(" in src, "書いた返りを受け取っていません"
+    assert "resp.get(\"brandingSettings\")" in src, "読み返しが `update` の返りから出ていません"
     assert '"ok": after == title' in src
 
 

@@ -2460,6 +2460,17 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  ＝ 毎周 自分に訊く数を 1つ にするための行。**決めと覆る条件は `long_per_video` の註と
     #  GOAL (4-s) ＝ ここへ数を写さないこと。**（**API 0単位**・台帳と台本を読むだけ）
     out.append(long_per_video_line(rows, now=now))
+    # **題材の段**（2026-09-17 17:4x・optimizer・Fable 5.1・ultracode。**API 0単位**・disk だけ）。
+    #  すぐ上の 1つ の数（長尺 1本あたりの再生）を、**いちばん大きく動かす入力**です ——
+    #  同じ corpus を検索語ごとに割ると、**中央が 3,187倍 違います**
+    #  （`年金 手取り いくら` 605,548 対 `医療費控除 いくら戻る` 190・どちらも長尺だけ・重複を落として）。
+    #  **決めと覆る条件は `studio/topics.py` の註 ＝ ここへ数を写さないこと。**
+    try:
+        from . import topics as _topics
+        out.append(_topics.line())
+    except Exception as e:  # noqa: BLE001
+        # **落ちても周を止めない**（この行は 0単位 の読みで、出す本には掛かっていません）。
+        out.append(f"題材の段: 出せなかった（{str(e)[:80]}・`studio/topics.py`）")
     # **門の先（月20万）の距離**（2026-09-16 10:xx・optimizer・Fable 5.1・ultracode）。
     #  `rev_deadline` が出すのは**門まで**で、オーナーの目標はその**先**です。
     #  09/13〜09/16 に固定2 へ「できない」と答えた 7周 は、門の倍率だけを見ていました。

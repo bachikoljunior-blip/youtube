@@ -331,19 +331,41 @@ def set_channel_title(title: str) -> dict:
     bs = ch.get("brandingSettings") or {}
     before = (bs.get("channel") or {}).get("title", "")
     bs.setdefault("channel", {})["title"] = title
-    svc().channels().update(part="brandingSettings",
-                            body={"id": ch["id"], "brandingSettings": bs}).execute()
-    back = svc().channels().list(part="brandingSettings", mine=True).execute()["items"][0]
-    after = ((back.get("brandingSettings") or {}).get("channel") or {}).get("title", "")
+    # **読み返しは `update` の返りから採ること。別の `list` で読まないこと**
+    # （2026-09-17 17:2x・optimizer・Fable 5.1・ultracode。**撃って確かめた**）——
+    # `list` は**遅れた複製から返る**ので、通った書き込みを「落ちた」と読みます。
+    # 実測: `videos.update` で本の題を打った直後の `videos.list` は **旧の題**を返し、
+    # **45秒 後の同じ引きは新しい題**を返しました（`9WdbGJaI2hU`・この回の実物）。
+    # `settle_stats` が再生で見つけた「遅れの違う複製」（09/09 19:1x）と**同じ口**です。
+    # `update` の返りは**書いた側の応答**なので複製の遅れを踏まず、**1単位 も安い**。
+    resp = svc().channels().update(part="brandingSettings",
+                                   body={"id": ch["id"], "brandingSettings": bs}).execute()
+    after = ((resp.get("brandingSettings") or {}).get("channel") or {}).get("title", "")
     return {"before": before, "after": after, "ok": after == title}
 
 
-def update_meta(video_id: str, title: str, description: str, tags: list[str]) -> None:
+def update_meta(video_id: str, title: str, description: str, tags: list[str]) -> dict:
     """題・説明欄・tags だけを直す（videos.update 50単位。本は上げ直さない・予約もそのまま）。
-    09/07 05:5x（hourly）: 予約ずみの本の説明欄の1文（実の誤り）を、ID を変えずに直すために足した。"""
-    svc().videos().update(part="snippet", body={"id": video_id, "snippet": {
+    09/07 05:5x（hourly）: 予約ずみの本の説明欄の1文（実の誤り）を、ID を変えずに直すために足した。
+
+    **2026-09-17 17:2x（optimizer・Fable 5.1・ultracode）: 返りを捨てずに返すようにした。**
+    **追加 0単位。** それまでこの関数は `None` を返し、確かめたい回は `videos.list` を
+    **1単位 で引き直していました。その引きは遅れた複製から返ります** ——
+    実測（この回の実物・`9WdbGJaI2hU`）: 打った直後の `videos.list` は **旧の題**、
+    **45秒 後**の同じ引きは **新しい題**。**＝ 直後の読み返しで「落ちた」と読むのは偽陰性**で、
+    `set_channel_title`（別の `channels.list` で読み返していた）と同じ型です。
+    `settle_stats` が再生で見つけた「遅れの違う複製」（09/09 19:1x）と同じ口。
+
+    **返り**: `{"title", "description", "tags", "ok"}`（`ok` ＝ 打った題が返りに在るか）。
+    **覆る条件**: `update` の返りが `snippet` を持たない周が出たら、そのときだけ
+    `videos.list` を 1単位 で引くこと（**ただし 60秒 待ってから** ＝ 上の実測）。
+    """
+    resp = svc().videos().update(part="snippet", body={"id": video_id, "snippet": {
         "title": title, "description": description, "tags": [t[:30] for t in tags][:15],
         "categoryId": "27", "defaultLanguage": "ja", "defaultAudioLanguage": "ja"}}).execute()
+    sn = resp.get("snippet") or {}
+    return {"title": sn.get("title"), "description": sn.get("description"),
+            "tags": sn.get("tags"), "ok": sn.get("title") == title}
 
 
 def make_private(video_id: str) -> None:

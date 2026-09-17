@@ -1571,7 +1571,7 @@ def verify_meta(vid: str, s) -> list[str]:
             time.sleep(META_REPAIR_RETRY_WAIT)
         tries += 1
         try:
-            yt.update_meta(vid, s.title, s.description, s.tags)
+            back = yt.update_meta(vid, s.title, s.description, s.tags)
         except HttpError as e:
             # 実測 2026-09-14 20:27（hourly・Fable）: insert の直後の `videos.update` が **403 forbidden** で落ち、
             # 約2分後に同じ呼びで通った（tags 8語 が入った）。一過性なので 1度 だけ 30秒 置いて撃ち直す。
@@ -1584,12 +1584,19 @@ def verify_meta(vid: str, s) -> list[str]:
                 print(f"!! 2度目も拒まれた: {str(e2)[:120]}（予約は済んでいる・次の回が status で見ること）")
                 ledger("meta_repaired", s.id, video_id=vid, fields="・".join(fixed), left=drift, units=1, error=str(e2)[:200])
                 return drift
-        rd = yt.readiness(vid)
-        drift = drift_fields(rd, s) if rd.get("title") is not None else drift
+        # **読み返しは `update` の返りから採る**（2026-09-17 17:3x・optimizer・Fable 5.1・ultracode）。
+        # **追加 0単位・`readiness` の 1単位 も要らない。**
+        # それまでは `yt.readiness()`（`videos.list`）で読み返しており、**それは遅れた複製から返ります** ——
+        # 実測（この回の実物・`9WdbGJaI2hU`）: 打った直後の `videos.list` は **旧の題**、**45秒 後**は新しい題。
+        # ＝ 上の `META_REPAIR_TRIES` の註「1回目 は通っても readiness に残る回が 3本 続いた」は
+        # **直しが落ちていたのではなく、読む側が古い複製を見ていた**側で、
+        # **その 3本 は 2度目 の `update_meta`（各 50単位）を余計に撃っています。**
+        drift = drift_fields({"title": back.get("title"), "description": back.get("description"),
+                              "tags": back.get("tags")}, s)
         if not drift:
             break
     ledger("meta_repaired", s.id, video_id=vid, fields="・".join(fixed),
-           left=drift or None, units=50 * tries + 1, tries=tries)
+           left=drift or None, units=50 * tries + 1, tries=tries, read_back="update_response")
     print("入れ直した（台本どおり）" if not drift else f"!! まだ食い違う: {'・'.join(drift)}（次の回が見ること）")
     return drift
 

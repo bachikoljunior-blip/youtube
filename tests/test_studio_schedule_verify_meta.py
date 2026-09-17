@@ -25,15 +25,30 @@ def s(tmp_path, monkeypatch):
     return script.load("2026-09-13-x")
 
 
-def _wire(monkeypatch, reads, rows):
-    """`yt.readiness` が `reads` を順に返し、`update_meta` と `ledger` の呼びを `rows` に積む。"""
+def _wire(monkeypatch, reads, rows, backs=None):
+    """`yt.readiness` が `reads[0]` を返し、`yt.update_meta` が `backs` を順に**返り**として返す。
+
+    **2026-09-17 17:3x に組み替えた**（optimizer・Fable 5.1・ultracode）:
+    それまで `reads` は「初回 ＋ 撃った回数」ぶん要りました —— `verify_meta` が
+    撃つたびに `yt.readiness`（`videos.list` ＝ **1単位**）で読み返していたためです。
+    **その読み返しは遅れた複製から返ります**（実測・この回の実物 `9WdbGJaI2hU`:
+    打った直後の `videos.list` は旧の題・**45秒 後**は新しい題）。
+    いまは `update_meta` の**返り**で見るので、`readiness` は**初回の 1回だけ**。
+    """
     seq = list(reads)
+    ups = list(backs or [])
 
     def _readiness(vid):
         return seq.pop(0)
 
+    def _update_meta(vid, title, description, tags):
+        rows.append(("update_meta", vid))
+        if ups:
+            return ups.pop(0)
+        return {"title": title, "description": description, "tags": list(tags), "ok": True}
+
     monkeypatch.setattr(cli.yt, "readiness", _readiness)
-    monkeypatch.setattr(cli.yt, "update_meta", lambda *a: rows.append(("update_meta", a[0])))
+    monkeypatch.setattr(cli.yt, "update_meta", _update_meta)
     monkeypatch.setattr(cli, "ledger", lambda ev, sid, **kw: rows.append((ev, sid, kw)))
     # 2回目 の前の待ち（`META_REPAIR_RETRY_WAIT`）は眠らず記録する（2026-09-15 09:2x・2回 に上げた側）
     monkeypatch.setattr(cli.time, "sleep", lambda sec: rows.append(("sleep", sec)))
@@ -55,9 +70,9 @@ def test_台本どおりなら_update_metaを撃たない(s, monkeypatch):
 def test_tagsが空なら入れ直して台帳に残す(s, monkeypatch):
     """実測の型そのもの: 題・説明欄は一致、tags だけ空で返る。"""
     rows = []
-    seq = _wire(monkeypatch, [_ok(s, tags=[]), _ok(s)], rows)
+    seq = _wire(monkeypatch, [_ok(s, tags=[])], rows)
     assert cli.verify_meta("VID", s) == []
-    assert not seq, "直したあとに readiness を引き直していない（直ったかを見ていない）"
+    assert not seq, "初回の readiness を引いていない"
     assert ("update_meta", "VID") in rows
     ev = [r for r in rows if r[0] == "meta_repaired"]
     assert ev and ev[0][1] == "2026-09-13-x"
@@ -73,10 +88,13 @@ def test_tagsは並びを見ない(s, monkeypatch):
 
 def test_直しても残るなら_残りを返して台帳に載せる(s, monkeypatch):
     """覆る条件 (2): 直しても残る欄が出たら `yt.upload` の body の側を疑う ＝ 次の回に見えること。
-    2026-09-15 09:2x から 2回 撃つ（`META_REPAIR_TRIES`）＝ readiness は 初回 ＋ 撃った回数 ぶん。"""
+
+    **ここは「本当に落ちている」側です** —— `update` の**返り**（＝ 書いた側の応答。
+    複製の遅れを踏まない）が、打った物と違う欄を返しています。
+    """
     rows = []
     bad = dict(_ok(s, tags=[]), description="古い説明欄")
-    _wire(monkeypatch, [bad] * (1 + cli.META_REPAIR_TRIES), rows)
+    _wire(monkeypatch, [bad], rows, backs=[bad] * cli.META_REPAIR_TRIES)
     assert cli.verify_meta("VID", s) == ["説明欄", "tags"]
     ev = [r for r in rows if r[0] == "meta_repaired"]
     assert ev and ev[0][2]["left"] == ["説明欄", "tags"]
@@ -85,10 +103,21 @@ def test_直しても残るなら_残りを返して台帳に載せる(s, monkey
 
 
 def test_1回目で残り2回目で入る(s, monkeypatch):
-    """実測の型（2026-09-15・`uc0SceBfoxQ`・`PyVf22V74Ks`・`cA-XdGquFpM`）: 1回目 の `update_meta` は通っても
-    readiness に tags が残り、数分 置いた 2回目 で入る。＝ 2回目 の前に `META_REPAIR_RETRY_WAIT` 置くこと。"""
+    """**1回目 の `update` の返りが まだ欠けていて、2回目 の返りで入る**側。
+
+    **2026-09-17 17:3x に書き直しました**（optimizer・Fable 5.1・ultracode）。
+    **元の字**（消さずに残します）: 「実測の型（2026-09-15・`uc0SceBfoxQ`・`PyVf22V74Ks`・
+    `cA-XdGquFpM`）: 1回目 の `update_meta` は通っても **readiness に tags が残り**、
+    数分 置いた 2回目 で入る」。
+    **その 3本 は、落ちていたのではありません** —— 読み返しに使っていた `yt.readiness`
+    （`videos.list`）が**遅れた複製**を返していた側です（この回に実測: 打った直後は旧、
+    **45秒 後**は新）。**＝ その 3本 は 2回目 の 50単位 を余計に撃っています。**
+    いまは `update` の返りで見るので、通った回は 1回 で終わります
+    （`test_tagsが空なら入れ直して台帳に残す` が その形）。
+    この検査が残っているのは、**返り自身が欠けて返る回**のためです。
+    """
     rows = []
-    _wire(monkeypatch, [_ok(s, tags=[]), _ok(s, tags=[]), _ok(s)], rows)
+    _wire(monkeypatch, [_ok(s, tags=[])], rows, backs=[_ok(s, tags=[]), _ok(s)])
     assert cli.verify_meta("VID", s) == []
     assert sum(1 for r in rows if r[0] == "update_meta") == 2
     assert ("sleep", cli.META_REPAIR_RETRY_WAIT) in rows
