@@ -1637,7 +1637,10 @@ def verify_meta(vid: str, s) -> list[str]:
             print(f"!! update_meta が拒まれた（{str(e)[:80]}）。30秒 置いて 1度 だけ撃ち直す")
             time.sleep(META_REPAIR_RETRY_WAIT)
             try:
-                yt.update_meta(vid, s.title, s.description, s.tags)
+                # **返りを `back` に受けること**（2026-09-17 23:2x・optimizer・Fable 5.1・ultracode が踏んだ）——
+                # 撃ち直しが通ったのに `back` が無く、下の `back.get` で UnboundLocalError（`49Wa5jNNzOk`・tags は入った・
+                # 台帳 `meta_repaired` が書かれず traceback で終わった）。検査 `tests/test_verify_meta_retry.py`。
+                back = yt.update_meta(vid, s.title, s.description, s.tags)
             except HttpError as e2:
                 print(f"!! 2度目も拒まれた: {str(e2)[:120]}（予約は済んでいる・次の回が status で見ること）")
                 ledger("meta_repaired", s.id, video_id=vid, fields="・".join(fixed), left=drift, units=1, error=str(e2)[:200])
