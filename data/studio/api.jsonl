@@ -13,3 +13,52 @@
 {"at": "2026-09-17T08:19:26+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
 {"at": "2026-09-17T08:19:26+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
 {"at": "2026-09-17T08:19:27+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-17T10:27:26+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:27:40+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:29:42+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-17T10:29:54+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:29:55+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:29:56+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:29:57+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:29:58+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:10+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:11+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:11+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:12+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:13+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:13+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:14+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:15+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:15+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:16+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:31+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:33+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:35+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:37+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:39+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:41+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:43+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:45+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:47+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:49+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:52+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:54+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:56+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:30:58+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:00+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:02+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:04+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:06+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:08+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:10+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:13+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:15+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:17+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:19+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:21+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:23+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:25+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:27+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:30+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:31:32+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}
+{"at": "2026-09-17T10:36:59+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403}

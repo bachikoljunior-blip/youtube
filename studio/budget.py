@@ -94,6 +94,62 @@ LIVE_EVENTS = {
 }
 
 
+#: **読みの 1行 に多めに当てる単位**（上端を作るための数・実費は 1単位）。
+#: `all_videos` は 280本 を 50件/ページ で 6回 引くので、1つ の event の裏に最大 6本 の
+#: `videos.list` が居ます。**10 は その倍**（上端は上に外すこと）。
+READ_UNITS_CEILING = 10
+
+
+def spent_ceiling(rows: list[dict], now: dt.datetime | None = None) -> dict:
+    """**この窓で「うち」が使った分の上端**（**API 0単位**・2026-09-17 11:0x・optimizer・Opus）。
+
+    `spent` は書きの口しか値段を持たないので **過小**です（覆る条件 (1)）。
+    それは「あと何本 出せるか」には安全側ですが、**「尽きたのはうちか」には逆向き**です ——
+    過小な数では「うちじゃない」と言い切れません。だからここでは**逆に振った数**を作ります:
+    台帳に出た読みの event を 1行 `READ_UNITS_CEILING` 単位 で数え、書きの値段に足す。
+
+    **これが `DAY_UNITS` の半分にも届かないのに 403 なら、枠を食ったのは この機械ではありません。**
+
+    **踏んだ当のもの**（09/16 16:00 の窓・この関数を足させた実測）:
+
+        16:49:51  `channel` ＋ 読み 8行  **通った**（＝ この刻に枠は生きていた）
+        （**うちの台帳はここから 2時間11分 1行も在りません**）
+        19:01:08  `status` **403 quotaExceeded**
+        21:14:44  `channel` ＋ 読み 5行  **また通った**（403 より後に通っている）
+
+    ＝ うちの上端は **150単位 未満**。**10,000 は うちが食べていません。**
+    21:14 が 19:01 の 403 より後に通っているのは、**尽きた枠が時々 1本 だけ通す形**
+    （2026-09-17 10:3x に手で数えた: 45本 中 1本 だけ通った）＝ 別の口が枠の縁で回っている側。
+
+    **覆る条件**:
+     (1) 台帳に出ない口で撃つ道具が足されたら、この上端は上端でなくなります
+         （`LIVE_EVENTS` に足していない event ＝ ここでも数えられない）。
+     (2) `READ_UNITS_CEILING` を超える引きをする読みが足されたら（`search.list` は **100単位**）、
+         その event は `UNITS_BY_EVENT` に値段を書くこと。
+     (3) `DAY_UNITS` が 10,000 でないと分かったら（＝ オーナーが画面を見た結果）、
+         半分の門はその数で引き直すこと。
+    """
+    lo = window_start(now).isoformat(timespec="seconds")
+    base = spent(rows, now)
+    reads = 0
+    for r in rows:
+        at = r.get("at") or ""
+        if not at or at < lo:
+            continue
+        ev = r.get("event") or "?"
+        if isinstance(r.get("units"), int) or UNITS_BY_EVENT.get(ev):
+            continue
+        if ev in LIVE_EVENTS:
+            reads += 1
+    return {"since": lo, "writes": base["total"], "reads": reads,
+            "total": base["total"] + reads * READ_UNITS_CEILING}
+
+
+def ours(rows: list[dict], now: dt.datetime | None = None) -> bool:
+    """**尽きた枠を食べたのが「うち」か**（上端が半分に届いていれば True ＝ うちの側）。"""
+    return spent_ceiling(rows, now)["total"] >= DAY_UNITS // 2
+
+
 def dry_observed(rows: list[dict], now: dt.datetime | None = None) -> str | None:
     """**実測で尽きているか** ——尽きているなら、その 403 の刻を返す（**API 0単位**）。
 
@@ -174,7 +230,8 @@ def lines(rows: list[dict], now: dt.datetime | None = None) -> list[str]:
     since = window_start(now).isoformat(timespec="seconds")
     try:
         real = meter.line(since, DAY_UNITS)
-        outside = meter.outside_line(since, DAY_UNITS, dry)
+        outside = meter.outside_line(since, DAY_UNITS, dry,
+                                     ceiling=spent_ceiling(rows, now)["total"])
     except Exception:  # noqa: BLE001  数えが転んでも周を止めない（`cli.main` の前置きと同じ決め）
         real = outside = None
     if dry:

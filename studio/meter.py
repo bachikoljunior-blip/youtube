@@ -244,7 +244,7 @@ def line(since: str, day_units: int, rows_: list[dict] | None = None) -> str | N
 
 
 def outside_line(since: str, day_units: int, dry: str | None,
-                 rows_: list[dict] | None = None) -> str | None:
+                 rows_: list[dict] | None = None, ceiling: int | None = None) -> str | None:
     """**403 が出ているのに、うちの実測が枠に遠く届いていない**ときだけ出す 1行。
 
     これが出た窓は、**うちが使い切ったのではありません** —— 同じ GCP プロジェクトの枠を
@@ -267,6 +267,19 @@ def outside_line(since: str, day_units: int, dry: str | None,
     covered = bool(first) and (dt.datetime.fromisoformat(first)
                                - dt.datetime.fromisoformat(since)) <= dt.timedelta(hours=1)
     if not covered:
+        # **綴じが窓の頭から無くても、台帳の側に上端が在れば決まります**
+        # （2026-09-17 11:0x・optimizer・Opus）。この `covered` は「`api.jsonl` の前に
+        # 撃った分が分からない」ことを言っていましたが、**その分は `ledger.jsonl` に出ています** ——
+        # `budget.spent_ceiling` は窓の頭から数え、読みを 1行 10単位 に振って**上へ外した**数です。
+        # 上端でも半分に届かないなら、綴じの穴は結論を変えません。
+        # **覆る条件**: 台帳に出ない口で撃つ道具が足されたら、この逃げ道は閉じること
+        # （`budget.spent_ceiling` の覆る条件 (1)）。
+        if ceiling is not None and ceiling < day_units // 2:
+            return ("    !! **台帳の上端でも " + f"{ceiling:,}単位" + " しか撃っていないのに 403 です** ＝ "
+                    "枠を食っているのは この機械ではありません（同じ GCP プロジェクトを別の口が使っているか、"
+                    f"割り当てが {day_units:,} ではない）。**この 2つ はオーナーの手でしか動きません** —— "
+                    "Google Cloud Console の **YouTube Data API v3 → Quotas** で『Queries per day』の"
+                    "上限と使用量を見ること（`studio/meter.py` 冒頭・`budget.spent_ceiling`）")
         return (f"    （実測の綴じは {first[5:16] or '—'} JST からしか在りません ＝ 窓の頭"
                 f"（{since[5:16]} JST）からの分は数えていない ＝ **この窓では「誰が枠を食ったか」は決まりません。"
                 "決まるのは次の窓です**・`studio/meter.py` 冒頭）")

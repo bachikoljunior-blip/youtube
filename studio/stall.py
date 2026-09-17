@@ -228,10 +228,36 @@ def signs(rows: list[dict] | None = None, rounds: list[dict] | None = None,
             dry = bool(qx) and qx[-1] >= head and qx[-1] > ch[-1]
             if dry:
                 nxt = budget.window_start(now) + dt.timedelta(days=1)
-                crush = (f"**口は壊れていません** —— きょうの日枠を使い切っています"
-                         f"（{spent['total']:,}/{budget.DAY_UNITS:,}・残り {spent['left']:,}）。"
-                         f"戻るのは **{nxt:%m/%d %H:%M} JST**。**オーナーの手は要りません**（訊きを置かないこと）。"
-                         f"それまでは台帳だけで撃てる仕事（`trend`・`critique`・`build`・`hear`・`demand`）へ回すこと")
+                # **尽きた枠を「うちが」食べたのかを、先に分ける**（2026-09-17 11:0x・optimizer・Opus）。
+                #   09/16 04:3x にこの枝が入ったとき、`dry` は「うちが使い切った」としか読めませんでした
+                #   （その窓は実際 予約 5本 ＝ 8,250単位 で、読みは正しかった）。**09/16 16:00 の窓は違います** ——
+                #   うちの上端は 160単位（`budget.spent_ceiling`）で、それでも 403 です。
+                #   その窓に「**オーナーの手は要りません・16:00 に戻ります**」と言い続けると、
+                #   **16:00 に戻っても同じことが起き、誰も画面を見ないまま日が過ぎます**
+                #   （実測: 09/16 16:49 に通り、うちが 1行も撃たない 2時間11分 のあと 19:01 に 403）。
+                #   **分ける数は `budget.ours`（上端が日枠の半分に届くか）**。ここに数を写さないこと。
+                #   **覆る条件**: (1) `DAY_UNITS` が 10,000 でないと分かったら、門はその数で引き直す。
+                #   (2) 台帳に出ない口で撃つ道具が足されたら、上端は上端でなくなる（`spent_ceiling` の (1)）。
+                if budget.ours(rows, now):
+                    crush = (f"**口は壊れていません** —— きょうの日枠を使い切っています"
+                             f"（{spent['total']:,}/{budget.DAY_UNITS:,}・残り {spent['left']:,}）。"
+                             f"戻るのは **{nxt:%m/%d %H:%M} JST**。**オーナーの手は要りません**（訊きを置かないこと）。"
+                             f"それまでは台帳だけで撃てる仕事（`trend`・`critique`・`build`・`hear`・`demand`）へ回すこと")
+                else:
+                    ceil_ = budget.spent_ceiling(rows, now)
+                    crush = (f"**口は壊れていません。日枠も、うちが食べていません** —— この窓"
+                             f"（{ceil_['since'][5:16]} JST から）で うちが撃った分は**上端でも "
+                             f"{ceil_['total']:,}単位**（書き {ceil_['writes']:,}・読み {ceil_['reads']}行・"
+                             f"`budget.spent_ceiling`）。それで {budget.DAY_UNITS:,} が尽きています ＝ "
+                             f"**同じ GCP プロジェクトの枠を別の口が食っている**か、"
+                             f"**割り当てが {budget.DAY_UNITS:,} ではない**。"
+                             f"**{nxt:%m/%d %H:%M} JST を待っても同じことが起きます**"
+                             f"（09/16 の窓は 16:49 に通り、うちが 1行も撃たない 2時間11分 のあと 19:01 に尽きた）。"
+                             f"＝ **ここはオーナーの手です**: Google Cloud Console → APIs & Services → "
+                             f"**YouTube Data API v3 → Quotas** で『Queries per day』の**上限**と"
+                             f"**使用量のグラフ**を見ること（上限が {budget.DAY_UNITS:,} でなければ枠の申請・"
+                             f"別の口が食っているならプロジェクトを分けて OAuth を取り直す）。"
+                             f"それまでは台帳だけで撃てる仕事（`trend`・`critique`・`build`・`hear`・`demand`）へ回すこと")
             else:
                 crush = ("`YT_REFRESH_TOKEN` を取り直す ＝ **オーナーの手**"
                          "（`python scripts/owner_ask.py` に訊きを置く）。"
@@ -247,6 +273,9 @@ def signs(rows: list[dict] | None = None, rounds: list[dict] | None = None,
                 #   **覆る条件**: 3つ目の状態（潰せるが、いますぐではない）を持つ印が 2つ目 出たら、
                 #   `owner` の bool を捨てて `when`（`now`／`later`／`owner`）にすること。
                 "code": "mouth_gap", "since": ch[-1], "owner": True, "dry": dry,
+                # **`dry` を 2つ に割る**（2026-09-17 11:0x）——「うちが使い切った」なら訊きは要らず、
+                # 「うちじゃないのに尽きている」なら**訊きが要る**（下の `why` の枝）。
+                "dry_ours": bool(dry) and budget.ours(rows, now),
                 "words": (f"口が開いた印（`channel`）が **{gap:.2f}h・その間に始まった周 {inside}周** "
                           f"空いています（門 {STALL_MOUTH_H:.1f}h か {STALL_MOUTH_LAPS}周 ＝ "
                           f"実測 142窓 中 3窓 だけが当たり、その 3つ が知っている停止の全部）"
@@ -349,6 +378,15 @@ def state(rows: list[dict] | None = None, rounds: list[dict] | None = None,
         #   （2026-09-16 04:3x）—— `crush` の行が「オーナーの手は要りません」と言っている隣で
         #   この行が「訊きを置く」と言えば、**同じ周が自分と食い違います**（撃って踏んだ）。
         #   3分 を使わない点は同じなので、変えるのは文だけです。
+        if any(s.get("dry") and not s.get("dry_ours") for s in sg):
+            # **尽きているが、食べたのは うちではない**（`budget.ours` が False）＝
+            #   16:00 を待っても同じことが起きるので、**訊きを置く側**です。
+            #   3分 で撃ち直さない点は下の枝と同じ（枠は 3分 では戻らない）。
+            out["why"] = ("潰せる原因が機械の側に 1つもありません（**日枠が尽きていますが、"
+                          "うちの上端は日枠の半分にも届いていません** ＝ `budget.spent_ceiling`）"
+                          " ＝ **床のまま・訊きを置く**（16:00 JST に戻っても同じことが起きます。"
+                          "潰し手は Google Cloud Console の枠 ＝ オーナーの手・上の『潰す』の行）")
+            return out
         if any(s.get("dry") for s in sg):
             out["why"] = ("潰せる原因が機械の側に 1つもありません（**きょうの日枠を使い切っています**）"
                           " ＝ **床のまま・訊きは置かない**（戻るのは 16:00 JST。3分 で撃ち直しても"
