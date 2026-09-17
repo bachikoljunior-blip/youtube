@@ -91,6 +91,21 @@ LONG_MAX_SECONDS = 1800.0            # 30分（2026-09-15 21:0x・`peers` の族
 LONG_MIN_SECONDS = 240.0             # 4分（**止める床**。既に焼いた 7本 を通すために動かしていない）
 LONG_TARGET_SECONDS = 900.0          # 15分（**狙い**。届かない本は lint が注意を出すだけ・止めない）
 
+#: `sub` が `say` の **2字の並び**をどれだけ含んでいれば「言い換え」と見るか（`Script.sub_off_say` の註）。
+#: **1字 では割れません**（この回に撃って外した）—— 日本語は「の・は・に・ま・す」が
+#: どの文にも在るので、**別の文どうしでも 1字 の重なりは 0.50 になります**（踏んだ当のもの が ちょうど 0.50）。
+#: **2字 の並びなら 0.19 対 0.95** で割れます。実測（台本 22本・1,109コマ）の中央は **0.895**・
+#: この門を下回るのは **12コマ（1.1%）**で、その多くは `sub` に式や数を置いた本物 ＝ **止めない側の門**。
+SUB_OVERLAP_GATE = 0.30
+#: 重なりを数えるときに落とす字（句読点と空白）。
+SUB_IGNORE_CHARS = frozenset("。、，．・ \u3000\n")
+
+
+def _bigrams(s: str) -> set[str]:
+    """**2字の並び**の集合（句読点と空白は落とす）。1字 だと別の文どうしでも重なる（上の註）。"""
+    s = "".join(c for c in s if c not in SUB_IGNORE_CHARS)
+    return {s[i:i + 2] for i in range(len(s) - 1)} or ({s} if s else set())
+
 
 class Form:
     """形ごとの門。**数を 2度 書かないこと** —— 字数の代理は秒数から引きます。"""
@@ -517,6 +532,49 @@ class Script(BaseModel):
     def total_chars(self) -> int:
         return sum(len(s.say) for s in self.segments)
 
+    def sub_off_say(self, gate: float | None = None) -> list[tuple[int, float, str]]:
+        """**字幕（`sub`）が、読み上げ（`say`）と別のことを言っているコマ**（**API 0単位**）。
+
+        （2026-09-17 15:3x・optimizer・Fable 5.1・ultracode）
+
+        **踏んだ当のもの**: `2026-09-18-fuyou-shinkokusho` の **コマ125・126** は、
+        `say` を 1つ ずらして書き直した回が `sub`／`show`／`board` を置き忘れており、
+        **画面の字が、読み上げと別の文を出していました**:
+
+            コマ125  say「所得とは、収入から決まった分を引いた残りです」
+                    sub「その線は同封の案内に書いてあります」    ← **別の文**
+
+        **`lint` も `verify` も `critique` も、1度 も鳴っていません** ——
+        `critique` は `say` しか読まず、`lint` は字数と読みしか見ていませんでした。
+        **「これまでの故障は例外なく『誰も見ていなかったもの』でした」**（`docs/GOAL.md`）の、その形。
+
+        **数え方**: `sub` の **2字の並び**が `say` にどれだけ含まれているか（句読点と空白は除く）。
+        **1字 で数えて 1度 外しました**（この回の中で直した）—— 日本語は「の・は・に・ま・す」が
+        どの文にも在るので、**踏んだ当のもの（コマ125）が ちょうど 0.50 で門を通り抜けました**。
+        **2字 なら 0.19 対 0.95**（言い換えの側）で割れます。
+        実測（台本 22本・1,109コマ）の中央は **0.895**・`SUB_OVERLAP_GATE`（0.30）を下回るのは
+        **12コマ（1.1%）**で、その多くは `sub` に式や数を置いた本物 ＝ **止めません**（`warnings` 側）。
+
+        **覆る条件**:
+         (1) `sub` を「`say` の言い換え」ではなく「別に書く見出し」にする決めが出たら、この行ごと要りません。
+         (2) 鳴ったコマのうち**本物が 2割 未満**の窓が 2つ 続いたら、門を下げること
+             （いまの門は実測の下端に合わせてあります）。
+         (3) **`problems()` へ移さないこと** —— 式や数を `sub` に置く本が焼けなくなります。
+        """
+        g = SUB_OVERLAP_GATE if gate is None else gate
+        out: list[tuple[int, float, str]] = []
+        for i, seg in enumerate(self.segments, 1):
+            say, sub = (seg.say or ""), (getattr(seg, "sub", "") or "")
+            if not say or not sub:
+                continue
+            a, b = _bigrams(say), _bigrams(sub)
+            if not b:
+                continue
+            r = len(a & b) / len(b)
+            if r < g:
+                out.append((i, r, sub))
+        return out
+
     def loop_sig(self) -> str:
         """**輪（§4 (1)）が実際に読んだ本の指紋**（2026-09-11 12:3x・hourly・Opus が足した）。
 
@@ -720,6 +778,17 @@ class Script(BaseModel):
     def warnings(self) -> list[str]:
         """止めない。書き手（Fable）が読んで決める材料（オーナー 09/06「点って言ってるとこ」「漢字の読み変なのいっぱい」）。"""
         out = []
+        # **字幕が、読み上げと別のことを言っているコマ**（2026-09-17 15:3x・`sub_off_say` の註）。
+        # 実物: `2026-09-18-fuyou-shinkokusho` のコマ125・126 が、`say` だけ直されて
+        # `sub` が前のまま残り、**画面の字が別の文を出していました**（`critique` は `say` しか読まない）。
+        off = self.sub_off_say()
+        if off:
+            ex = "・".join(f"コマ{i}（{r:.0%}）" for i, r, _ in off[:4])
+            out.append(
+                f"**字幕（`sub`）が読み上げ（`say`）と別のことを言っているコマが {len(off)}件** "
+                f"—— `sub` の字が `say` に含まれる割合が {SUB_OVERLAP_GATE:.0%} 未満: {ex}。"
+                f"**止めません** —— `sub` に式や数を置いた本は正しくここに出ます（`sub_off_say` の覆る条件 (3)）。"
+                f"**直すなら `sub`／`show`／`board` を 3つ とも見ること**（ずれるときは 3つ 一緒にずれます）")
         # **`yomi` が声に届いていない本を名指しする**（2026-09-16 04:4x・optimizer・Fable 5.1・ultracode）。
         #   `customPronunciations` が効くのは Chirp3 系だけで、**Neural2 は 200 で受けて無視します**
         #   （`studio/tts.py` 冒頭の実測・09/07 14:3x）。Neural2 の本で音に効くのは
