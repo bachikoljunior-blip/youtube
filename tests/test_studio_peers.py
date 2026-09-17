@@ -223,6 +223,89 @@ def test_転換率の行は判定せずに数を並べる(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# **3因子の分解**（`peers.throughput` / `throughput_line`・2026-09-18 08:xx）
+# ---------------------------------------------------------------------------
+
+def _thr_info(monkeypatch):
+    """**本/日 が多い口ほど 登録/日 が低い**作りの corpus（12口・齢はそろえる）。
+
+    1本あたり再生 を 登録/日 と揃え、本/日 はその逆に並べます ＝
+    **相関の向きが実物と同じ盤**（実測: 1本あたり +0.886・本/日 は齢を揃えると -0.073）。
+    """
+    rows = {}
+    for i in range(12):
+        vpv = 1000 * (i + 1)            # 1本あたり再生 は i とともに増える
+        n = 12 - i                      # 本数は i とともに減る（齢は共通 100日）
+        views = vpv * n
+        subs = int(views * 0.01)        # 登録/再生 は全口 1% でそろえる
+        rows[f"UC{i}"] = {"id": f"UC{i}", "title": f"ch{i}", "subs": subs, "views": views,
+                          "videos": n, "created": "2026-06-10T00:00:00Z"}   # 齢 100日
+    monkeypatch.setattr(peers, "niche_channels", lambda: rows)
+    return rows
+
+
+def test_3因子は恒等式になっている(monkeypatch):
+    _thr_info(monkeypatch)
+    t = peers.throughput({"subs": 32, "views": 91_206, "videos": 283},
+                         _ch_rows(), today=dt.date(2026, 9, 18))
+    m = t["mine"]
+    assert m["spd"] == pytest.approx(m["vpd"] * m["vpv"] * m["spv"])
+
+
+def test_本数の順位相関は1本あたり再生より低く出る(monkeypatch):
+    _thr_info(monkeypatch)
+    t = peers.throughput(today=dt.date(2026, 9, 18))
+    assert t["rho"]["vpv"] > 0.85             # 1本あたり再生 は 登録/日 と強く同順
+    assert t["rho"]["vpd"] < 0                # 本/日 は逆向き
+    assert t["rho"]["vpv"] > t["rho"]["vpd"]
+    # **陽性対照**: 本数と 登録/日 を揃えた盤では 本/日 の相関が正に戻る
+    rows = {f"UC{i}": {"id": f"UC{i}", "title": f"c{i}", "subs": 100 * (i + 1),
+                       "views": 100_000, "videos": 5 * (i + 1),
+                       "created": "2026-06-10T00:00:00Z"} for i in range(12)}
+    monkeypatch.setattr(peers, "niche_channels", lambda: rows)
+    assert peers.throughput(today=dt.date(2026, 9, 18))["rho"]["vpd"] > 0.9
+
+
+def _ch_rows(days: float = 7.0, d_videos: int = 13):
+    """台帳の `channel` の 2行（`mine_videos_per_day` が読む形）。"""
+    t0 = dt.datetime(2026, 9, 11, 8, 0)
+    return [{"event": "channel", "at": t0.isoformat(), "videos": 270, "subs": 27, "views": 84_781},
+            {"event": "channel", "at": (t0 + dt.timedelta(days=days)).isoformat(),
+             "videos": 270 + d_videos, "subs": 32, "views": 91_206}]
+
+
+def test_うちの本数は台帳の差から引く():
+    assert peers.mine_videos_per_day(_ch_rows(days=7.0, d_videos=14)) == pytest.approx(2.0)
+    # 窓が短すぎる／行が足りない／本数が減った ＝ **黙って数を返さない**
+    assert peers.mine_videos_per_day(_ch_rows(days=1.0, d_videos=2)) is None
+    assert peers.mine_videos_per_day(_ch_rows()[:1]) is None
+    assert peers.mine_videos_per_day(None) is None
+    assert peers.mine_videos_per_day(_ch_rows(days=7.0, d_videos=-5)) is None
+
+
+def test_分解の行は判定せず数を並べる(monkeypatch):
+    _thr_info(monkeypatch)
+    line = peers.throughput_line({"subs": 32, "views": 91_206, "videos": 283},
+                                 _ch_rows(), today=dt.date(2026, 9, 18))
+    assert "登録/日 ＝ 本/日 × 1本あたり再生 × 登録/再生" in line
+    assert "p" in line and "順位相関" in line
+    for word in ("すべき", "してください", "落としなさい"):
+        assert word not in line
+    # **本数を落とせ、とは言わない**（`throughput` の註 ＝ -0.014 はそこまで言わない）
+    assert "本数を落とせば伸びる" not in line or "ではありません" in line
+    # 台帳が無ければ「引けません」（**黙って 0 を出さない**）
+    monkeypatch.setattr(peers, "niche_channels", lambda: {})
+    assert "引けません" in peers.throughput_line(None)
+
+
+def test_本数が窓から引けないときも行は出る(monkeypatch):
+    _thr_info(monkeypatch)
+    line = peers.throughput_line({"subs": 32, "views": 91_206, "videos": 283},
+                                 None, today=dt.date(2026, 9, 18))
+    assert "本/日 **引けません**" in line
+    assert "1本あたり" in line          # 残りの 2軸 は出る
+
+# ---------------------------------------------------------------------------
 # **人格の印**（`peers.persona` / `persona_line`・2026-09-16 19:xx）
 # ---------------------------------------------------------------------------
 

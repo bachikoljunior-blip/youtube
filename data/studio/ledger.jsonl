@@ -6474,3 +6474,13 @@
 {"day": "2026-09-15", "start": "2026-08-28", "studio": true, "views": 970, "marks": {"p10": 0.781, "p25": 0.505, "p50": 0.343, "p75": 0.241, "p95": 0.179}, "at": "2026-09-18T06:35:14+09:00", "id": "gv1u7n_pCAQ", "event": "analytics_curve"}
 {"day": "2026-09-15", "start": "2026-08-28", "studio": true, "views": 878, "marks": {"p10": 1.006, "p25": 0.773, "p50": 0.612, "p75": 0.524, "p95": 0.473}, "at": "2026-09-18T06:35:14+09:00", "id": "4l3DDCLIRxg", "event": "analytics_curve"}
 {"day": "2026-09-15", "start": "2026-08-28", "studio": true, "views": 467, "marks": {"p10": 0.91, "p25": 0.711, "p50": 0.612, "p75": 0.494, "p95": 0.401}, "at": "2026-09-18T06:35:15+09:00", "id": "lQHX9LJ80Sg", "event": "analytics_curve"}
+{"subs": 32, "views": 91206, "videos": 283, "title": "お金と仕事の教科書", "at": "2026-09-18T08:04:30+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-18T01:00:00Z", "meta_drift": [], "at": "2026-09-18T08:04:32+09:00", "id": "2u22TXSLyno", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-18T03:00:00Z", "meta_drift": [], "at": "2026-09-18T08:04:32+09:00", "id": "qqlUo148_cg", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-18T06:00:00Z", "meta_drift": [], "at": "2026-09-18T08:04:32+09:00", "id": "49Wa5jNNzOk", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-18T09:00:00Z", "meta_drift": [], "at": "2026-09-18T08:04:32+09:00", "id": "ktbvrdAeavA", "event": "ready_checked"}
+{"views_live": 1, "views_ledger": 0, "over": 1, "age_h": 20.1, "src": "status", "at": "2026-09-18T08:04:32+09:00", "id": "ukEFxTt1PEY", "event": "views_over"}
+{"views_live": 9, "views_ledger": 2, "over": 7, "age_h": 37.1, "src": "status", "at": "2026-09-18T08:04:32+09:00", "id": "uc0SceBfoxQ", "event": "views_over"}
+{"views_live": 1203, "views_ledger": 1191, "over": 12, "age_h": 46.1, "src": "status", "at": "2026-09-18T08:04:32+09:00", "id": "vum9GV8Sp6c", "event": "views_over"}
+{"views_live": 11, "views_ledger": 8, "over": 3, "age_h": 61.1, "src": "status", "at": "2026-09-18T08:04:32+09:00", "id": "PyVf22V74Ks", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-18T08:04:32+09:00", "id": "9WdbGJaI2hU", "event": "zero_probe"}

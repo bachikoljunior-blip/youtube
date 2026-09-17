@@ -549,6 +549,201 @@ def conversion_line(mine: dict | None = None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# **3因子の分解**（`throughput` / `throughput_line`・2026-09-18 08:xx・optimizer・Opus 5・ultracode）
+# ---------------------------------------------------------------------------
+
+#: **登録/日 ＝ 本/日 × 1本あたり再生 × 登録/再生。** 恒等式です（約分すると 登録/日）。
+#: 3つ とも corpus で測れ、3つ とも うちで測れるので、**どの軸に居るか**が順位で出ます。
+#:
+#: **なぜ要るか（この回に撃って出た・`conversion`（09/16 17:1x）が見ていなかった側）**:
+#: `conversion` は **登録/再生 が下から 2/215** と **1本あたり再生 が下から 28/215** を並べ、
+#: 「前者が欠陥・後者は分布の中」と読みました。**3つ目の軸を数えていません** ——
+#: **本/日 です。** 数えたら、うちは **p97.7**（実測 1.82本/日・台帳の `channel` の差）、
+#: **生涯平均（283本 ÷ 齢 76日 ＝ 3.72）なら p99.5** でした。
+#: **うちより多く出している口は corpus に 1つ だけで、それは TBS NEWS DIG（全国放送局・14.4本/日）です。**
+#: 2位・3位 は 2.44／2.42本/日 で、**そこから下は 1本/日 を割ります。**
+#:
+#:     順位相関（Spearman・登録/日 と）     corpus 215口      齢<400日 の 47口
+#:     1本あたり再生                      **+0.886**        **+0.863**
+#:     登録/再生                           +0.431            +0.562
+#:     **本/日**                           +0.369          **-0.073**
+#:     本/日 と 1本あたり再生                +0.015
+#:
+#: **＝ 唯一 p97 より上に在る軸が、いちばん効かない軸です。**そして 本/日 と 1本あたり再生 は
+#: **無相関（+0.015）** ＝ **本数を落としても 1本あたりは下がりません**（上がりもしません）。
+#:
+#: **齢の交絡は測って外しました**: `rho(齢, 1本あたり再生) = +0.053` ＝ 1本あたり再生は
+#: 古さの産物ではありません（`rho(齢, 本/日) = -0.353`）。
+#: 齢を 30〜400日 に揃えた 47口 でも 1本あたり再生 は +0.863 のまま、**本/日 は符号が反転**します。
+#:
+#: **門（登録/日 20人 以上）を抜けている 66口 の形**（`THR_TARGET_SPD`）:
+#:
+#:     本/日 中央 **0.223**（＝ 4.5日 に 1本）・1本あたり **63,066回**・登録/再生 **0.77%**
+#:     うちとの比               **×0.12**            **×196**          **×22**
+#:
+#: **ただし「本数を落とせば伸びる」ではありません。** -0.014 は「落としても 1本あたりは動かない」
+#: までしか言わず、いま落とせば 登録/日 は**そのぶん下がります**（恒等式なので）。
+#: この口が言えるのは **「本/日 に残っている伸びしろは 0 —— 積む先を間違えている」**の 1つ だけです。
+#:
+#: **できる側の存在証明**（固定2 に答える数・同じ corpus の中）:
+#: `宅建合格の急所`（齢 173日）は **1本あたり 694回**（うち 322回 と同じ帯）で、
+#: **本/日 1.63**（うちの実測 1.82 と同じ帯）、**登録/再生 1.32%** ＝ **登録 14.9人/日**。
+#: ＝ **1本あたり再生 を 1回も増やさなくても、登録/再生 が niche 並みなら 登録/日 は 2桁 に乗ります。**
+#: 齢 200日 未満の 24口 のうち、**うちの 登録/再生 を下回るのは 1口 だけ**です。
+#: **これが固定2 の「できる」側の形で、いまの手（本数・刻・枠）はこの軸を 1つ も動かしていません。**
+#:
+#: **覆る条件**:
+#:  (1) corpus の 本/日 は**生涯の本数 ÷ 生涯の齢**、うちの 本/日 は**台帳 `channel` の
+#:      `videos` の差**（直近の実測）です。**形が違います** —— 実測 1.82 で p97.7、
+#:      生涯平均 3.72 で p99.5 と、**どちらで数えても p97 を割りません**が、
+#:      **比を予測に代入しないこと**（`conversion` (2) と同じ）。
+#:  (2) `rho(本/日, 登録/日)` が **2窓 続けて +0.5 を越えたら**、本数は効く側 ＝ この節は役目を終えます。
+#:  (3) corpus は検索の語で集めた口です ＝ **配られた口しか入っていません**（生存者）。
+#:      「本数が少ないから伸びた」ではなく「伸びた口は本数が少なかった」までしか言えません。
+#:  (4) うちの 登録/再生 が corpus の下1/4 を越えたら、縛るのは 1本あたり再生 へ移ります
+#:      （`conversion` (4) と同じ刻）。
+#:  (5) オーナーが本数に言葉を出したら、その言葉が正本。
+
+#: 3因子の母数に入れる齢の床（若すぎる口は 本/日 が跳ねる）。
+THR_MIN_AGE = 30
+#: 「門を抜けている」と数える 登録/日（`docs/GOAL.md` の門 1,000人 を 50日 で割った帯）。
+THR_TARGET_SPD = 20.0
+#: うちの 本/日 を台帳の `channel` 行から引くときの、最短の窓（これより短い差は数えない）。
+THR_MINE_MIN_DAYS = 2.0
+
+
+def _rho(a: list[float], b: list[float]) -> float:
+    """Spearman の順位相関（**同値は出た順に順位を付ける近似** ＝ 連続量だけに使うこと）。"""
+    ra = {v: i for i, v in enumerate(sorted(a))}
+    rb = {v: i for i, v in enumerate(sorted(b))}
+    x = [ra[v] for v in a]
+    y = [rb[v] for v in b]
+    mx, my = st.mean(x), st.mean(y)
+    num = sum((i - mx) * (j - my) for i, j in zip(x, y))
+    den = (sum((i - mx) ** 2 for i in x) * sum((j - my) ** 2 for j in y)) ** 0.5
+    return (num / den) if den else 0.0
+
+
+def _thr_rows(today=None) -> list[dict]:
+    """corpus の口を 3因子に開く（**API 0単位** ＝ `niche_channels()` を読むだけ）。"""
+    out = []
+    for c in niche_channels().values():
+        v, n = c.get("views") or 0, c.get("videos") or 0
+        created = c.get("created") or ""
+        if v < CONV_MIN_VIEWS or n < CONV_MIN_VIDEOS or not created:
+            continue
+        age = _age_days(created, today)
+        if age < THR_MIN_AGE:
+            continue
+        out.append({"title": c.get("title", ""), "age": age, "subs": c.get("subs") or 0,
+                    "vpd": n / age, "vpv": v / n, "spv": (c.get("subs") or 0) / v,
+                    "spd": (c.get("subs") or 0) / age})
+    return out
+
+
+def mine_videos_per_day(channel_rows: list[dict] | None) -> float | None:
+    """**うちの 本/日** を台帳の `channel` 行の `videos` の差から引く（**API 0単位**）。
+
+    `cli.record_channel` が毎周 残す行だけを読みます。両端の差が
+    `THR_MINE_MIN_DAYS` より短ければ **None**（黙って 0 や跳ねた値を返さない）。
+    """
+    rows = [r for r in (channel_rows or []) if r.get("videos") and r.get("at")]
+    if len(rows) < 2:
+        return None
+    first, last = rows[0], rows[-1]
+    try:
+        t0 = dt.datetime.fromisoformat(str(first["at"]))
+        t1 = dt.datetime.fromisoformat(str(last["at"]))
+    except ValueError:
+        return None
+    days = (t1 - t0).total_seconds() / 86400.0
+    if days < THR_MINE_MIN_DAYS:
+        return None
+    dn = int(last["videos"]) - int(first["videos"])
+    return (dn / days) if dn >= 0 else None
+
+
+def throughput(mine: dict | None = None, channel_rows: list[dict] | None = None,
+               today=None) -> dict:
+    """**登録/日 ＝ 本/日 × 1本あたり再生 × 登録/再生** を corpus と並べる（**API 0単位**）。
+
+    決めと覆る条件は**この節の頭の註**（`THR_MIN_AGE` の上）。
+    """
+    rows = _thr_rows(today)
+    if len(rows) < 8:
+        return {"n": len(rows)}
+    young = [r for r in rows if r["age"] <= YOUNG_DAYS]
+    spd = [r["spd"] for r in rows]
+    out = {
+        "n": len(rows), "n_young": len(young),
+        "p50": {k: st.median([r[k] for r in rows]) for k in ("vpd", "vpv", "spv")},
+        "rho": {k: _rho([r[k] for r in rows], spd) for k in ("vpd", "vpv", "spv")},
+        "rho_vpd_vpv": _rho([r["vpd"] for r in rows], [r["vpv"] for r in rows]),
+        "rho_age_vpv": _rho([r["age"] for r in rows], [r["vpv"] for r in rows]),
+    }
+    if len(young) >= 8:
+        ys = [r["spd"] for r in young]
+        out["rho_young"] = {k: _rho([r[k] for r in young], ys) for k in ("vpd", "vpv", "spv")}
+    fast = [r for r in rows if r["spd"] >= THR_TARGET_SPD]
+    if fast:
+        out["target"] = {"n": len(fast),
+                         **{k: st.median([r[k] for r in fast]) for k in ("vpd", "vpv", "spv", "spd")}}
+    if mine and mine.get("views") and mine.get("videos"):
+        v, n = mine["views"], mine["videos"]
+        m = {"vpv": v / n, "spv": mine.get("subs", 0) / v,
+             "vpd": mine_videos_per_day(channel_rows)}
+        m["pct"] = {}
+        for k in ("vpd", "vpv", "spv"):
+            if m.get(k) is None:
+                continue
+            xs = sorted(r[k] for r in rows)
+            m["pct"][k] = 100.0 * sum(1 for x in xs if x < m[k]) / len(xs)
+        if m["vpd"]:
+            m["spd"] = m["vpd"] * m["vpv"] * m["spv"]
+        out["mine"] = m
+    return out
+
+
+def throughput_line(mine: dict | None = None, channel_rows: list[dict] | None = None,
+                    today=None) -> str:
+    """毎周 印字する1行（**API 0単位**）。**数はここが持つ ＝ §7／METHOD／GOAL へ写さないこと。**"""
+    t = throughput(mine, channel_rows, today)
+    if not t.get("n"):
+        return ("**3因子の分解は引けません** —— `data/niche_channels.jsonl` に `created` つきの口が"
+                "足りません（`channels.list` **5単位**）。")
+    p, r = t["p50"], t["rho"]
+    ry = t.get("rho_young") or {}
+    head = (f"**3因子の分解（`peers.throughput`・**API 0単位**・corpus {t['n']}口）**: "
+            f"**登録/日 ＝ 本/日 × 1本あたり再生 × 登録/再生**（恒等式）。"
+            f"\n  corpus 中央: 本/日 {p['vpd']:.3f}・1本あたり {p['vpv']:,.0f}回・"
+            f"登録/再生 {100 * p['spv']:.3f}%"
+            f"\n  順位相関（登録/日 と）: **1本あたり再生 {r['vpv']:+.3f}** ／ "
+            f"登録/再生 {r['spv']:+.3f} ／ **本/日 {r['vpd']:+.3f}**"
+            + (f"（齢<{YOUNG_DAYS}日 の {t['n_young']}口 だけなら **{ry['vpd']:+.3f}**）" if ry else "")
+            + f"。本/日 と 1本あたり再生 は {t['rho_vpd_vpv']:+.3f}（無相関）")
+    tg = t.get("target")
+    if tg:
+        head += (f"\n  門（登録/日 {THR_TARGET_SPD:.0f}人 以上）を抜けている {tg['n']}口 の中央: "
+                 f"本/日 **{tg['vpd']:.3f}**（{1 / tg['vpd']:.1f}日 に 1本）・"
+                 f"1本あたり {tg['vpv']:,.0f}回・登録/再生 {100 * tg['spv']:.2f}%")
+    m = t.get("mine")
+    if not m:
+        return head
+    pct = m.get("pct", {})
+    body = "\n  **うち**: "
+    if m.get("vpd") is not None:
+        body += f"本/日 **{m['vpd']:.2f}**（**p{pct.get('vpd', 0):.1f}**）・"
+    else:
+        body += f"本/日 **引けません**（台帳の `channel` の窓が {THR_MINE_MIN_DAYS:.0f}日 未満）・"
+    body += (f"1本あたり {m['vpv']:,.0f}回（p{pct.get('vpv', 0):.1f}）・"
+             f"登録/再生 {100 * m['spv']:.4f}%（p{pct.get('spv', 0):.1f}）")
+    if pct.get("vpd", 0) >= 90 > min(pct.get("vpv", 100), pct.get("spv", 100)):
+        body += ("\n  ＝ **唯一 p90 より上に在る軸が、順位相関のいちばん低い軸です。**"
+                 "**本/日 に残っている伸びしろは 0** —— 積む先の話であって、"
+                 "「本数を落とせば伸びる」ではありません（`throughput` の註 (1)〜(5)）。")
+    return head + body
+
+# ---------------------------------------------------------------------------
 # **人格の印**（`persona` / `persona_line`・2026-09-16 19:xx・optimizer・Fable 5.1・ultracode）
 # ---------------------------------------------------------------------------
 

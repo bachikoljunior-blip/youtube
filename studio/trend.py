@@ -2520,6 +2520,14 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
             if _v and _n:
                 _mine = {"subs": int(_last.get("subs") or 0), "views": _v, "videos": _n}
         out.append(_peers.conversion_line(_mine))
+        # **3因子の分解**（2026-09-18 08:xx に足した）—— 上の `conversion_line` は 2軸
+        #  （登録/再生・1本あたり再生）しか並べず、**3つ目の 本/日 を数えていません**でした。
+        #  数えたら **うちは p97.7**（生涯平均なら p99.5）で、**うちより多く出している口は
+        #  corpus に TBS NEWS DIG 1つ だけ**です。そして 本/日 は 登録/日 との順位相関が
+        #  いちばん低く（齢を揃えると **符号が反転**）、**1本あたり再生 とは無相関**です。
+        #  ＝ **唯一 p97 より上に在る軸が、いちばん効かない軸。**
+        #  **決めと覆る条件は `peers.throughput` の註 ＝ ここへ数を写さないこと。**
+        out.append(_peers.throughput_line(_mine, _cs))
         # **題に「名前」が在るか**（2026-09-16 19:xx に足した）—— 上の `conversion_line` は
         #  「転換率が下から2番目」までしか言わず、**何をすれば上がるかを言っていません**でした。
         #  この行は corpus の中で 1つ 名指しします。**肩書き（人間の経歴）の腕は うちには閉じている**
