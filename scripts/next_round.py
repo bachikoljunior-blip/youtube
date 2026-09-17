@@ -2118,6 +2118,52 @@ def decide(now: datetime | None = None, live: int | None = None,
                       f"**起こしを置いて待つ** —— 立てると上限 "
                       f"{OWNER_CAP_WORDS} を越え、枠を使い切った先で 31時間 止まる"
                       "（09/03 06:3x「サブで判断して」）")
+        # **日枠が戻る刻（16:00 JST）が待ちの中に在るなら、そこへ手前倒しする**
+        # （2026-09-17 15:0x・optimizer・Fable 5.1・ultracode）。
+        #
+        # **踏んだ当のもの**（`data/studio/ledger.jsonl` 09/16 の窓・実測）:
+        #     16:00 JST  日枠が 10,000 に戻る
+        #     16:49      `channels.list` **通った**
+        #     19:01      **403**（うちはその間 1行 も撃っていません）
+        #   ＝ **戻った枠は 2〜3時間 で消えます。** 窓の頭に居るかどうかが、そのまま
+        #   「その日 1本 出せるか」です（`schedule` 1,650単位・`catchup` 205単位）。
+        #
+        # **ところが周の刻（床 129分）は 16:00 と合いません。** 09/17 は 14:4x に立った周が
+        # 次に起きるのが **16:5x** ＝ **窓の頭から 58分 遅れ**。09/16 の窓はその頃にはもう
+        # 尽きていました。**5周 続けて `watermark`（50単位）が撃てずに終わった**のは
+        # この刻ずれで、`cmd_catchup` はその「順番」の側だけを直しています
+        # （「詰まっているのは判断ではなく順番」＝ `cmd_catchup` の註）。**刻の側は誰も直していません。**
+        #
+        # **手前へしか動きません**（`min`）＝ 間隔を伸ばす側には 1ミリも動かない
+        # （`CLAUDE.md` 2026-08-31「間隔は二重に立てないためのもの・遊ばせるためではない」）。
+        # **縮むのは 1日 1回・最大でも `floor` 分**で、上振れは `pace()` が次の周で引き戻します。
+        #
+        # **覆る条件**:
+        #  (1) 窓の頭に立った周が **2窓 続けて 403** を踏んだら、遅れているのは刻ではなく枠
+        #      ＝ この手前倒しを外すこと（`data/owner_ask.jsonl` の `yt_quota_not_ours` の側）。
+        #  (2) `budget.RESET_H` が動いたら（Google が刻を変えたら）ここは自動で追います
+        #      —— **写しを持たないこと**（16 をここに書かない）。
+        #  (3) 日枠を使う手が `catchup` だけでなくなったら（1周の中で何度も撃つようになったら）、
+        #      窓の頭 1回 では足りません ＝ そのときは刻ではなく**1周の中身**の側。
+        try:
+            from studio.budget import RESET_H as _RESET_H
+            _jst = timezone(timedelta(hours=9))
+            _n = now.astimezone(_jst)
+            _head = _n.replace(hour=_RESET_H, minute=0, second=0, microsecond=0)
+            if _n >= _head:
+                _head = _head + timedelta(days=1)
+            # 遅れのぶん手前へ（上の `want` と同じ理由 ＝ 届くのは「頼んだ時刻 ＋ 遅れ」）
+            _want = (_head - _n).total_seconds() / 60.0 - lat
+            _m = max(1, math.ceil(_want))
+            if _m < out["wake_min"]:
+                out["quota_head_pull_min"] = out["wake_min"] - _m
+                out["wake_min"] = _m
+                out["wake_at"] = now + timedelta(minutes=_m)
+                out["why"] += (f"。**ただし日枠が戻る {_RESET_H}:00 JST が待ちの中に在るので、"
+                               f"起こしを {out['quota_head_pull_min']}分 手前へ倒しました** —— "
+                               f"戻った枠は実測 2〜3時間 で消えます（09/16 16:49 通った → 19:01 403）")
+        except Exception:
+            pass
     return out
 
 

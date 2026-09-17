@@ -126,7 +126,44 @@ def cost(method_id: str) -> int:
     return DEFAULT_READ if tail in ("list", "get") else DEFAULT_WRITE
 
 
-def note(method_id: str, ok: bool, status: int | None = None) -> None:
+def reason_of(exc) -> tuple[str, str]:
+    """`googleapiclient` の失敗から **`reason` と `message` の字**を取り出す。
+
+    **なぜ要るか**（2026-09-17 15:0x・optimizer・Fable 5.1・ultracode）:
+    09/16 の窓の実測は **403 → 通った → 403** でした（`ledger` 16:49 通った・19:01 403・
+    **21:14 通った**・21:17 403）。**日枠は単調なので、尽きたものが同じ窓で戻ることはありません。**
+    ＝ 19:01 の 403 は「日枠 10,000 を使い切った」ではない可能性が在るのに、
+    **うちの口は 403 を全部 `quota_exceeded` と書いていました**（`ledger` の event 名）。
+
+    `reason` が 1字 残っていれば、この 2つ は次の窓で割れます:
+
+        `quotaExceeded`／`dailyLimitExceeded`  日枠（16:00 JST まで戻らない）
+        `rateLimitExceeded`／`userRateLimitExceeded`／`servingLimitExceeded`
+                                             **短い窓の絞り**（待てば戻る ＝ 周を止める理由にならない）
+
+    **実物が在ります**: `data/batch_runs.jsonl`（2026-08-24）には
+    `Quota exceeded for quota metric 'Search Queries' and limit 'Search Queries per day'`
+    ＝ **`reason: rateLimitExceeded`・HTTP 429** が残っていました。
+    **＝ この口は、metric ごとに別の枠を持ちます。** 「日枠 10,000」1つ で読んではいけません。
+
+    **覆る条件**: `reason` が 2窓 続けて `quotaExceeded` だけなら、この列は役目を終えます
+    （そのときは `budget` の側の話 ＝ オーナーの手・`owner_ask` の `yt_quota_not_ours`）。
+    """
+    try:
+        raw = getattr(exc, "content", None)
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        if not raw:
+            return "", ""
+        err = (json.loads(raw) or {}).get("error") or {}
+        errs = err.get("errors") or []
+        reason = (errs[0].get("reason") if errs else "") or err.get("status") or ""
+        return str(reason)[:64], str(err.get("message") or "")[:300]
+    except Exception:  # noqa: BLE001
+        return "", ""
+
+
+def note(method_id: str, ok: bool, status: int | None = None, exc=None) -> None:
     """1行 足す。**ここで例外を出さないこと** —— 数えるために本番を落とさない。"""
     try:
         if _blocked():
@@ -137,6 +174,13 @@ def note(method_id: str, ok: bool, status: int | None = None) -> None:
                "units": cost(method_id), "ok": bool(ok)}
         if status is not None:
             row["status"] = status
+        if exc is not None:
+            # **403 の中身は 1種類ではありません**（上の `reason_of` の註）。
+            reason, message = reason_of(exc)
+            if reason:
+                row["reason"] = reason
+            if message:
+                row["message"] = message
         if not name or (api == "youtube" and name not in UNITS):
             row["unknown"] = True
         DATA.mkdir(parents=True, exist_ok=True)
@@ -167,7 +211,7 @@ def install() -> None:
         try:
             out = _execute(self, *a, **kw)
         except Exception as e:  # noqa: BLE001
-            note(mid, False, getattr(getattr(e, "resp", None), "status", None))
+            note(mid, False, getattr(getattr(e, "resp", None), "status", None), exc=e)
             raise
         note(mid, True)
         return out
@@ -177,7 +221,7 @@ def install() -> None:
         try:
             st, resp = _next_chunk(self, *a, **kw)
         except Exception as e:  # noqa: BLE001
-            note(mid, False, getattr(getattr(e, "resp", None), "status", None))
+            note(mid, False, getattr(getattr(e, "resp", None), "status", None), exc=e)
             raise
         if resp is not None:          # 上げ終わった回だけ数える（途中の塊は同じ 1本）
             note(mid, True)
@@ -240,7 +284,29 @@ def line(since: str, day_units: int, rows_: list[dict] | None = None) -> str | N
                                     sorted(s["per"].items(), key=lambda x: -x[1])[:4])
     if s["unknown"]:
         head += f" ／ **値段を知らない方法 {s['unknown']}本**（`meter` の覆る条件 (2)）"
+    # **403 の `reason` を、字のまま並べる**（2026-09-17 15:0x・`reason_of` の註）。
+    # **`quotaExceeded` だけなら日枠・`rateLimitExceeded` が混ざれば短い窓の絞り**で、
+    # 後者は**待てば戻る ＝ 周を止める理由になりません**。
+    # **出どころの無い行は数えません**（`reason` の列は この回より前の行には在りません）。
+    rs = reasons(since, rows_)
+    if rs:
+        head += ("\n    403 の `reason`: " + " ／ ".join(f"**{k}** {v}本" for k, v in rs)
+                 + "（`quotaExceeded`／`dailyLimitExceeded` ＝ 日枠・"
+                   "`rateLimitExceeded`／`userRateLimitExceeded` ＝ **短い窓の絞り ＝ 待てば戻る**）")
     return head
+
+
+def reasons(since: str, rows_: list[dict] | None = None) -> list[tuple[str, int]]:
+    """`since` から先の、失敗した口の `reason` を多い順に。**この回より前の行は `reason` を持ちません。**"""
+    per: dict[str, int] = {}
+    for r in (rows() if rows_ is None else rows_):
+        at = r.get("at") or ""
+        if not at or at < since or r.get("ok"):
+            continue
+        k = r.get("reason")
+        if k:
+            per[k] = per.get(k, 0) + 1
+    return sorted(per.items(), key=lambda x: -x[1])
 
 
 def outside_line(since: str, day_units: int, dry: str | None,
