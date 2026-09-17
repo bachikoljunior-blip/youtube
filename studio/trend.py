@@ -2454,6 +2454,12 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  `views_streak`）。**単位は「引き」＝ 周ではありません**（`trend.rev7_run` の註）。
     out.append(rev7_line(rows))
     out.append(rev_deadline_line(rows))
+    # **長尺 1本あたりの再生**（2026-09-17 15:0x に足した・GOAL (4-s)）——
+    #  上の `rev_deadline` は門まで、下の `capacity` は門の先で、**別々の倍率**で出ています。
+    #  長尺 n本/日 の形に揃えると、門の 2枚 も収益も**同じ 1つ の数**に落ちます
+    #  ＝ 毎周 自分に訊く数を 1つ にするための行。**決めと覆る条件は `long_per_video` の註と
+    #  GOAL (4-s) ＝ ここへ数を写さないこと。**（**API 0単位**・台帳と台本を読むだけ）
+    out.append(long_per_video_line(rows, now=now))
     # **門の先（月20万）の距離**（2026-09-16 10:xx・optimizer・Fable 5.1・ultracode）。
     #  `rev_deadline` が出すのは**門まで**で、オーナーの目標はその**先**です。
     #  09/13〜09/16 に固定2 へ「できない」と答えた 7周 は、門の倍率だけを見ていました。
@@ -7563,3 +7569,92 @@ def plan_branch_line(rows: list[dict], now: dt.datetime | None = None,
                    if b["sub_rate_need_b"] else "。"))
     out += "**手は GOAL (4-i) のその枝の行**（ここは選ぶだけ）。"
     return out
+
+
+# ---------------------------------------------------------------------------
+# **長尺 1本あたりの再生 —— 門も収益も、この 1つ の数に落ちます**
+# （2026-09-17 15:0x・optimizer・Fable 5.1・ultracode。決めと覆る条件は `docs/GOAL.md` (4-s)）
+# ---------------------------------------------------------------------------
+
+#: 1本あたりを数えるときに外す齢（時間）。**出したその周の本を 0回 と数えない**（下の覆る条件 (2)）。
+LPV_MIN_AGE_H = 24.0
+
+
+def long_per_video(rows: list[dict], now: "dt.datetime | None" = None,
+                   scripts_dir: "Path | None" = None) -> dict:
+    """うちの長尺の **1本あたり再生** と、月20万 に要る **1本あたり再生**（**API 0単位**）。
+
+    **なぜこの 1行 が要るか**（`docs/GOAL.md` (4-s)）: 09/13 から 09/17 までの 15周 は、
+    門（登録1,000人・4,000時間）と収益（月20万）を**別々の倍率**で数えてきました。
+    **長尺 1本/日 の形に揃えると、3つ とも同じ 1つ の数に落ちます**:
+
+        月20万（RPM ¥1,000）  200,000回/月 ＝ 6,667回/日 ＝ 長尺1本/日 なら **6,667回/本**
+        扉(b) 4,000時間        6,667回/日 × 15分 × 維持40% ＝ 667時間/日 → **6.0日**
+        扉 登録 1,000人        6,667回/日 × corpus 中央 5.25/1000 ＝ 35.0人/日 → **27.7日**
+
+    **＝ そこへ届かない手は、どれを何回 撃っても 3つ とも開きません。**
+    前例は `カメ先生のもらえるお金`（齢 **44日**・40本・893,279回 ＝ **22,332回/本** ＝ 要求の 3.3倍）
+    ＝ **期限（87日）より短い窓で、同じ族の口が越えています。**
+
+    **本数は既定値であって床ではありません**（オーナー 09/14 06:1x）——
+    **n本/日 にすれば 1本あたりの要求は 1/n** になるので、この関数は
+    `per_day`（台帳の長尺の刻から数えた実測）で割ります。**`1` を写しません。**
+    月20万 と RPM の帯も `studio/peers.py` の 1か所から引きます（**写しを持たない**）。
+
+    **覆る条件**:
+     (1) RPM が実測で出たら帯を捨ててその数にすること（`peers.RPM_BAND` の 1か所）。
+     (2) **`measured` を持たない長尺は分母に入れません** —— 齢 0 の本を 0回 と数えると、
+         出したその周だけ 1本あたりが半分に出ます。`LPV_MIN_AGE_H` より若い測りも外します。
+     (3) この行が **2窓 続けて「測った長尺 0本」**なら、壊れているのは作りではなく測り
+         （`measure` が撃てていない）＝ 直すのは日枠の側。
+    """
+    from . import peers as _peers
+
+    longs = long_videos(rows, scripts_dir)
+    vids = {v["video_id"] for v in longs}
+    seen: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") == "measured" and r.get("id") in vids:
+            if float(r.get("age_h") or 0) >= LPV_MIN_AGE_H:
+                seen[r["id"]] = r
+    views = sorted(int(x.get("views") or 0) for x in seen.values())
+    mid = (None if not views else
+           float(views[len(views) // 2]) if len(views) % 2 else
+           (views[len(views) // 2 - 1] + views[len(views) // 2]) / 2.0)
+    # **分母は「刻の在る日の数」ではなく、最初から最後までの日数**（2026-09-17 15:1x に直した）。
+    # 集合で数えると **長尺を 1本 も置かなかった日が分母から落ち**、1本あたりの要求が
+    # 実際より低く出ます。実測（09/15〜09/17）は **8本 / 3日 ＝ 2.67本/日** で、
+    # これは `LONG_SLOTS`（12:00・19:00・21:00 ＝ 1日 3枠）そのものです ＝ **いまの出し方の数**。
+    # **「1本/日」を写さない理由**: 本数は既定値で、`LONG_SLOTS` を増やせば要求は そのぶん下がります。
+    ds = sorted((v.get("publish_at") or "")[:10] for v in longs if v.get("publish_at"))
+    span = 1
+    if len(ds) >= 2:
+        try:
+            a = dt.date.fromisoformat(ds[0])
+            b = dt.date.fromisoformat(ds[-1])
+            span = max(1, (b - a).days + 1)
+        except ValueError:
+            span = len(set(ds)) or 1
+    per_day = (len(longs) / span) if ds else 1.0
+    need = {rpm: (_peers.GOAL_YEN / rpm * 1000.0) / 30.0 / max(per_day, 0.01)
+            for rpm in _peers.RPM_BAND}
+    return {"n_long": len(longs), "n_measured": len(seen), "median": mid,
+            "per_day": per_day, "need": need, "views": views}
+
+
+def long_per_video_line(rows: list[dict], now: "dt.datetime | None" = None,
+                        scripts_dir: "Path | None" = None) -> str:
+    """毎周 1行。**決めと覆る条件は `docs/GOAL.md` (4-s) ＝ ここへ数を写さないこと。**"""
+    d = long_per_video(rows, now, scripts_dir)
+    band = " ／ ".join(f"RPM ¥{int(r):,} → **{v:,.0f}回/本**"
+                      for r, v in sorted(d["need"].items()))
+    head = (f"**長尺 1本あたり再生**（GOAL (4-s)・門も収益もこの 1つ に落ちます・"
+            f"長尺 {d['per_day']:.2f}本/日）: ")
+    if d["median"] is None:
+        return (head + f"**まだ 1本 も読めていません**（長尺 {d['n_long']}本・"
+                f"齢{LPV_MIN_AGE_H:.0f}h 超の測り 0件）＝ 要るのは {band}。"
+                f"**まず `measure` を撃つこと**（覆る条件 (3)）")
+    mid_rpm = sorted(d["need"])[len(d["need"]) // 2]
+    gap = d["need"][mid_rpm] / max(d["median"], 1.0)
+    return (head + f"いま **{d['median']:,.0f}回/本**（測った長尺 {d['n_measured']}本 / {d['n_long']}本）"
+            f" 対 {band} ＝ **{gap:,.0f}倍**")
