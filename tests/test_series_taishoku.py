@@ -58,9 +58,16 @@ def test_連作の声の数は式の数と同じ():
 
 
 def test_台本が在れば生成器と同じ():
-    """書いた台本を手で直したら、生成器を直すこと（次に書き直すと戻る）。"""
+    """書いた台本を手で直したら、生成器を直すこと（次に書き直すと戻る）。
+
+    **ただし、CTA の差し替え（2026-09-18 20:3x）より前に焼いて上げた本は外します**
+    （`series_taishoku.BAKED_BEFORE_CTA_SWITCH` の註・上げ直しに 1本 1,650単位）。
+    """
+    from studio.series_taishoku import BAKED_BEFORE_CTA_SWITCH
     for f in ALL:
         d = f()
+        if d["id"] in BAKED_BEFORE_CTA_SWITCH:
+            continue
         p = ROOT / "data/studio/scripts" / f"{d['id']}.json"
         if not p.exists():
             continue

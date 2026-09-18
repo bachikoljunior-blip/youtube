@@ -15,7 +15,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-from . import meter
+from . import asp, meter
 from .common import JST, env, now_jst
 
 _svc = None
@@ -221,6 +221,9 @@ def today_lineup(videos: list[dict] | None = None, date: dt.date | None = None) 
 
 
 def upload(path: Path, title: str, description: str, tags: list[str], publish_at: dt.datetime | None) -> str:
+    # **成果報酬のリンクは、この口を通る全部の本に入ります**（`studio/asp.py`・冪等・API 0単位）。
+    # 台本の側には書きません —— 案件が入れ替わるたびに 288本 の JSON を書き直すことになるため。
+    description = asp.compose(description)
     status = {"privacyStatus": "private", "selfDeclaredMadeForKids": False, "license": "youtube", "embeddable": True}
     if publish_at:
         status["publishAt"] = publish_at.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -360,12 +363,34 @@ def update_meta(video_id: str, title: str, description: str, tags: list[str]) ->
     **覆る条件**: `update` の返りが `snippet` を持たない周が出たら、そのときだけ
     `videos.list` を 1単位 で引くこと（**ただし 60秒 待ってから** ＝ 上の実測）。
     """
+    # `upload` と同じ一点（`studio/asp.py`）。**直す口も通します** ——
+    # 通さないと、`verify_meta` の 50単位 が成果報酬の塊を毎回 消しにいきます。
+    description = asp.compose(description)
     resp = svc().videos().update(part="snippet", body={"id": video_id, "snippet": {
         "title": title, "description": description, "tags": [t[:30] for t in tags][:15],
         "categoryId": "27", "defaultLanguage": "ja", "defaultAudioLanguage": "ja"}}).execute()
     sn = resp.get("snippet") or {}
     return {"title": sn.get("title"), "description": sn.get("description"),
             "tags": sn.get("tags"), "ok": sn.get("title") == title}
+
+
+def snippets(video_ids: list[str]) -> dict[str, dict]:
+    """その本たちの `snippet`（題・説明欄・tags）を引く。**50本 で 1単位**（`videos.list`）。
+
+    2026-09-18 20:3x（optimizer）に足した —— **説明欄に成果報酬の塊を入れ直すのに、
+    いま上がっている説明欄が要る**（`cmd_asp`）。`readiness` は 1本ずつ で、
+    `all_videos` は `snippet.description` を持ち回りません（`_row` を見ること）。
+
+    **返り**: id → {"title", "description", "tags"}。引けなかった id は入りません。
+    """
+    out: dict[str, dict] = {}
+    for i in range(0, len(video_ids), 50):
+        r = svc().videos().list(part="snippet", id=",".join(video_ids[i:i + 50])).execute()
+        for v in r.get("items", []):
+            sn = v.get("snippet") or {}
+            out[v["id"]] = {"title": sn.get("title", ""), "description": sn.get("description", ""),
+                            "tags": list(sn.get("tags") or [])}
+    return out
 
 
 def make_private(video_id: str) -> None:

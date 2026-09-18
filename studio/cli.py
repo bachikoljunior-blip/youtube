@@ -32,7 +32,7 @@ from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
-from . import analytics, budget, critic, demand, hear, peers, pubcheck, render, reporting, script, stall, trend, yt
+from . import analytics, asp, budget, critic, demand, hear, meter, peers, pubcheck, render, reporting, script, stall, trend, yt
 from . import common
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
@@ -283,7 +283,9 @@ def drift_fields(rd: dict, s) -> list[str]:
     out = []
     if _trim(rd.get("title")) != _trim(s.title):
         out.append("題")
-    if _trim(rd.get("description")) != _trim(s.description):
+    # **比べる相手は「上げるつもりの字」**（＝ 成果報酬の塊を通したあと・`studio/asp.py`）。
+    # 台本の生の字と比べると、上げた本が毎周「食い違い」に見えて 50単位 が空撃ちされます。
+    if _trim(rd.get("description")) != _trim(asp.compose(s.description)):
         out.append("説明欄")
     if set(rd.get("tags") or []) != {t[:30] for t in s.tags[:15]}:
         out.append("tags")
@@ -315,7 +317,7 @@ def desc_appended(rd: dict, s) -> str | None:
      (3) **足された分が空白だけなら、これは食い違いではありません** —— `_trim` が先に当てます。
     """
     live = _trim(rd.get("description"))
-    mine = _trim(getattr(s, "description", None))
+    mine = _trim(asp.compose(getattr(s, "description", None)))
     if not mine or live == mine or not live.startswith(mine):
         return None
     return live[len(mine):].strip()
@@ -2750,6 +2752,86 @@ def cmd_catchup(a):
     return 0
 
 
+def cmd_asp(a):
+    """**上がっている本の説明欄に、成果報酬の塊を入れ直す**（`videos.update` 50単位/本）。
+
+    2026-09-18 20:3x・optimizer。**なぜ在るか**: `studio/asp.py` は
+    `yt.upload`／`yt.update_meta` の口に入っているので、**これから上げる本には自動で入ります**。
+    **入らないのは、もう上がっている本だけ** —— そこが、いま再生を集めている側です
+    （09/19 の予約 5本 は、まだ 1回 も配られていないのに、もう上がっている）。
+
+    **既定の相手は「まだ公開していない予約」**（台帳の `scheduled` から引く ＝ **API 0単位**）。
+    公開ずみの本を指すときは `--ids` で名指しすること（`videos.list` 1単位 ＋ 50単位/本）。
+    **`--max`（既定 5）が蓋**です —— 日枠の残りを先に印字し、`RESERVE`（測る側 600単位）を
+    割り込む本数は撃ちません（`studio/budget.py`）。
+
+    **台帳**: 撃った本に `redescribed`（units 50）を 1行。
+    **`cli.desc_appended` の覆る条件 (1)** が名指ししていた行がこれです ——
+    説明欄を**前に足す**形は前方一致では引けないので、印を台帳に残します。
+
+    **覆る条件**: (1) 塊が入った本の 24h 中央が、入っていない本の半分 未満なら `asp.compose(top=False)` へ
+    （`studio/asp.py` の覆る条件 (1) と同じ 1か所）。(2) `videos.update` が tags を落とす回が出たら、
+    live の tags ではなく台本の tags を渡すこと（`verify_meta` の (2) と同じ穴）。
+    """
+    rows = ledger_rows()
+    if a.ids:
+        ids = [x.strip() for x in a.ids.split(",") if x.strip()]
+    else:
+        now = now_jst().isoformat(timespec="seconds")
+        seen, ids = {}, []
+        for r in rows:
+            if r.get("event") == "scheduled" and r.get("video_id") and (r.get("publish_at") or "") > now:
+                seen[r["video_id"]] = r.get("publish_at")
+        ids = sorted(seen, key=lambda v: seen[v])
+    if not ids:
+        print("相手が 0本（まだ公開していない予約が無い）。公開ずみを指すなら --ids")
+        return 0
+    b = asp.block()
+    if not b:
+        print("成果報酬の案件が 0本（data/studio/asp_links.json）。入れる物が無い")
+        return 1
+    # **蓋は「推計」ではなく「実測」で取ること**（`budget` の覆る条件 (1)・`status` の
+    # 「実測の行が在れば、そちらが本当の消費です」）。推計は台帳に `units` を書かない口を数えないので
+    # **必ず小さく出ます** —— 実測 9,126 に対し推計 8,756（この回の差 370単位 ＝ 7本ぶん）。
+    since = budget.window_start().isoformat(timespec="seconds")
+    est = budget.spent(rows)["total"]
+    real = meter.spent(since)["total"]
+    used = max(est, real)
+    room = budget.DAY_UNITS - used - budget.RESERVE
+    cap = max(0, room // 50)
+    n = min(len(ids), a.max, a.max if a.anyway else cap)
+    print(f"日枠の残り {budget.DAY_UNITS - used}単位（実測 {real}・推計 {est}）・ 測る側に {budget.RESERVE} 残すと "
+          f"撃てるのは {cap}本 ・ 相手 {len(ids)}本 ・ この回は {n}本")
+    if n <= 0:
+        print("枠が足りません（--anyway で蓋を外せますが、測る側を食います）")
+        return 0
+    ids = ids[:n]
+    if a.dry_run:
+        print("--dry-run（**0単位**）。入れる塊:\n" + b)
+        for v in ids:
+            print(f"  {v}")
+        return 0
+    got = yt.snippets(ids)                      # 1単位（50本 まで）
+    done = 0
+    for vid in ids:
+        sn = got.get(vid)
+        if not sn:
+            print(f"  {vid} 引けません（消えた本？）")
+            continue
+        if asp.has_block(sn["description"]):
+            print(f"  {vid} もう入っています")
+            continue
+        back = yt.update_meta(vid, sn["title"], sn["description"], sn["tags"])
+        ok = asp.has_block(back.get("description") or "")
+        ledger("redescribed", vid, video_id=vid, kind="asp", units=50, ok=ok,
+               before=len(sn["description"]), after=len(back.get("description") or ""))
+        done += 1
+        print(f"  {vid} {'入りました' if ok else '!! 返りに塊がありません'} "
+              f"（{len(sn['description'])} → {len(back.get('description') or '')}字）  {sn['title'][:28]}")
+    print(f"撃った {done}本 ＝ {done * 50}単位")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -2799,6 +2881,13 @@ def main(argv=None):
     rpt = sub.add_parser("reporting"); rpt.add_argument("--setup", action="store_true")
     rp = sub.add_parser("reply"); rp.add_argument("comment_id"); rp.add_argument("--text", required=True)
     rp.add_argument("--dry-run", action="store_true")
+    # **成果報酬のリンクを、もう上がっている本の説明欄へ**（`cmd_asp` の註・`studio/asp.py`）。
+    # 既定の相手は「まだ公開していない予約」＝ **これから配られる側**（台帳から引く・0単位）。
+    asp_p = sub.add_parser("asp")
+    asp_p.add_argument("--ids", default="", help="video_id をコンマ区切りで名指し（既定は未公開の予約 全部）")
+    asp_p.add_argument("--max", type=int, default=5, help="この回に撃つ本数の蓋（既定 5 ＝ 250単位）")
+    asp_p.add_argument("--anyway", action="store_true", help="測る側の 600単位 を割り込んでも撃つ")
+    asp_p.add_argument("--dry-run", action="store_true", help="入れる塊と相手だけ（**0単位**）")
     a = ap.parse_args(argv)
     # **道で呼ばれた `id` を、ここで 1度だけ id へ戻す**（2026-09-12 02:1x・hourly・Opus）。
     # `script.path_for` は 09/06 から道を通しますが、この下の 20か所 は `a.id` を id として使います
