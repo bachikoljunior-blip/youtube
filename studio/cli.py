@@ -3416,6 +3416,25 @@ def _form_gap_phrase() -> str:
                         f"**門の外（成果報酬）の 円/枠 は short ¥{sp:,.0f} 対 long ¥{lp:,.0f}"
                         f"（{sp / max(lp, 1e-9):,.1f}倍・向きが逆）**"
                         "。**絶対値は帯の中・比は帯の外**（`trend.slot_value` の `perf_yen` の註）")
+            # **その 円/枠 の分母（枠）は、余っている側です**（2026-09-19 07:xx・METHOD §5 決め (4)）——
+            # 在庫が 枠/日 を上回っているあいだ、縛っているのは枠ではなく **周** です。
+            # **数と覆る条件は `trend.lap_value` の註 ＝ ここへ写さないこと。**
+            try:
+                lv = trend.lap_value(rows)
+                sl, ll = lv.get("short"), lv.get("long")
+                if (sl and ll and sl.get("per_lap") is not None
+                        and ll.get("per_lap") is not None):
+                    yen += (f"・**その分母（枠）は余っています** —— 在庫 "
+                            f"{(lv.get('_lap') or {}).get('inventory', '?')}本 対 枠 "
+                            f"{(lv.get('_lap') or {}).get('slots_per_day', '?')}本/日。"
+                            f"**足りないのは周**で、周を分母にすると "
+                            f"**short ¥{sl['per_lap']:,.0f}/周 対 long ¥{ll['per_lap']:,.0f}/周"
+                            f"（{sl['per_lap'] / max(ll['per_lap'], 1e-9):,.0f}倍）**"
+                            f"（short {sl['laps_per']:.1f}周/本 対 long {ll['laps_per']:.1f}周/本・"
+                            f"作りの周の {ll['laps'] / max(sl['laps'] + ll['laps'] + ((lv.get('_lap') or {}).get('mixed') or 0), 1) * 100:.0f}% が long）"
+                            "（`trend.lap_value_line`・METHOD §5 2026-09-19 07:xx）")
+            except Exception:   # noqa: BLE001 —— この行のために周を止めない
+                pass
             return (f"再生の差は **中央 {s['median']:,.0f}回 対 {l['median']:,.0f}回**"
                     f"（{s['median'] / max(l['median'], 1e-9):,.0f}倍）／"
                     f"**平均 {s['mean']:,.0f}回 対 {l['mean']:,.0f}回**"

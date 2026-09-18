@@ -2514,6 +2514,13 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  **向きが逆**になります。**決めと覆る条件は `slot_value` の註と METHOD §5 ＝ ここへ数を写さないこと。**
     #  **この行も「どちらにしろ」とは言いません**（判断はサブ・09/06 14:0x）。
     out.append(slot_value_line(rows))
+    # **周 1つ の値打ち**（2026-09-19 07:xx に足した・`lap_cost` の上の註）——
+    #  すぐ上の行の分母は **枠**（1日 5本）です。**枠は余っています**（在庫 13本 ＞ 5本/日）。
+    #  余っている側を分母にすると「どちらを枠に入れるか」しか訊けません。
+    #  足りないのは **周**（残り 約2,000周）で、そちらを分母にすると **133倍**（枠なら 18.7倍）。
+    #  **決めと覆る条件は `lap_cost` の註と METHOD §5 ＝ ここへ数を写さないこと。**
+    #  **この行も「どちらにしろ」とは言いません**（判断はサブ・09/06 14:0x）。
+    out.append(lap_value_line(rows))
     # **扉(b) を 報告の台帳で測った距離**（2026-09-19 03:xx に足した・`gate_measured` の註）——
     #  すぐ上の行の `hours`（扉(b) の時間/枠）は **平均再生 × 分/回** で、その 分/回 は
     #  `rev_deadline` の **前提**（4分/回）か、長尺 6本・再生 19回 の実測です。
@@ -8712,6 +8719,247 @@ def slot_value_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
     return out
 
 
+
+
+# ---------------------------------------------------------------------------
+# **周 1つ の値打ち** —— 枠ではなく **周** を分母にする
+# （2026-09-19 07:xx・optimizer・Opus 5・ultracode・1周 1体）
+# ---------------------------------------------------------------------------
+#
+# **なぜ足したか（固定2 の答えの、この回の 1つ）**:
+# `slot_value` は **枠**（1日 5本 の投稿枠）を分母にしています。02:3x・06:xx の 2回 が
+# その分子（どの通貨で測るか）を直しました。**この回が見たのは分母のほうです。**
+#
+#     出せる在庫 **13本** ＞ 1日に上げられる **5本**（`status`・09/19 06:xx の実測）
+#
+# **＝ 枠は余っていません。在庫が余っています。** 枠は毎日 5つ 来て、在庫は毎日それ以上 積まれる。
+# **＝ いま縛っているのは枠ではありません。** 縛っているのは **周**（こちらの持ち時間）です。
+# 期限まで 85日・1周 約1時間 ＝ **残り 約2,000周**。これが本当に有限な側です。
+#
+# **枠を分母にすると、在庫が余っている日には「どちらを枠に入れるか」しか訊けません。
+# 周を分母にすると、「次の周で何を作るか」が訊けます。** 後者のほうが、先に効きます
+# （枠に入れる判断は在庫から選ぶだけ・作る判断は在庫そのものを変える）。
+#
+# **この回に数えた実測**（`data/studio/scripts` を触った commit ＝ 周・**API 0単位**・
+# 両方の形が同じ台帳に並び始めた 2026-09-15 以降）:
+#
+#     形      本数   その形だけを触った周   **周/本**   1本あたりの直し
+#     short   21本   15周                  **0.7**     3.3回
+#     long    11本   55周                  **5.0**     7.9回
+#     混在                2周
+#     ------------------------------------------------------------------
+#     **作りの周の 76%（55/72）が long に行っていました。**
+#
+# **これを `slot_value` の 門の外の 円/枠 に割ると**:
+#
+#     short  ¥1,400/枠 ÷ 0.7周/本 ＝ **¥2,000/周**
+#     long   ¥75/枠   ÷ 5.0周/本 ＝ **¥15/周**
+#     ------------------------------------------------------
+#     **short が 133倍**（枠を分母にすると 18.7倍）
+#
+# **＝ 分母を本当に足りない側に替えると、差は 18.7倍 ではなく 3桁 になります。**
+# **そして周の 76% は、3桁 負けている側に行っていました。**
+#
+# **この段も「ショートにしろ」とは言いません**（判断は立ったサブ・09/06 14:0x）。
+# 言うのは **「分母を、余っている側（枠）ではなく足りない側（周）にすること」** だけです。
+#
+# **覆る条件**:
+#  (1) **在庫が 枠/日 を下回ったら**（`status` の「出せる在庫」＜ `SLOTS_PER_DAY`）、
+#      枠が縛る側に戻ります ＝ **そのとき分母は枠で正しく、この行は畳んでよい**。
+#      （**門は 1か所**: 判定は `lap_value()["_lap"]["inventory_binds"]`。）
+#  (2) **周あたりの長さが変わったら**（親の間隔・模型の枠）、`周/本` は同じでも
+#      「残り 約2,000周」が動きます ＝ 周を数える所（commit）と、残りを数える所を混ぜないこと。
+#  (3) **long の 周/本 が下がったら**（道具が育って 1周 で焼けるようになったら）、
+#      133倍 は縮みます。**数は毎周 引き直すこと**（ここへ写さない）。
+#  (4) `slot_value` の `perf_yen` が畳まれたら（`PERF_CLICK_BAND` の覆る条件 (3)＝
+#      オーナーが「YouTubeの収益 ＝ YouTube から振り込まれる金だけ」と読むなら）、
+#      この行の分子も一緒に畳むこと（**分子の門は `slot_value` の 1か所**）。
+#  (5) **commit ＝ 周 は近似です。** 1周 が 2つ commit を作った回・1周 が 0個 の回は
+#      どちらも在ります。**倍率が 2倍 を切るところまで縮んだら、この近似では読まないこと**
+#      （いまは 3桁 なので、近似の幅では向きが変わりません）。
+# ---------------------------------------------------------------------------
+
+#: 周を数える台帳（この下の file を触った commit を 1周 と数える）。
+LAP_SCRIPTS_REL = "data/studio/scripts"
+#: 数え始める日（**両方の形が同じ台帳に並び始めた日**。これより前は `form` を持たない本ばかりで、
+#: 形ごとの周を分けられません）。
+LAP_SINCE = "2026-09-15"
+
+_LAP_COST: dict | None = None
+
+
+def _lap_script_form(path) -> str:
+    """台本 1本 の形（`form`）。持っていなければ名前の末尾で見る。"""
+    import json as _json
+    try:
+        js = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        js = {}
+    f = js.get("form")
+    if f:
+        return str(f)
+    return "short" if path.stem.endswith("short") else "?"
+
+
+def lap_cost(since: str = LAP_SINCE, scripts_dir: "Path | None" = None) -> dict:
+    """**1本 書くのに何周 かかったか**（形ごと）。**API 0単位**・git の台帳だけ。
+
+    周は `LAP_SCRIPTS_REL` を触った commit で数えます（**近似**・覆る条件 (5)）。
+    **その形だけを触った commit** を、その形の周として数えます（混在は どちらにも入れません）。
+
+    返り: `{form: {"n","laps","laps_per","revs_per"}, "_lap": {"mixed","total","since"}}`。
+    **git が引けない所では `{}`**（この関数は止めません）。
+    """
+    global _LAP_COST
+    if _LAP_COST is not None and scripts_dir is None and since == LAP_SINCE:
+        return _LAP_COST
+    from pathlib import Path as _Path
+    from . import common as _c
+
+    d = _Path(scripts_dir) if scripts_dir else (_c.ROOT / LAP_SCRIPTS_REL)
+    if not d.is_dir():
+        return {}
+    form = {p.stem: _lap_script_form(p) for p in sorted(d.glob("*.json"))}
+    try:
+        raw = _c.run(["git", "log", "--pretty=format:@@@ %ad", "--date=format:%Y-%m-%d",
+                      "--name-only", "--", LAP_SCRIPTS_REL], cwd=str(_c.ROOT)).stdout
+    except Exception:                                   # noqa: BLE001 —— 止めない
+        return {}
+
+    laps: dict[str, int] = {}
+    revs: dict[str, int] = {}
+    mixed = total = 0
+    at, files = "", set()
+
+    def _close():
+        nonlocal mixed, total
+        if not files or at < since:
+            return
+        total += 1
+        fs = {form.get(x, "?") for x in files}
+        if len(fs) == 1:
+            f = next(iter(fs))
+            laps[f] = laps.get(f, 0) + 1
+        elif "long" in fs and "short" in fs:
+            mixed += 1
+
+    for ln in raw.split("\n"):
+        if ln.startswith("@@@ "):
+            _close()
+            at, files = ln[4:].strip(), set()
+        elif ln.strip():
+            stem = ln.rsplit("/", 1)[-1]
+            if stem.endswith(".json"):
+                stem = stem[:-5]
+                files.add(stem)
+                if at >= since:
+                    revs[form.get(stem, "?")] = revs.get(form.get(stem, "?"), 0) + 1
+    _close()
+
+    out: dict = {}
+    for f in ("short", "long"):
+        n = len([k for k, v in form.items() if v == f and k >= since])
+        if not n:
+            continue
+        lp = laps.get(f, 0)
+        out[f] = {"n": n, "laps": lp, "laps_per": lp / n,
+                  "revs_per": revs.get(f, 0) / n}
+    out["_lap"] = {"mixed": mixed, "total": total, "since": since}
+    if scripts_dir is None and since == LAP_SINCE:
+        _LAP_COST = out
+    return out
+
+
+def _inventory_upper(rows: list[dict], scripts_dir: "Path | None" = None) -> "int | None":
+    """**まだ `scheduled` に出ていない台本の数**（＝ 在庫の上端・**API 0単位**）。
+
+    `cli.shippable_line` の「出せる」は `work/` の焼きと指紋と輪まで見ますが、この行は
+    **台帳と台本の名前だけ**を見ます ＝ **必ず多い側**（上端）。
+    """
+    from pathlib import Path as _Path
+    from . import common as _c
+    d = _Path(scripts_dir) if scripts_dir else (_c.ROOT / LAP_SCRIPTS_REL)
+    if not d.is_dir():
+        return None
+    up = {r.get("id") for r in rows if r.get("event") == "scheduled"}
+    return len([p for p in d.glob("*.json") if p.stem not in up])
+
+def lap_value(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
+    """**周 1つ の値打ち**（門の外の 円/周）＝ `slot_value` の 円/枠 ÷ `lap_cost` の 周/本。
+
+    **API 0単位**。返り: `{form: {"per_slot","laps_per","per_lap","mean"}},
+    "_lap": {"inventory","slots_per_day","inventory_binds","mixed","total","since"}}`。
+    **測れない欄は None**（0 と書きません）。
+    """
+    sv = slot_value(rows, scripts_dir)
+    sv.pop("_gate", None)
+    lc = lap_cost(scripts_dir=scripts_dir)
+    if not lc:
+        return {}
+    out: dict = {}
+    for f, v in sv.items():
+        c = lc.get(f)
+        if not c or not c.get("laps_per"):
+            continue
+        ps = v.get("perf_yen")
+        out[f] = {"per_slot": ps, "laps_per": c["laps_per"], "revs_per": c["revs_per"],
+                  "n": c["n"], "laps": c["laps"], "mean": v.get("mean"),
+                  "per_lap": (ps / c["laps_per"]) if ps is not None else None,
+                  "views_per_lap": ((v.get("mean") or 0) / c["laps_per"]
+                                    if v.get("mean") is not None else None)}
+    out["_lap"] = dict(lc.get("_lap") or {})
+    out["_lap"]["slots_per_day"] = SLOTS_PER_DAY
+    # **在庫の上端**（覆る条件 (1) の判定に要る・**API 0単位**）。
+    inv = _inventory_upper(rows, scripts_dir)
+    out["_lap"]["inventory"] = inv
+    out["_lap"]["inventory_binds"] = (None if inv is None else inv <= SLOTS_PER_DAY)
+    return out
+
+
+def lap_value_line(rows: list[dict], scripts_dir: "Path | None" = None,
+                   inventory: int | None = None) -> str:
+    """毎周 1行。**決めは書きません**（数だけ）。決めと覆る条件は `docs/METHOD.md` §5。"""
+    d = lap_value(rows, scripts_dir)
+    if not d:
+        return ("**周 1つ の値打ち**（`trend.lap_value`・**API 0単位**）: "
+                "**周が数えられません**（git の台帳が引けない所） ＝ 枠の行だけで読むこと")
+    g = d.pop("_lap")
+    forms = {f: v for f, v in d.items() if v.get("per_lap") is not None}
+    if not forms:
+        return ("**周 1つ の値打ち**（`trend.lap_value`・**API 0単位**）: "
+                "**まだ 1本 も読めていません** ＝ まず `measure` を撃つこと")
+    parts = []
+    for f in sorted(forms, key=lambda x: -(forms[x].get("per_lap") or 0)):
+        v = forms[f]
+        parts.append(f"{f} **¥{v['per_lap']:,.0f}/周**"
+                     f"（¥{v['per_slot']:,.0f}/枠 ÷ **{v['laps_per']:.1f}周/本**"
+                     f"・{v['n']}本 を {v['laps']}周 で書いた・直し {v['revs_per']:.1f}回/本"
+                     f"・{v['views_per_lap']:,.0f}回/周）")
+    out = ("**周 1つ の値打ち（門の外の 円/周）**（`trend.lap_value`・**API 0単位**・"
+           "**分母は枠ではなく周**・周 ＝ `data/studio/scripts` を触った commit・"
+           f"{g.get('since')} 以降）: " + " ／ ".join(parts))
+    s, l = forms.get("short"), forms.get("long")
+    if s and l:
+        r = (s["per_lap"] or 0) / max(l["per_lap"] or 1e-9, 1e-9)
+        share = (l["laps"] / max(s["laps"] + l["laps"] + (g.get("mixed") or 0), 1)) * 100
+        out += (f"。**{r:,.0f}倍**（枠を分母にすると `slot_value_line` の倍率）"
+                f"。**作りの周の {share:.0f}% が long に行っています**"
+                f"（long だけ {l['laps']}周 ／ short だけ {s['laps']}周 ／ 混在 {g.get('mixed')}周）")
+    if inventory is None:
+        inventory = g.get("inventory")
+    if inventory is None:
+        # **在庫の上端**（台本が在って、まだ `scheduled` に出ていない本）。**API 0単位**。
+        # **焼けているかは見ていません** ＝ `cli.shippable_line` の「出せる」より**必ず多い側**です。
+        # 覆る条件 (1) は「在庫 ≦ 枠/日 なら枠が縛る」なので、**上端で判定して枠が縛ると出たら
+        # 本物でも枠が縛ります**（安全な向き）。
+        inventory = _inventory_upper(rows, scripts_dir)
+    if inventory is not None:
+        binds = inventory <= (g.get("slots_per_day") or SLOTS_PER_DAY)
+        out += (f"。**在庫 {inventory}本 対 枠 {g.get('slots_per_day')}本/日** ＝ "
+                + ("**枠が縛る側です ＝ この行の分母を枠に戻してよい**（覆る条件 (1)）"
+                   if binds else
+                   "**枠は余っていて、縛っているのは周です**（在庫のほうが多い ＝ 覆る条件 (1) は立っていません）"))
+    return out
 
 
 # --- 扉(b) を、前提ではなく**報告の台帳**で測る ------------------------------
