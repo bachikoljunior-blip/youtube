@@ -76,6 +76,8 @@ def test_扉の3行が隣り合って出る():
     i = calls.index("gate_measured_line")
     assert calls[i + 1] == "gate_proof_line", f"扉の 2行目 が離れています: {calls[i:i + 3]}"
     assert calls[i + 2] == "surface_line", f"扉の 3行目 が離れています: {calls[i:i + 3]}"
+    assert calls[i + 3] == "surface_detail_line", (
+        f"面の内訳の行（4行目）が離れています: {calls[i:i + 4]}")
 
 
 def test_公開ページの行が_登録の目盛りから落ちない():
@@ -151,3 +153,68 @@ def test_長尺の面の一覧にショートのフィードが入っていな�
     # 扉(b)（4,000時間）へ入るのは長尺の視聴だけ ＝ SHORTS を入れたら判定が壊れる
     assert "SHORTS" not in trend.LONG_SURFACES
     assert set(trend.SURFACE_ABSENT_WATCH) <= set(trend.LONG_SURFACES)
+
+
+# ---------------------------------------------------------------------------
+# **面の内訳**（2026-09-19 04:5x に足した口・`trend.surface_detail`）
+# ---------------------------------------------------------------------------
+
+def _detail_rows(details, day="2026-09-16", extra=None):
+    rows = [{"event": "analytics_traffic_detail", "id": day, "start": "2026-08-29",
+             "details": details}]
+    return (extra or []) + rows
+
+
+def test_内訳が無い台帳は_測っていないと言う_0回とは言わない():
+    """**この repo が 7度 踏んだ形** ＝ 行が無いことを「0回」と読ませない。"""
+    d = trend.surface_detail([{"event": "channel", "id": "UCa"}])
+    assert d["measured"] is False
+    assert "0回" not in d["why"]
+
+
+def test_関連の相手が_うちとよそに分かれる():
+    """関連に並んでいるのが**うちの本**か**よそ**かは、同じ数の中で分かれていること。
+
+    ＝ 「2本目 へ渡る道が在るか」を読む唯一の数（`related_ours`）。
+    """
+    rows = _detail_rows(
+        {"RELATED_VIDEO": [{"detail": "AAAAAAAAAAA", "views": 5, "minutes": 3},
+                           {"detail": "BBBBBBBBBBB", "views": 2, "minutes": 1}]},
+        extra=[{"event": "scheduled", "id": "x", "video_id": "AAAAAAAAAAA"}])
+    d = trend.surface_detail(rows)
+    assert d["related_ours"] == 5
+    assert d["related_others"] == 2
+
+
+def test_ホームの再生は_登録者の面から数える():
+    """`what-to-watch` ＝ ホーム。**`BROWSE_FEATURES` 0回 を「ホームに出ていない」と読ませない。**"""
+    rows = _detail_rows({"SUBSCRIBER": [{"detail": "what-to-watch", "views": 140, "minutes": 26},
+                                        {"detail": "/my_subscriptions", "views": 3, "minutes": 0}]})
+    d = trend.surface_detail(rows)
+    assert d["home_views"] == 140
+    line = trend.surface_detail_line(rows)
+    assert "ホーム" in line and "登録者" in line
+
+
+def test_検索の語は_1回あたりの秒も返す():
+    """語ごとの `sec_per_view` ＝ **どの語が長く見られているか**（扉(b) の通貨に近い側）。
+
+    **再生 0回 の行で割らないこと**（`None` を返す）。
+    """
+    rows = _detail_rows({"YT_SEARCH": [{"detail": "加給年金", "views": 3, "minutes": 3},
+                                       {"detail": "からの語", "views": 0, "minutes": 0}]})
+    d = trend.surface_detail(rows)
+    assert d["search_top"][0]["sec_per_view"] == 60.0
+    assert d["search_top"][1]["sec_per_view"] is None
+
+
+def test_内訳の口は_上位25件で頭打ちだと言っている():
+    """**`maxResults` は 25 が上限**（26 以上は 500 で落ちる・撃って踏んだ）。
+
+    この数が定数から消えたら、読む側は「この語では来ていない」と**尾を 0 と読み**ます。
+    """
+    from studio import analytics
+    assert analytics.DETAIL_MAX == 25
+    assert "SHORTS" not in analytics.DETAIL_SOURCES      # 400 を返す面（うちの再生の 96%）
+    assert "BROWSE_FEATURES" not in analytics.DETAIL_SOURCES
+    assert "上位" in trend.surface_detail_line(_detail_rows({"YT_SEARCH": []}))

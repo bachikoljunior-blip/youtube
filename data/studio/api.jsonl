@@ -2234,3 +2234,33 @@
 {"at": "2026-09-19T03:49:06+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
 {"at": "2026-09-19T03:49:06+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
 {"at": "2026-09-19T03:49:07+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T03:56:10+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-19T03:56:10+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-19T03:56:10+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": true}
+{"at": "2026-09-19T03:56:10+09:00", "api": "youtube", "method": "playlistItems.list", "units": 1, "ok": false, "status": 403, "reason": "quotaExceeded", "message": "The request cannot be completed because you have exceeded your <a href=\"/youtube/v3/getting-started#quota\">quota</a>."}
+{"at": "2026-09-19T03:56:27+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": false, "status": 403, "reason": "quotaExceeded", "message": "The request cannot be completed because you have exceeded your <a href=\"/youtube/v3/getting-started#quota\">quota</a>."}
+{"at": "2026-09-19T04:00:38+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:00:38+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:00:38+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:00:38+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": false, "status": 400, "reason": "badRequest", "message": "The query is not supported. Check the documentation at https://developers.google.com/youtube/analytics/v2/available_reports for a list of supported queries."}
+{"at": "2026-09-19T04:00:39+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:00:39+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": false, "status": 400, "reason": "invalid", "message": "Invalid value (BROWSE_FEATURES) given in field parameters.filters."}
+{"at": "2026-09-19T04:01:18+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:01:18+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:01:44+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": false, "status": 500, "reason": "FIELD_UNKNOWN_VALUE", "message": "Internal error encountered."}
+{"at": "2026-09-19T04:01:58+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:01:58+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": false, "status": 500, "reason": "FIELD_UNKNOWN_VALUE", "message": "Internal error encountered."}
+{"at": "2026-09-19T04:01:59+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:38+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:38+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:38+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:39+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:39+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:39+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:39+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:39+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:40+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:40+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:40+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:41+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-19T04:04:41+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}

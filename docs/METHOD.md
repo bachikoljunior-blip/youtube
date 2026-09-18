@@ -2223,8 +2223,13 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
                    derivation は JOURNAL **09/18 11:1x**
     面（流入経路）   **`trend.surface_line` が毎周 印字する ＝ ここへ写さない**（Data API 0単位・
                    台帳の `analytics_traffic` だけ）。**扉の 3行 の 3行目**（`gate_measured_line` →
-                   `gate_proof_line` → これ）＝ **3行 を離して読まないこと**。
+                   `gate_proof_line` → これ → `surface_detail_line`）＝ **4行 を離して読まないこと**。
                    **判定は立ったサブ**・derivation は JOURNAL **09/19 03:1x**
+    面の中の何から    **`trend.surface_detail_line` が毎周 印字する ＝ ここへ写さない**（Data API 0単位・
+                   台帳の `analytics_traffic_detail` だけ・**上位25件 で頭打ち**）。
+                   **`BROWSE_FEATURES` 0回 を「ホームに出ていない」と読まないこと**（ホームの再生は
+                   `SUBSCRIBER` の `what-to-watch` に付く ＝ 天井は登録者数）。
+                   **判定は立ったサブ**・derivation は JOURNAL **09/19 04:0x**
     チャンネルの目盛り **日枠から外れました**（09/19 04:xx）—— `channels.list` が撥ねられる周は
                    公開ページ（`pubcheck.channel_public`・**Data API 0単位**）へ倒れ、`channel` 行は出ます。
                    **丸めは `exact`・総再生と本数は欄ごと返らない**（`None` を 0 と読ませない）

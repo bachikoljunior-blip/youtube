@@ -2544,6 +2544,9 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  **決めと覆る条件は `surface_split` の註 ＝ ここへ数を写さないこと。**
     #  **この 3行 を離して印字しないこと**（`tests/test_studio_surface.py` が並びを押さえています）。
     out.append(surface_line(rows))
+    # **4行目**（2026-09-19 04:5x に足した）—— 面の**中の何から**来たか。
+    #  **決めと覆る条件は `surface_detail` の註 ＝ ここへ数を写さないこと。**
+    out.append(surface_detail_line(rows))
     # **いまの出し方の 円/月**（2026-09-18 09:4x に足した・GOAL (4-w)）——
     #  すぐ上の 3行 は全部 **再生**の単位です。**目標の単位は「円」**（「月収20万」）で、
     #  `studio/` には円を読む口が 1つ もありませんでした ＝ 在るのは「**要る**再生」側だけ
@@ -8880,6 +8883,117 @@ def surface_line(rows: "list[dict] | None" = None) -> str:
                 "（扉(b) へ入る面は `LONG_SURFACES` の 4つ だけ・"
                 "`SUBSCRIBER` の天井はいまの登録者数）")
     return head + f"{s['day']} まで {s['total']:,}再生 ＝ {top}{tail}"
+
+
+# ---------------------------------------------------------------------------
+# **面の内訳**（2026-09-19 04:5x・optimizer・Opus 5・ultracode）
+# ---------------------------------------------------------------------------
+# **なぜ足したか**: 前の回（04:xx）が `surface_split` で「ホームと関連は 0回」まで出し、
+# 申し送り (b) に **「次に閉じるべきは『その面を開ける手は何か』」** と置きました。
+# **その問いは、面の名前だけでは閉じません** —— 面の中の「何から」来たかを持つ口が
+# 台帳にも道具にも 1つ も無かったからです（検索で当たっている**語**も、関連に並んでいる**相手**も、
+# 1度も見たことがありませんでした）。口は `analytics.traffic_detail`（**Data API 0単位**）。
+#
+# **この回に撃って読んだ数**（窓 90日・2026-06-17〜09-15）:
+#
+#     SUBSCRIBER の内訳   **`what-to-watch` 616回** ／ `/my_subscriptions` 11回
+#     RELATED の内訳      上位25件 は **全部 よその動画 id**（うちの本は **0件**）
+#     YT_SEARCH の内訳    上位25語 で 195回（全 1,515回 の **13%**）
+#
+# **1つ 目が、前の回の読みを 1つ 直します。** `BROWSE_FEATURES` 0回 は
+# 「**ホームに 1度も出ていない**」ではありません —— **ホームからの再生は 616回 在り、
+# それが `SUBSCRIBER` に付いている**（登録者のホームだから）だけです。
+# ＝ ホームの面は**閉じて**いるのではなく、**登録者の数がそのまま天井**になっています
+# （39人・`surface_split` の `LONG_SURFACES` の註が「`SUBSCRIBER` の天井はいまの登録者数」と
+# 書いていた当のもの）。**「面を開ける手」を探す前に、開いている側の面が 1つ 在ります。**
+#
+# **2つ 目**: 関連（いちばん視聴の長い面・67.7秒/回）に並んでいるのは **全部 よそ**で、
+# **うちの本どうしは 1度も並んでいません**（＝ 1人 が 2本目 を見る道が、関連には在りません）。
+#
+# **読む側の穴は `analytics.traffic_detail` の註に 3つ 書いてあります**（上位25件だけ・
+# `SHORTS`（うちの 96%）は引けない・**面は尺ではない**）。**ここへ写さないこと。**
+# ---------------------------------------------------------------------------
+
+#: 内訳の行を、この数より多くは印字しない（読む側の 1行 を守る）。
+DETAIL_SHOW = 5
+
+
+def surface_detail(rows: "list[dict] | None" = None) -> dict:
+    """いちばん新しい `analytics_traffic_detail` から、**面の中の内訳**を返す（**Data API 0単位**）。
+
+    返り: `{"measured", "day", "stale_days", "sources": {面: [{detail,views,minutes,sec_per_view}]},
+             "search_top", "related_ours", "related_others", "home_views"}`
+
+    **陰性の札は `surface_split` と同じ**: `measured=False` ＝ **台帳に行が無い** ＝
+    「0回」ではありません。
+
+    **覆る条件**: (1) `related_ours` が 1度でも 0 でなくなったら（うちの本どうしが関連に並んだら）、
+    上の註の「うちの本は 0件」を数え直すこと ＝ **2本目 へ渡る道が開いた印**です。
+    (2) `home_views`（`what-to-watch`）が登録者の増えより速く伸びたら、
+    「登録者が天井」は引かれます（`surface_split` の `LONG_SURFACES` の註も一緒に直すこと）。
+    (3) 上位25件 の覆る割合（`search_cover`）が 50% を越えたら、`traffic_detail` の註 (1) の側を直すこと。
+    """
+    rows = rows if rows is not None else ledger_rows()
+    dt_rows = [r for r in rows if r.get("event") == "analytics_traffic_detail" and r.get("details")]
+    if not dt_rows:
+        return {"measured": False,
+                "why": "台帳に `analytics_traffic_detail` が 1行 もありません（`analytics` を撃つと付きます）"}
+    last = dt_rows[-1]
+    day = str(last.get("id") or "")
+    stale = None
+    try:
+        stale = (now_jst().date() - dt.date.fromisoformat(day)).days
+    except Exception:
+        pass
+    ours = {r.get("video_id") for r in rows if r.get("event") == "scheduled" and r.get("video_id")}
+    ours |= {r.get("id") for r in rows if r.get("event") in ("measured", "scheduled") and r.get("id")}
+    out = {}
+    for src, got in dict(last["details"]).items():
+        lst = []
+        for g in got:
+            v = int(g.get("views", 0) or 0)
+            m = int(g.get("minutes", 0) or 0)
+            lst.append({"detail": str(g.get("detail", "")), "views": v, "minutes": m,
+                        "sec_per_view": (60.0 * m / v) if v else None})
+        out[src] = lst
+    rel = out.get("RELATED_VIDEO", [])
+    sub = out.get("SUBSCRIBER", [])
+    return {"measured": True, "day": day, "stale_days": stale, "sources": out,
+            "search_top": out.get("YT_SEARCH", []),
+            "related_ours": sum(x["views"] for x in rel if x["detail"] in ours),
+            "related_others": sum(x["views"] for x in rel if x["detail"] not in ours),
+            "home_views": sum(x["views"] for x in sub if x["detail"] == "what-to-watch")}
+
+
+def surface_detail_line(rows: "list[dict] | None" = None) -> str:
+    """毎周 1行。**`surface_line` の真下**（扉の 3行 の、その次）。
+
+    **上の行（面）が言うのは「どの面から」で、この行が言うのは「その面の中の何から」**です。
+    **決めは書きません**（数だけ・判断は立ったサブ）。
+    """
+    d = surface_detail(rows)
+    head = "**面の内訳（`trend.surface_detail`・Data API 0単位・上位25件だけ）**: "
+    if not d["measured"]:
+        return head + f"**測っていません** ＝ **「0回」ではありません**（{d['why']}）"
+    bits = []
+    st = d["search_top"]
+    if st:
+        top = "・".join(f"{x['detail']}{x['views']}回"
+                        + (f"/{x['sec_per_view']:.0f}秒" if x["sec_per_view"] else "")
+                        for x in st[:DETAIL_SHOW])
+        bits.append(f"検索の語（上位{min(len(st), DETAIL_SHOW)}）: {top}")
+    rel_tot = d["related_ours"] + d["related_others"]
+    if rel_tot:
+        bits.append(f"関連の相手 **よそ {d['related_others']}回 / うち {d['related_ours']}回**"
+                    + ("（**うちの本どうしは 1度も並んでいません** ＝ 2本目 へ渡る道が関連に在りません）"
+                       if not d["related_ours"] else ""))
+    if d["home_views"]:
+        bits.append(f"ホーム（`what-to-watch`）**{d['home_views']:,}回** ＝ "
+                    "**`BROWSE_FEATURES` 0回 は「ホームに出ていない」ではありません** —— "
+                    "出ているぶんは登録者の面に付きます（天井は登録者数）")
+    if not bits:
+        return head + f"{d['day']} まで・内訳の行が 1つ もありません"
+    return head + f"{d['day']} まで ＝ " + " ／ ".join(bits)
 
 
 def gate_measured_line(rows: "list[dict] | None" = None) -> str:

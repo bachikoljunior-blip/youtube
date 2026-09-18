@@ -2398,6 +2398,28 @@ def cmd_analytics(a):
                subs_gained=int(r["subscribersGained"]), likes=int(r["likes"]))
     ledger("analytics_traffic", last_day, start=start, lag_days=lag,
            sources={r["insightTrafficSourceType"]: int(r["views"]) for r in tr})
+    # **面の内訳**（検索語・関連の相手の id・ページ名）。**Data API 0単位**・別枠のクエリが面の数だけ。
+    # **足した理由**: 09/19 まで、台帳は「どの面から来たか」は持っていましたが
+    # 「**その面の中の何から**来たか」を持つ口が 1つ もありませんでした
+    # （＝ 検索で当たっている語も、関連で並んでいる相手も、1度も見たことがない）。
+    # 穴（上位25件だけ・`SHORTS` は引けない・面は尺ではない）は `analytics.traffic_detail` の註。
+    detail = {}
+    for src in analytics.DETAIL_SOURCES:
+        if not any(r["insightTrafficSourceType"] == src and int(r["views"]) for r in tr):
+            continue
+        try:
+            got = analytics.traffic_detail(src, start, last_day)
+        except Exception as e:                       # **黙って 0 を返さない**（§4 (0-b)）
+            print(f"  （{src} の内訳が引けませんでした: {str(e)[:80]}）")
+            continue
+        if got:
+            detail[src] = got
+    if detail:
+        for src, got in detail.items():
+            top = "・".join(f"{g['detail']} {g['views']}回" for g in got[:5])
+            print(f"  内訳 {src}（上位{len(got)}件・**尾は見えません**）: {top}")
+        ledger("analytics_traffic_detail", last_day, start=start,
+               details={k: v for k, v in detail.items()})
     # **維持率カーブ**（どこで落ちるか。1本 1クエリ・`analytics.curve` の註）。
     # **窓はここで広く取ること** —— 狭い窓は、データが在っても空で返ります（実測）。
     cstart = (dt.date.fromisoformat(last_day) - dt.timedelta(days=CURVE_WINDOW_D)).isoformat()

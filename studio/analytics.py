@@ -174,6 +174,53 @@ def traffic(start: str, end: str) -> list[dict]:
     return _rows(_query(startDate=start, endDate=end, metrics="views",
                         dimensions="insightTrafficSourceType", sort="-views"))
 
+
+#: `insightTrafficSourceDetail` が返す行の上限。**26 以上は 500（`FIELD_UNKNOWN_VALUE`）で落ちます**
+#: （2026-09-19 04:xx に `maxResults=200` を撃って踏んだ）。＝ **この口は「上位25件」しか返しません。**
+DETAIL_MAX = 25
+
+#: 内訳（detail）を返す面。**`SHORTS` と `BROWSE_FEATURES` は 400 を返します**（同じ回に撃って確かめた）
+#: ＝ **ショートのフィードの内訳を持つ口は 1つ もありません**（うちの再生の 96% がそこ）。
+DETAIL_SOURCES = ("YT_SEARCH", "RELATED_VIDEO", "SUBSCRIBER", "YT_OTHER_PAGE")
+
+
+def traffic_detail(source: str, start: str, end: str, limit: int = DETAIL_MAX) -> list[dict]:
+    """面の**内訳**（`insightTrafficSourceDetail`・**Data API 0単位**・別枠のクエリ 1回）。
+
+    返り: `[{"detail": 文字列, "views": int, "minutes": int}, ...]`（再生の多い順）。
+
+    何が返るか（面ごとに別の物です。2026-09-19 04:xx に撃って確かめた）:
+
+        `YT_SEARCH`      **検索語そのもの**（うちを見つけた語）
+        `RELATED_VIDEO`  **相手の動画 id**（その視聴ページから来た）
+        `SUBSCRIBER`     ページ名（`what-to-watch` ＝ **ホーム**・`/my_subscriptions` ＝ 登録フィード）
+        `YT_OTHER_PAGE`  ページの道
+
+    **この口の 3つ の穴**（読む側が踏みやすい順に）:
+
+    (1) **上位 25件 しか返りません**（`DETAIL_MAX`）。実測（窓 90日）: 検索は
+        **1,515再生 のうち 上位25語 で 195再生 ＝ 13%** しか覆いません。
+        **「この語で来ていない」は言えません**（尾は見えない）。**言えるのは上位だけ**です。
+    (2) **`SHORTS` の内訳は引けません**（400）。うちの再生の 96% はそこなので、
+        **この口が見ているのは残りの 4% です**。
+    (3) **面は尺ではありません** —— 検索から来たショートは、扉(b) に 1秒も入りません。
+        **この口の `minutes` を長尺の視聴時間と混ぜないこと**（`trend.gate_measured` が尺で分けた側です）。
+
+    **覆る条件**: (1) `SHORTS` が 400 を返さなくなったら（API が増えたら）`DETAIL_SOURCES` に足すこと
+    ＝ そのとき初めて、うちの 96% の内訳が読めます。
+    (2) 上位25件 の覆る割合が 50% を越えたら（＝ 尾が短くなったら）、(1) の註は書き直すこと。
+    """
+    res = _query(startDate=start, endDate=end, metrics="views,estimatedMinutesWatched",
+                 dimensions="insightTrafficSourceDetail",
+                 filters="insightTrafficSourceType==" + source,
+                 maxResults=min(int(limit), DETAIL_MAX), sort="-views")
+    out = []
+    for r in _rows(res):
+        out.append({"detail": str(r.get("insightTrafficSourceDetail", "")),
+                    "views": int(r.get("views", 0) or 0),
+                    "minutes": int(r.get("estimatedMinutesWatched", 0) or 0)})
+    return out
+
 #: 維持率カーブを引く本の、この窓の再生の下限（下で実測）。
 CURVE_MIN_VIEWS = 100
 
