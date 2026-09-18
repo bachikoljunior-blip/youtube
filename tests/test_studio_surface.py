@@ -119,6 +119,34 @@ def test_改名の窓が_公開ページの行で伸びる():
     assert longer["subs_after"] > short["subs_after"]
 
 
+def test_公開ページの行は_口が開いた印にならない():
+    """**公開ページの `channel` 行で、停止の確認（`stall.mouth_gap`）を黙らせないこと。**
+
+    あの行が言うのは「ページが読めた」だけで、**口（Data API）が開いたことは言いません。**
+    混ぜると、口が閉じている周に `channel` 行が出続け、(A) は永久に鳴りません
+    （オーナー `6df66dd7` の「停止を確認」そのものが黙ります）。
+    """
+    from studio import stall
+
+    now = dt.datetime.fromisoformat("2026-09-19T05:00:00+09:00")
+    api_row = {"event": "channel", "id": "UCa", "subs": 39, "views": 91336,
+               "at": "2026-09-19T02:08:52+09:00"}
+    pub_row = {"event": "channel", "id": "UCa", "subs": 39, "src": "public_page",
+               "at": "2026-09-19T04:59:00+09:00"}
+
+    def gap(rows):
+        got = [s for s in stall.signs(rows=rows, rounds=[], now=now)
+               if s.get("code") == "mouth_gap"]
+        return got[0] if got else None
+
+    # API の行だけ ＝ 2.9時間 空いている ＝ 鳴る
+    a = gap([api_row])
+    assert a is not None
+    # 公開ページの行を足しても、**鳴り続けること**（1分 前の行で黙らない）
+    b = gap([api_row, pub_row])
+    assert b is not None, "公開ページの行が、口が開いた印として数えられています"
+
+
 def test_長尺の面の一覧にショートのフィードが入っていない():
     # 扉(b)（4,000時間）へ入るのは長尺の視聴だけ ＝ SHORTS を入れたら判定が壊れる
     assert "SHORTS" not in trend.LONG_SURFACES

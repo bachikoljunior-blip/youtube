@@ -199,7 +199,17 @@ def signs(rows: list[dict] | None = None, rounds: list[dict] | None = None,
     laps = lap_starts(rounds)
     out: list[dict] = []
 
-    ch = sorted(x for x in (_at(r) for r in rows if r.get("event") == "channel") if x)
+    # **口が開いた印は「API が通った行」だけ**（2026-09-19 05:xx・optimizer・Opus）——
+    #   上の註 (4)「`channel` を書く口が `status` 以外にも増えたら (A) の分母が変わります」の、
+    #   **その回**です。同じ日に `cli.cmd_status` が、日枠で `channels.list` が撥ねられる周を
+    #   **公開ページ**（`pubcheck.channel_public`・**Data API 0単位**）へ倒すようになりました。
+    #   **あの行は「ページが読めた」ことしか言わず、口（API）が開いたことは言いません。**
+    #   混ぜると、**口が閉じている周に `channel` 行が出続け、(A) は永久に鳴りません**
+    #   ＝ オーナー `6df66dd7`「3分ごとに停止を確認していたら原因を全て潰してから再実行する」の、
+    #   確認そのものが黙ります。**`src` が付いている行（公開ページ）は印に数えないこと。**
+    #   **覆る条件**: 口の側に別の 0単位 の読みが増えたら、そちらも `src` を付けて、ここで落とすこと。
+    ch = sorted(x for x in (_at(r) for r in rows
+                            if r.get("event") == "channel" and not r.get("src")) if x)
     rej = sorted(x for x in (_at(r) for r in rows if r.get("event") == "token_rejected") if x)
 
     # (A) 口が開いた印が空いた（**時間 か 周の数 のどちらか**・上の (A)）
