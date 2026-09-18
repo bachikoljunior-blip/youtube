@@ -34,7 +34,8 @@
       "click_only": false,
       "cookie_days": 90,
       "youtube_ok": true,
-      "at": "2026-09-18T20:2x+09:00"
+      "at": "2026-09-18T20:2x+09:00",
+      "link_type": "SNS専用リンク（オーナーが 20:2x に貼り直して同じ URL だった）"
     }
   ]
 }
