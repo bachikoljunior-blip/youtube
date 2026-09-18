@@ -143054,6 +143054,35 @@ METHOD §5 2026-09-18 23:xx の 決め (2) はこう書いています ——
     tests/test_endcard_verdict.py::test_実データ_問いかけでない本は全部_依頼の型        （`src.endcard_verdict`・`kzefG44_APU`・`a23e696j0f8` の 2本）
 
 **この回が作った落ちではありません**（`METHOD.md` 冒頭: `src/` は旧手法の記録で、既定では使わない）。
+
+**【同じ回に訂正】上の「3件」は少なすぎました。全体を 1回 通したら 19件 でした**（38分16秒・9,369 passed）。
+**この回は最初、21% で止めた画面から「3件」と書きました。止めた画面から総数を読まないこと。**
+通し切った 19件 の内訳を、**1件ずつ単独で撃ち直して**分けました:
+
+    **(あ) 単独でも落ちる 14件 ＝ 既にあった赤**（`src/`・`scripts/` の側。**どれも `studio` を 1行も import しません**）
+        test_daily_pick_outside_long／test_theory_per_day                （`src.daily_pick`）
+        test_deadline_check                                            （`scripts/deadline_check.py`）
+        test_endcard_verdict／test_request_form                          （`src.endcard_verdict`・`src.script_writer`）
+        test_m23_fan_trial_gate（`eta`）／test_measure_window（`src.measure_window`）
+        test_niche_corpus（`niche_ceiling`）／test_request_form_excludes_long_form（`src.ab_split`）
+        test_settle（`src.settle`）／test_today_place／test_video_ids_cache（`src.history`）
+        test_watches ×2（`src.watches`）
+    **(い) 単独では通る 4件 ＝ 通しのときだけ落ちる**
+        test_studio_analytics ×2・test_studio_cta・test_studio_cta_early
+    **(う) この回が直した 1件** —— test_studio_shakes（§8 の `nowindow`）
+
+**(い) が、この回のもう 1つ の測りの欠陥です。** 落ちた 38分 のあいだ、**この worktree では
+full suite が 2本 同時に走り、その横で `measure`／`status`／`trend` が
+`data/studio/ledger.jsonl`・`data/scan.jsonl`・`data/watch.jsonl` に追記していました。**
+(い) の 4件 は「その行が毎周の並びに在るか」を**生の台帳**で訊く検査なので、
+**読んでいる最中に台帳が動くと、在るはずの行が消えます。**
+＝ **`tests/` 全体は、他の撃ちと同時に走らせると赤が増えます。この 4件 は道具の欠陥ではなく、測り方の欠陥です。**
+**覆る条件**: (1) 何も並走させずに 1回 通して (い) が 0件 なら、原因は並走で確定
+（**次の回は、通すときは他を撃たないこと**）。(2) それでも落ちるなら、その 4件 は
+生の台帳ではなく仕掛けの台帳で訊くように直すこと（`tmp_path` の側へ）。
+
+**`studio` の側は、この回の変更を入れたあと 1,538件 が全部 通ります**（`-k studio`・**55秒**・並走なしで 2回 確かめた）。
+**この回の変更は全部 `studio/` です。**
 **ただし「既定では使わない」道具の検査が赤いまま残ると、全体を 1回 通す値打ちが下がります** ——
-`studio` の 1,538件（60秒）と `src` の側を、**別の口で回すかどうか**は次の回が決めること
-（この回は決めません。**赤いこと自体は、ここに書いて残します**）。
+`studio` の 1,538件（55秒）と `src` の 14件 の赤を、**別の口で回すかどうか**は次の回が決めること
+（この回は決めません。**赤いこと自体と、その数が 3 ではなく 14 であることを、ここに書いて残します**）。
