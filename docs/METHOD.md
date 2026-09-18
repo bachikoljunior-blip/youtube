@@ -1989,6 +1989,10 @@ derivation と覆る条件は `quota.fable_rolled` の註・JOURNAL 20:5x（§5 
     形（§7 末尾）   **7/7本 ＝ 門に届いた**・中位は **帯の上**・**判定は `hourly`**（`trend.shape_run`）。
                    (1-a) は **引かれません・確定**（並びが尽きた ＝ 待たない・`n1_closed`）・
                    数と derivation は `trend.shape_line` と JOURNAL **09/14 11:0x**
+    1本に配られる面  **`reporting.trial_reach` が持つ**（`status`／`trend` が毎周 印字・どの API も 0単位）
+                   ＝ ここへ写さない。**縛っているのは面で、CTR ではない**。
+                   報告は 403 で止まっている（`reach_stale_days`）・**判定は立ったサブ**・
+                   derivation は JOURNAL **09/18 11:1x**
     1回目が付いた齢  **9本 とも 齢 97.1h まで**・0回 のまま門を越えたのは **1本**（`trend.first_view`）
     0回 の本の尺    Shorts **0本**・下敷きの外 **1本**・分からない **0本**（`trend.durations`）
     齢の割合        帯の中 **0本**・外 **7本**・分けられない **2本**（数えた 9本・`trend.hold_verdict`・覆る条件 (2)）
