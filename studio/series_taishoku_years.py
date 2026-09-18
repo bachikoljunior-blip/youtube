@@ -122,7 +122,7 @@ def taxable_seg(t: dict) -> dict:
                     viz={"kind": "bars", "title": "枠が退職金をこえている", "items": [{"label": "退職金", "value": AMOUNT},
                                                                           {"label": "枠", "value": d}]})
     # **「なぜ半分か」は コマ3 で言いました**（上の RULE_SEG の註）＝ ここは数だけ。
-    return dict(say=f"枠を引くと{man(over)}がはみ出ます。半分の{man(half)}にだけ税金がかかります。",
+    return dict(say=f"枠を引くと{man(over)}がはみ出ます。半分の{man(half)}に税金がかかります。",
                 show=f"税金がかかるのは {man(half)}",
                 sub=f"{A}万円から枠{man(d)}を引くと{man(over)}がはみ出る 半分の{man(half)}にだけ税金がかかる",
                 tag="計算", board=[f"退職金 {A}万円", f"− 枠 {man(d)}", f"＝ はみ出た分 {man(over)}", "半分にだけ税金", f"＝ {man(half)}"],
@@ -245,11 +245,11 @@ def y20():
         # **フックは「結論」、コマ2 は「何とくらべるか」**（`critique` 3周目 の [real] (1)）——
         # 1周目 は結論だけ・2周目 は宣言だけにしたら、**どちらの周も同じ所に [real] が立ちました**
         # ＝ 要るのは片方ではなく **2つ を別のコマに置くこと**。フックに両方 入れると 70字 を越えます。
-        hook_seg(y, t, f"1年多いと{man(diff)}へります。"),
-        prem_seg(y, "同じ金額で、年数だけ21年の人とくらべます。"), RULE_SEG, frame_seg(y), taxable_seg(t), tax_seg(t), result_seg(t),
+        hook_seg(y, t, f"21年なら税金が{man(diff)}へります。"),
+        prem_seg(y, "同じ金額で年数だけ変えます。"), RULE_SEG, frame_seg(y), taxable_seg(t), tax_seg(t), result_seg(t),
         # **途中式を声に入れる**（`critique` 1周目 の [real] (4)）—— 枠 +70万 → かかる金額 −35万 → 税金 −10万6500円。
         # **「線」は 3周目 に [real]**（「初めて聞く人には抽象的」）＝ 「境目」へ。
-        dict(say="20年が境目です。21年目からは枠が70万円ふえ、半分にすると税金のかかる金額が35万円へります。",
+        dict(say=f"20年が境目です。21年目は枠が70万円ふえます。半分にすると税金のかかる金額は35万円へり、税金は{man(diff)}へります。",
              show="20年が境目", sub=f"20年が境目 21年目から枠が70万円ふえて税金のかかる金額が35万円へり 税金は{man(diff)}へる",
              tag="しくみ", board=["20年が境目", "20年までは 1年40万円", "21年目から 1年70万円", f"税金 −{man(diff)}"],
              viz={"kind": "table", "title": "20年 と 21年", "head": ["", "20年", "21年"],
