@@ -126,5 +126,11 @@ def test_短い形は_status_に置く_長い形は_trend(tmp_path):
     long = trend.yen_now_line(rows, tmp_path)
     assert "¥200,000" in long and "200,000円" in short
     assert len(short) < len(long)
-    assert "固定2 はこの行で答えること" in short
+    # **2026-09-19 05:5x に字を直しました**（optimizer・opus）: 前は
+    # 「**固定2 はこの行で答えること**」で、立った側は実際にそうし、JOURNAL の 09/19 の
+    # 3周 が そろって「固定2 への答えは 58倍 のまま」と書いていました。
+    # **同じ行が、その数を「門が いま開いたら の側」と註していたのに、
+    # 門がいつ開くかは どこにも出ていませんでした**（実測 676日 ＝ 期限の 591日 後）。
+    # ＝ 倍率だけで答えられない字にし、扉の日は `gate_opens_clause` が同じ行に並べます。
+    assert "固定2 はこの行と、扉が開く日で答えること" in short
     assert trend.yen_now_short([], tmp_path) == "", "読めないときは 1行 も出さない"

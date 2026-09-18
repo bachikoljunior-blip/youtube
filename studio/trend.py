@@ -8478,8 +8478,54 @@ def yen_now_short(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
     return (f"**円/月 {d['yen_month']['中']:,.0f}円** 対 **{d['goal']:,}円** ＝ "
             + (f"**{t:,.0f}倍**" if t else "**倍率が引けません**")
             + f"（{parts}・帯の中段）。**実収入は ¥0**（収益化前）＝ この数は"
-            f"**門が いま開いたら**の側 —— 固定2 はこの行で答えること"
-            f"（GOAL (4-w)・derivation は `trend`・**API 0単位**）")
+            f"**門が いま開いたら**の側 —— "
+            "**固定2 はこの行と、扉が開く日で答えること**"
+            + gate_opens_clause(rows)
+            + "（GOAL (4-w)・derivation は `trend`・**API 0単位**）")
+
+
+def gate_opens_clause(rows: list[dict]) -> str:
+    """**その倍率の扉が、いつ開くか**を、同じ行に並べる（**API 0単位**）。
+
+    **なぜ足したか（2026-09-19 05:5x・optimizer・opus・1周 1体）**:
+    すぐ上の行は長らく「**固定2 はこの行で答えること**」と書いており、
+    立った側は実際にそうしていました —— JOURNAL の 09/19 の 3周 が、
+    そろって「固定2 への答えは **58倍** のまま」と書いています。
+    **ところが同じ行が、その数を「門が いま開いたら の側」だと註していました。**
+    **門がいつ開くかは、この行のどこにも出ていませんでした。**
+
+    同じ台帳で解くと **登録 39人・+1.42人/日 → 1,000人 まで 677日**、
+    期限（`REV_DEADLINE`）の **592日 後**です。
+    **＝ 58倍 は「足りない量」ではなく、開かない扉の向こう側の倍率でした。**
+    倍率と扉の日を**同じ行に並べれば、片方だけを読めません。**
+
+    **数は 1つ も作っていません** —— `rev_deadline` が既に返している
+    `subs_days` と `days_left` を、この行にも出すだけです（**門は 1か所**）。
+
+    **覆る条件**: (1) `subs_days` が `days_left` を**下回ったら**、この句は
+        「期限の中で開きます」に変わります ＝ そのとき 58倍 は本当に「足りない量」
+        になり、固定2 はこの行だけで答えてよくなります。
+    (2) 登録の側を見ていない周（`channel` の行が台帳に無い）は `subs_days` が
+        None で返るので、**この句は黙ります** ——「0日」と読ませないこと。
+    (3) 門の基準（`REV_GOAL_SUBS`）が公表ページで変わったら、
+        `rev_deadline` の 覆る条件 (4) と一緒に当て直すこと。
+    """
+    try:
+        r = rev_deadline(rows)
+    except Exception:
+        return ""
+    days, left = r.get("subs_days"), r.get("days_left")
+    if not days or left is None:
+        return ""
+    if days <= left:
+        return (f" —— **その扉は期限の中で開きます**（登録 {r['subs']}人 → "
+                f"{REV_GOAL_SUBS:,}人 まで いまの速さで **{days:,.0f}日** 対 残り {left}日・"
+                "`trend.rev_deadline`）")
+    return (f" —— **ただし その扉は期限の中で開きません**（登録 {r['subs']}人 → "
+            f"{REV_GOAL_SUBS:,}人 まで いまの速さで **{days:,.0f}日** ＝ "
+            f"期限の **{days - left:,.0f}日 後**・残りは {left}日・`trend.rev_deadline`）"
+            " ＝ **固定2 をこの倍率だけで答えないこと**"
+            "（門の外の 2つ は `ungated_yen` と `perf_need_rate`）")
 
 
 # --- 枠 1つ の値打ち（扉の通貨で） ------------------------------------------
