@@ -6818,3 +6818,10 @@
 {"cmd": "status", "at": "2026-09-19T02:52:09+09:00", "id": "-", "event": "quota_exceeded"}
 {"at": "2026-09-18T20:31:53+09:00", "id": "-", "event": "channel_renamed", "by": "owner", "before": "お金と仕事の教科書", "after": "カワウソの年金計算室", "units": 0, "bound_from": "2026-09-18T17:30:07+09:00", "bound_to": "2026-09-18T20:31:53+09:00", "note": "オーナーが YouTube Studio で変えた（docs/FOR_OWNER.md 09/18 20:00〜21:00 の窓）。GOAL (4-p-1)『名前を付けて前後を測る』の刻。trend.rename_effect が読む。"}
 {"cmd": "status", "at": "2026-09-19T03:12:37+09:00", "id": "-", "event": "quota_exceeded"}
+{"cmd": "status", "at": "2026-09-19T03:17:04+09:00", "id": "-", "event": "quota_exceeded"}
+{"cmd": "status", "at": "2026-09-19T03:17:28+09:00", "id": "-", "event": "quota_exceeded"}
+{"cmd": "status", "at": "2026-09-19T03:35:04+09:00", "id": "-", "event": "quota_exceeded"}
+{"cmd": "status", "at": "2026-09-19T03:35:26+09:00", "id": "-", "event": "quota_exceeded"}
+{"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T03:36:55+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"cmd": "status", "at": "2026-09-19T03:37:16+09:00", "id": "-", "event": "quota_exceeded"}
+{"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T03:37:59+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}

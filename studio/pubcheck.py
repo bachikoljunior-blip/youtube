@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -218,3 +219,102 @@ def line(rows: list[dict], now: dt.datetime | None = None, grace_min: int = GRAC
             "**`schedule --replace`（1,650単位）は要りません** —— 本も題も絵も、上がっている物のままです。"
             + where]
     return "\n".join([head, *body, *tail])
+
+
+# ---------------------------------------------------------------------------
+# **チャンネルの数を、Data API を 1単位も使わずに読む**（2026-09-19 04:xx・optimizer・Opus）
+# ---------------------------------------------------------------------------
+#: 公開ページ。`channels.list`（**1単位**）の代わり。
+CHANNEL_PAGE = "https://www.youtube.com/channel/"
+
+#: 素の UA には別の形を返すことがあるので、ふつうの browser を名乗る。
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+#: **公開ページの登録者は 1,000人 を越えると丸められます**（YouTube は 3桁 までしか出さない）。
+#: いま読みたい帯（改名の前後・収益化の門 1,000人）は**全部この下**なので、この口で足ります。
+#: **覆る条件**: 登録が 1,000人 を越えたら、この口の数は丸めです ——
+#: 返りの `exact` が False になるので、そのときは `channels.list`（1単位）へ戻すこと。
+PUBLIC_SUBS_EXACT_MAX = 1000
+
+_SUBS_EN = re.compile(r'"(?:content|accessibilityLabel)":"([\d,.]+)([KMB]?) subscribers?"')
+_SUBS_JA = re.compile(r'"(?:content|accessibilityLabel)":"チャンネル登録者数\s*([\d,.]+)(万|億)?人"')
+_TITLE = re.compile(r'"channelMetadataRenderer":\{"title":"((?:[^"\\]|\\.)*)"')
+_VANITY = re.compile(r'"vanityChannelUrl":"([^"]*)"')
+_MULT = {"": 1, "K": 1_000, "M": 1_000_000, "B": 1_000_000_000, "万": 10_000, "億": 100_000_000}
+
+
+def _subs_num(text: str, suffix: str) -> int:
+    return int(round(float(text.replace(",", "")) * _MULT[suffix]))
+
+
+def channel_public(channel_id: str, timeout: float = 25.0, fetch=None) -> dict | None:
+    """公開ページから **登録者・題・handle** を読む（**Data API 0単位**）。読めなければ `None`。
+
+    **なぜ足したか**（2026-09-19 04:xx に撃って踏んだ形）: `cli.cmd_status` は毎周
+    `yt.channel()`（**1単位**）で登録を読み、`record_channel` が台帳へ `channel` 行を書きます。
+    **日枠が尽きた周は その 1単位 すら通らず、`status` はそこで落ち、`channel` 行が 1行 も出ません。**
+    ところが **`channel` 行は、この repo でいちばん大きい実測（改名の前後）の唯一の目盛り**で、
+    その門は **後ろ 72時間 の連続した読み**です（`trend.RENAME_*`）。
+    日枠は 2日に 1度 尽きる（5本/日 × 1,650単位）ので、**この形のままでは 72時間 は決して埋まりません**
+    —— 実測: 09/19 02:08 の読みを最後に、03:12／03:17／03:17 の 3周 が `quota_exceeded` で落ちており、
+    後ろの窓は **5.62時間 のまま 2時間 動いていません**。
+    ＝ **実験を止めていたのは配りでも題でもなく、目盛りが日枠にぶら下がっていたこと**でした。
+
+    **丸め**: 1,000人 を越えると公開ページの数は丸めです（`PUBLIC_SUBS_EXACT_MAX` の註）。
+    返りの `exact` がそれを言います —— **`False` を「読めた」と同じ字で使わないこと**。
+    **総再生と本数はこのページに載らないので、欄ごと返しません**（`None` を 0 と読ませないため
+    ＝ `yt.views_of` の註と同じ族 ＝ この repo が「欄が無い」を「0」と読んで踏んだ形の再発防止）。
+
+    **覆る条件**: (1) 登録が 1,000人 を越えた（`exact=False`）＝ `channels.list` へ戻す。
+    (2) ページの字が変わって 2周 続けて `None` が返った ＝ 正規表現を撃ち直すこと
+    （**陽性対照は `tests/test_pubcheck_channel_public.py`** ＝ 実物の写しで 39人 を取り、
+      字を1つ 崩すと `None` になることを先に測ってあります）。
+    """
+    url = CHANNEL_PAGE + channel_id
+    try:
+        if fetch is not None:
+            html = fetch(url)
+        else:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": UA, "Accept-Language": "ja,en;q=0.8"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                html = r.read().decode("utf-8", "replace")
+    except Exception:
+        return None
+    m = _SUBS_EN.search(html) or _SUBS_JA.search(html)
+    if not m:
+        return None
+    subs = _subs_num(m.group(1), m.group(2) or "")
+    t = _TITLE.search(html)
+    v = _VANITY.search(html)
+    handle = urllib.parse.unquote(v.group(1).rsplit("/@", 1)[-1]) if v and "/@" in v.group(1) else None
+    title = None
+    if t:
+        # ページの中では JSON の文字列なので、**`unicode_escape` ではなく JSON で解くこと**
+        # （`unicode_escape` は latin-1 を通すので、日本語が化けます。2026-09-19 に踏んだ）。
+        try:
+            title = json.loads('"' + t.group(1) + '"')
+        except Exception:
+            title = t.group(1)
+    return {"id": channel_id, "subscriberCount": subs,
+            "exact": subs < PUBLIC_SUBS_EXACT_MAX,
+            "title": title, "handle": handle, "src": "public_page"}
+
+
+def channel_public_line(ch: dict | None) -> str:
+    """`channel_public` の 1行（**Data API 0単位**）。**題と handle のずれも、ここで名指しします。**
+
+    handle は `channels.update` でも `channels.list` でも動かせない欄で、**改名しても古いまま残ります**
+    —— 2026-09-19 04:xx の実測: 題は `カワウソの年金計算室`・handle は `@お金と仕事の教科書` のまま。
+    **`peers.title_identity` の升は題で判定していますが、検索と URL に出るのは handle のほうです。**
+    """
+    if not ch:
+        return ("**チャンネル（公開ページ・Data API 0単位）**: 読めませんでした ＝ "
+                "**「0人」ではありません**（`channel_public` の覆る条件 (2)）")
+    head = (f"**チャンネル（公開ページ・Data API 0単位）**: 登録 **{ch['subscriberCount']}**"
+            + ("" if ch["exact"] else "（**丸め** ＝ 1,000人 超 ＝ `channels.list` へ戻すこと）"))
+    if ch.get("handle") and ch.get("title") and ch["handle"] != ch["title"]:
+        head += (f"・題 `{ch['title']}` に対して **handle は `@{ch['handle']}` のまま**"
+                 f" ＝ 改名は片側だけ（handle は API から替えられない ＝ オーナーの手）")
+    return head

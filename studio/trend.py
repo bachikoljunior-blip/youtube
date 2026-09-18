@@ -2536,6 +2536,14 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     except Exception as _e:  # 台帳やネットの都合で落ちても、上の行は出し続ける
         out.append("**扉(b) の反例の行が引けませんでした**（`peers.gate_proof`）: "
                    f"{type(_e).__name__} ＝ **「反例なし」ではありません**（覆る条件 (1)）。")
+    # **3行目**（2026-09-19 04:xx に足した）—— 上の 2行 は「扉までの距離」と
+    #  「その距離で越えた口が実在すること」を言います。**この行が言うのは、
+    #  その距離を作っている当のもの ＝ 面**です。台帳の `analytics_traffic` 12行 は
+    #  どれも `BROWSE_FEATURES` の欄を持っておらず（＝ ホーム 0回）、`RELATED_VIDEO` は
+    #  6,417再生 のうち **1回** ＝ **4日 前から台帳に在って、誰も読んでいませんでした。**
+    #  **決めと覆る条件は `surface_split` の註 ＝ ここへ数を写さないこと。**
+    #  **この 3行 を離して印字しないこと**（`tests/test_studio_surface.py` が並びを押さえています）。
+    out.append(surface_line(rows))
     # **いまの出し方の 円/月**（2026-09-18 09:4x に足した・GOAL (4-w)）——
     #  すぐ上の 3行 は全部 **再生**の単位です。**目標の単位は「円」**（「月収20万」）で、
     #  `studio/` には円を読む口が 1つ もありませんでした ＝ 在るのは「**要る**再生」側だけ
@@ -5764,6 +5772,34 @@ def _channel_rows(rows: list[dict]) -> list[dict]:
     return sorted(cs, key=_at)
 
 
+def _channel_rows_subs(rows: list[dict]) -> list[dict]:
+    """`_channel_rows` と同じ絞りで、**`views` を要求しない**版（2026-09-19 04:xx・optimizer・Opus）。
+
+    **なぜ分けたか（この回に実物で踏んだ）**: `cli.cmd_status` は日枠が尽きた周に
+    `channels.list`（1単位）が撥ねられ、**公開ページ**（`pubcheck.channel_public`・**0単位**）へ
+    倒れるようになりました。公開ページは **登録者しか持たないので、`views` の欄を書きません**
+    （`None` を 0 と読ませないため ＝ `yt.views_of` の族）。
+    ところが上の `_channel_rows` は `views` が int であることを**要求する**ので、
+    **倒した先の行が 1行 も読まれず、目盛りは止まったままでした** ——
+    ＝ **口を開けた手が、読む側の絞りで無効になっていた**（この repo の「片方だけ直す」形）。
+
+    **`views` を見る側（`channel_growth`・`channel_replicas`・`channel_steps`）は
+    `_channel_rows` のままにすること** —— あちらは欄が無い行を混ぜると窓が壊れます。
+    **こちらを使うのは、登録だけで読む側**（いまは `rename_effect` だけ）。
+
+    **覆る条件**: (1) 公開ページから総再生も取れるようになったら（YouTube が欄を戻したら）、
+    この 2つ は 1つ に畳めます。(2) 公開ページの登録が丸めに入ったら
+    （`pubcheck.PUBLIC_SUBS_EXACT_MAX` 超）、**丸めの行を伸びの計算に混ぜないこと** ——
+    `exact` が False の行をここで落とす枝を足すこと（いま 39人 なので、まだ要りません）。
+    """
+    ids = channel_ids(rows)
+    last = ids[-1] if ids else None
+    cs = [r for r in rows if r.get("event") == "channel"
+          and isinstance(r.get("subs"), int)
+          and (last is None or r.get("id") in (None, last))]
+    return sorted(cs, key=_at)
+
+
 def _channel_laps(cs: list[dict]) -> list[list[dict]]:
     """刻の近い行（既定 10分 以内）を **1周** に畳む。返すのは周ごとの行の塊。"""
     laps: list[list[dict]] = []
@@ -8762,6 +8798,90 @@ def gate_measured(rows: "list[dict] | None" = None) -> dict:
             "stale_days": stale, "ifpeer": ifpeer}
 
 
+# ---------------------------------------------------------------------------
+# **面（どの surface から配られているか）**（2026-09-19 04:xx・optimizer・Opus）
+# ---------------------------------------------------------------------------
+#: 扉(b)（4,000時間・長尺）へ入る再生を運べる面。**ショートのフィードはここに入りません。**
+#: 長尺は `BROWSE_FEATURES`（ホーム）・`RELATED_VIDEO`（関連）・`YT_SEARCH`（検索）の
+#: 3つ でしか配られません（`SUBSCRIBER` は登録者ぶんの天井つき）。
+LONG_SURFACES = ("BROWSE_FEATURES", "RELATED_VIDEO", "YT_SEARCH", "SUBSCRIBER")
+
+#: **この 2つ が 0 なら、長尺は「クリックされていない」のではなく「配られていません」。**
+#: 大きい口（`peers.gate_proof` のカメ先生・48日 89万回）の量は、検索だけでは出ません。
+SURFACE_ABSENT_WATCH = ("BROWSE_FEATURES", "RELATED_VIDEO")
+
+
+def surface_split(rows: "list[dict] | None" = None) -> dict:
+    """いちばん新しい `analytics_traffic` から、**面ごとの配り**を返す（**Data API 0単位**）。
+
+    **なぜ足したか**（2026-09-19 04:xx に、台帳を引いて踏んだ形）:
+    `cmd_analytics` は 09/12 から `analytics_traffic` を **12行** 書いています。
+    その 12行 は どれも **`BROWSE_FEATURES` の欄を持っていません**（＝ ホームの面 0回）。
+    **`RELATED_VIDEO` は 6,417再生 のうち 1回**（0.016%）。
+    ＝ **このチャンネルは、ホームにも関連にも、1度も出たことがありません。**
+
+    **この数は、扉(b) の 210倍（`gate_measured`）の原因そのものです** ——
+    長尺は `LONG_SURFACES` でしか配られず、そのうち 2つ が 0、1つ（検索）が 1.2%、
+    残り（登録者）は **39人 が天井**。**中身ではなく面の問題**で、
+    実測で長尺の維持率は 15〜38%（＝ 見た人は見ている）。
+
+    **陰性を陰性として読むための札**（この repo が 7度 踏んだ形）:
+    `measured=False` ＝ 台帳に行が無い／古すぎる ＝ **「0回」ではありません**。
+    `absent` に並ぶのは「行は在って、その面の欄が無い」＝ **実測の 0回** です。
+
+    **覆る条件**: (1) `BROWSE_FEATURES` か `RELATED_VIDEO` が 2周 続けて 0 でなくなったら、
+    この行は「面が開いた」側へ回るので、`SURFACE_ABSENT_WATCH` を数え直すこと。
+    (2) `analytics_traffic` は `cmd_analytics` でしか書かれず、報告の遅れは 3日 です ——
+    **`stale_days` が 7日 を越えたら、この行の 0 は読めません**（`analytics_draws` の族）。
+    """
+    rows = rows if rows is not None else ledger_rows()
+    tr = [r for r in rows if r.get("event") == "analytics_traffic" and r.get("sources")]
+    if not tr:
+        return {"measured": False, "why": "台帳に `analytics_traffic` が 1行 もありません"}
+    last = tr[-1]
+    src = {k: int(v) for k, v in dict(last["sources"]).items()}
+    total = sum(src.values()) or 1
+    day = str(last.get("id") or "")
+    stale = None
+    try:
+        stale = (now_jst().date() - dt.date.fromisoformat(day)).days
+    except Exception:
+        pass
+    return {"measured": True, "day": day, "stale_days": stale, "total": total,
+            "sources": src,
+            "share": {k: v / total for k, v in src.items()},
+            "absent": [k for k in LONG_SURFACES if src.get(k, 0) == 0],
+            "long_surface_views": sum(src.get(k, 0) for k in LONG_SURFACES)}
+
+
+def surface_line(rows: "list[dict] | None" = None) -> str:
+    """毎周 1行。**`gate_measured_line` / `gate_proof_line` の真下に並べます**（3行 で 1組）。
+
+    上の 2行 は「扉までの距離」と「その距離で越えた口が居ること」を言います。
+    **この行が言うのは、その距離を作っている当のもの ＝ 面**です。
+    **3行 を離さないこと** —— 離すと、また「中身が悪いから伸びない」の側で読まれます
+    （実測: 長尺の維持率 15〜38%・再生 6〜32回 ＝ **中身ではない**）。
+    """
+    s = surface_split(rows)
+    head = ("**面（どこから配られているか・`trend.surface_split`・Data API 0単位）**: ")
+    if not s["measured"]:
+        return head + f"**測っていません** ＝ **「0回」ではありません**（{s['why']}）"
+    if s["stale_days"] is not None and s["stale_days"] > 7:
+        return (head + f"いちばん新しい引きが **{s['day']}（{s['stale_days']}日 前）** ＝ "
+                "**古すぎて 0 を 0 と読めません**（覆る条件 (2)・報告が止まっています）")
+    sh = s["share"]
+    top = ("  ".join(f"{k} {100 * sh[k]:.1f}%" for k, _ in
+                     sorted(s["sources"].items(), key=lambda x: -x[1])[:3]))
+    gone = [k for k in SURFACE_ABSENT_WATCH if k in s["absent"]]
+    tail = ""
+    if gone:
+        tail = (f"・**{' と '.join(gone)} は 0回**（{s['total']:,}再生 のうち）"
+                " ＝ **長尺はクリックされていないのではなく、配られていません**"
+                "（扉(b) へ入る面は `LONG_SURFACES` の 4つ だけ・"
+                "`SUBSCRIBER` の天井はいまの登録者数）")
+    return head + f"{s['day']} まで {s['total']:,}再生 ＝ {top}{tail}"
+
+
 def gate_measured_line(rows: "list[dict] | None" = None) -> str:
     """毎周 1行。**決めは書きません**（数だけ）。決めと覆る条件は上の註と METHOD §5。"""
     g = gate_measured(rows)
@@ -9292,7 +9412,10 @@ def rename_effect(rows: list[dict], now: dt.datetime | None = None) -> dict:
         b_to = dt.datetime.fromisoformat(m.get("bound_to") or m["at"])
     except Exception:  # noqa: BLE001
         return out
-    cs = _channel_rows(rows)
+    # **登録しか見ないので `views` を要求しない側を引く**（`_channel_rows_subs` の註）——
+    #  日枠が尽きた周は公開ページ（0単位）へ倒れており、その行は `views` を持ちません。
+    #  `_channel_rows` で引くと**その行が全部 落ち、門（後ろ 72時間）は永久に埋まりません**。
+    cs = _channel_rows_subs(rows)
     if len(cs) < 2:
         return out
     before_rows = [r for r in cs if _at(r) <= b_from]

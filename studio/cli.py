@@ -649,6 +649,20 @@ def zero_probe_mark(rd: dict) -> str:
             f"失敗 {rd['failure'] or rd['rejection']}）—— `zero_probe_target` の覆る条件 (1)")
 
 
+def last_channel_id(rows: list[dict]) -> str | None:
+    """台帳のいちばん新しい `channel` 行から、チャンネル id を引く（**API 0単位**）。
+
+    **日枠が尽きた周に `channels.list` の代わりを撃つには、id が要ります** ——
+    その id は `record_channel` が 336行 書いているので、**API へ訊き直す必要はありません**。
+    **`config/` には置かないこと**（`channel.yaml` の題が 1日 古いまま升の判定を外した
+    2026-09-19 02:5x の形 ＝ 写しは必ずずれます）。
+    """
+    for r in reversed(rows):
+        if r.get("event") == "channel" and r.get("id") and r.get("id") != "-":
+            return r["id"]
+    return None
+
+
 def record_channel(ch: dict) -> None:
     """`status` が毎周 読んでいる**チャンネルの数**を台帳に1行 残す（2026-09-10 15:5x・optimizer・Opus。**追加 0単位**）。
 
@@ -775,7 +789,26 @@ def cmd_status(a):
     # **詰まっている手を、1行 で名指しする**（2026-09-17 09:0x・`cmd_catchup` の註）。
     # **`yt` より前に置くこと** —— いちばん要るのは日枠が尽きた周で、そこでは次の行が落ちます。
     print(catchup_line(ledger_rows()))
-    ch = yt.channel()
+    # **日枠が尽きた周は、この 1単位 すら通りません**（2026-09-19 04:xx・optimizer・Opus）。
+    # そこで落ちると `record_channel` が走らず、**`channel` 行が 1行 も出ない**
+    # ＝ **改名の前後（この repo でいちばん大きい実測）の目盛りが、日枠にぶら下がっていました**。
+    # 実測: 09/19 02:08 を最後に 3周 が `quota_exceeded` で落ち、後ろの窓（門 72時間）は
+    # **5.62時間 のまま 2時間 動いていません**。落ちる周は公開ページ（**Data API 0単位**）へ倒します。
+    # **決めと覆る条件は `pubcheck.channel_public` の註** ＝ ここへ数を写さないこと。
+    try:
+        ch = yt.channel()
+    except Exception as e:
+        pub = pubcheck.channel_public(last_channel_id(ledger_rows()) or "")
+        print(f"  （`channels.list` が通りませんでした: {str(e)[:70]} ＝ 公開ページへ倒します）")
+        print(pubcheck.channel_public_line(pub))
+        if pub:
+            # **総再生と本数は公開ページに載らないので、欄ごと書きません**（`None` を 0 と読ませない）。
+            ledger("channel", pub["id"], subs=pub["subscriberCount"],
+                   title=pub.get("title"), handle=pub.get("handle"),
+                   exact=pub["exact"], src="public_page")
+        # ここから先はどの行も Data API を引くので、この周はここで畳みます
+        # （**目盛りは上で残っています** ＝ 落ちる前と違い、周は無駄になりません）。
+        return
     vids = yt.all_videos()
     sids = studio_video_ids()
     print(f"チャンネル: 登録 {ch['subscriberCount']}・総再生 {ch['viewCount']}・本数 {ch['videoCount']}")
