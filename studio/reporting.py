@@ -645,3 +645,244 @@ def trial_reach_short(rows: "list[dict] | None" = None,
     if stale >= 3:
         s += f"　**⚠ 報告は {stale:.0f}日 止まっています**（`reach_stale_days`・403 SERVICE_DISABLED）"
     return s
+
+
+# ---------------------------------------------------------------------------
+# **見られている長さ（watch-through）と、1本の天井**
+# 2026-09-18 12:4x・optimizer・Opus
+# ---------------------------------------------------------------------------
+#: **`channel_basic_a3` の行に答えが入っていたのに、どの道具も読んでいませんでした。**
+#: `watch_time_minutes` / `average_view_duration_percentage` を `grep` すると
+#: **`studio/` の中で参照が 0件**（2026-09-18 12:4x に数えた）。
+#: 面（`trial_reach`）は**長尺・ブラウズ側**しか測らず、**流入の 93.9% を占めるショートの配り**を
+#: 決めている変数は、この 2つ のほうです。
+
+
+def _forms() -> dict:
+    """`video_id` → **ショートか**（題に `#Shorts`／`topic` が `s-` で始まる）。
+
+    **覆る条件**: 題に `#Shorts` を書かない形に変えた回が出たら、ここは嘘を返します
+    —— そのときは `yt.videos.list(contentDetails.duration)` で分けること（**1単位**）。
+    """
+    out: dict = {}
+    if not _UPLOADED.exists():
+        return out
+    for line in _UPLOADED.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        vid = str(r.get("video_id") or "")
+        if not vid:
+            continue
+        title = str(r.get("title") or "")
+        topic = str(r.get("topic") or "")
+        if title or topic:
+            out[vid] = ("#Shorts" in title or "#shorts" in title
+                        or topic.startswith("s-") or "short" in topic)
+    return out
+
+
+def watched(rows: "list[dict] | None" = None, min_views: int = 5) -> dict:
+    """**1本が どれだけ見られたか（watch-through）と、そこに乗る再生の数。**
+
+    **なぜこの数か（2026-09-18 12:4x に初めて数えた）**: `trial_reach`（面）が
+    **長尺・ブラウズ側しか測らない**と自分で言っているのに、**流入の 93.9% は SHORTS** です。
+    ＝ **うちの再生のほぼ全部を決めている変数は、この盤に 1度も出ていませんでした。**
+
+    実測（`channel_basic_a3`・窓 20260811〜20260912・33日・**どの API も 0単位**）:
+
+        ショート 168本（5回以上）  合計 **73,160回**・中央 **224回**・最大 **1,873回**
+        見られた割合（views 加重）  中央 **50.6%**・p10 26.4%・p90 96.5%
+        長さ（秒 ÷ 割合で出す）     中央 **8秒**・p10 5秒・p90 18秒
+
+        **割合の五分位（低→高）**      26.4% → 平均 114回 ／ 42.5% → 369 ／ 50.5% → 565 ／
+                                     62.1% → **669** ／ 92.8% → 485
+        **長さの五分位（短→長）**      5.3秒 → 平均 196回 ／ 7.0 → 284 ／ 7.9 → 427 ／
+                                     **11.1秒 → 863**（中央 1,004）／ 17.1 → 446
+
+    ＝ **同じ日・同じ作り・同じ声の中で、見られた割合と長さだけで 5.9倍 と 4.4倍 割れています。**
+    **前の周（09/18 11:1x §6(c)）の「ショートの配りは籤」は、これで外れます** ——
+    籤ではなく、**測れる変数が 2つ**、どちらも台帳の中に在りました。
+    （**その段の覆る条件「同じ日の中央値が 2窓 続けて 100回 を越えたら」は、
+    09/05 中央 211回・09/06 中央 216回 で すでに満たされていました。**）
+
+    **そして、その上に天井が在ります**（この関数がいちばん言いたい所）:
+
+        公開 300本 超・45日 で、**1本 が 1,891回 を越えたことが 1度も ありません**
+        （`ledger.jsonl` ＋ `data/views.jsonl` の全部から数えた・1,000回 超は 51本）
+
+    ＝ **配りは「最初の試しの段」で止まっており、次の段へ上がった本が 0本。**
+    上がる段に乗る印（views 1,000回 あたり）は、うちでは:
+
+        いいね **1.37**／コメント **0.07**／共有 **0.12**（窓の合計 80,743回 で 111・6・10）
+
+    **目標との橋**: 月 20万円 は RPM ¥1,000 なら **20万回/月 ＝ 6,700回/日**。
+    天井 1,891回 のままだと、**毎日 3.5本 が全部 歴代最高**でようやく届きます
+    （実測の中央は 224回 ＝ **30倍** 足りない）。**＝ 天井を破らないかぎり、目標は算数で閉じません。**
+
+    **覆る条件**:
+      (1) 報告が止まっています（`reach_stale_days`）。**止まった窓を伸ばして読まないこと。**
+      (2) **1本 が 2,000回 を越えた回**が出たら、この註の「天井」は消えます
+          —— そのとき初めて「何本 出すか」が縛る腕になります（いまは「1本が何回」）。
+      (3) `average_view_duration_percentage` が 100 を越える行が在ります（再視聴）。
+          **落とさずに数えます**（ショートの再視聴は上の段へ上がる印そのもの）。
+      (4) `_forms()` は題の `#Shorts` で分けています —— 題の形を変えたらここは嘘を返します。
+    """
+    import statistics
+    rows = latest_rows(load_rows() if rows is None else rows)
+    per: dict = {}
+    tot = {"views": 0.0, "likes": 0.0, "comments": 0.0, "shares": 0.0,
+           "watch_min": 0.0}
+
+    def num(r: dict, k: str) -> float:
+        try:
+            return float(r.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    for r in rows:
+        vid = str(r.get("video_id") or "")
+        if not vid:
+            continue
+        v = num(r, "views")
+        a = per.setdefault(vid, {"views": 0.0, "wmin": 0.0, "pctv": 0.0})
+        a["views"] += v
+        a["wmin"] += num(r, "watch_time_minutes")
+        # **views で重みを付けること** —— 行は（国・登録の有無…）で割れており、
+        # 1回 の行と 900回 の行を等しく平均すると、割合が国の数のほうへ寄ります。
+        a["pctv"] += num(r, "average_view_duration_percentage") * v
+        tot["views"] += v
+        tot["likes"] += num(r, "likes")
+        tot["comments"] += num(r, "comments")
+        tot["shares"] += num(r, "shares")
+        tot["watch_min"] += num(r, "watch_time_minutes")
+
+    forms = _forms()
+    shorts: list = []   # (views, watch-through%, 長さ秒)
+    longs: list = []
+    for vid, a in per.items():
+        if a["views"] < min_views:
+            continue
+        pct = a["pctv"] / a["views"]
+        sec = a["wmin"] * 60.0 / a["views"]
+        length = sec / (pct / 100.0) if pct > 0 else 0.0
+        (shorts if forms.get(vid, False) else longs).append((a["views"], pct, length))
+
+    def bands(rs: list, key_i: int) -> list:
+        """五分位（低→高）。**平均と中央を両方 返すこと** —— 片方だけだと、
+        いちばん上の段（再視聴）が中央で消え、平均で残ります。"""
+        rs = sorted(rs, key=lambda r: r[key_i])
+        n = len(rs)
+        if n < 10:
+            return []
+        q = max(1, n // 5)
+        out = []
+        for i in range(0, n, q):
+            ch = rs[i:i + q]
+            if len(ch) < 3:
+                continue
+            out.append({"n": len(ch),
+                        "metric": statistics.median([x[key_i] for x in ch]),
+                        "views_median": statistics.median([x[0] for x in ch]),
+                        "views_mean": statistics.mean([x[0] for x in ch])})
+        return out
+
+    # **窓の両端を返すこと**（2026-09-18 12:5x に踏んだ）——
+    # この報告は **403 SERVICE_DISABLED で 09/12 に止まっており**、
+    # ここで数えているのは **8秒 の古い作り**です。
+    # **いまの作り（≈90秒）は 09/08 以降**で、`analytics.per_video` では
+    # **1本 970〜1,144回・視聴 300〜415分**（この回に引いた）＝ **桁がちがいます。**
+    # 窓を印字しないと、**次に来た側が古い作りの数を「いまの数」として読みます。**
+    days = sorted({str(r.get("date") or "") for r in rows if r.get("date")})
+    d: dict = {"n_short": len(shorts), "n_long": len(longs),
+               "views_sum": tot["views"], "watch_min": tot["watch_min"],
+               "day_first": days[0] if days else "", "day_last": days[-1] if days else ""}
+    for k in ("likes", "comments", "shares"):
+        d[k + "_per_1k"] = (tot[k] / tot["views"] * 1000.0) if tot["views"] else 0.0
+    if shorts:
+        sv = sorted(x[0] for x in shorts)
+        d.update({
+            "short_views_median": statistics.median(sv),
+            "short_views_max": sv[-1],
+            "short_views_sum": sum(sv),
+            "watched_median": statistics.median([x[1] for x in shorts]),
+            "len_median": statistics.median([x[2] for x in shorts]),
+            "watched_bands": bands(shorts, 1),
+            "len_bands": bands(shorts, 2),
+        })
+    if longs:
+        d["long_views_median"] = statistics.median([x[0] for x in longs])
+        d["long_views_max"] = max(x[0] for x in longs)
+        d["long_watched_median"] = statistics.median([x[1] for x in longs])
+    return d
+
+
+#: **歴代 1本 の最高**（`ledger.jsonl` ＋ `data/views.jsonl` から 2026-09-18 12:4x に数えた）。
+#: **写しです** —— 毎周 数え直すほどの数ではなく、**破られた回に書き換えるための印**。
+#: 破られたら `watched` の覆る条件 (2) と、この数と、`watched_line` の字を一緒に直すこと。
+CEILING_VIEWS = 1891
+
+
+def watched_line(rows: "list[dict] | None" = None,
+              now: "dt.datetime | None" = None) -> str:
+    """`trend` が毎周 印字する 1行（**どの API も 0単位**・報告の台帳だけ）。"""
+    d = watched(rows)
+    if not d.get("n_short"):
+        return ("**見られた割合**: 数えられるショートが 1本も在りません"
+                "（`watched` の覆る条件 (4)）")
+    stale = reach_stale_days(load_rows(REACH_STORE), now=now)
+    hb = d.get("watched_bands") or []
+    lb = d.get("len_bands") or []
+    head = (f"**見られた割合と長さ（`reporting.watched`・どの API も 0単位）**: "
+            f"ショート {d['n_short']}本 の中央 **{d['short_views_median']:.0f}回**"
+            f"（最大 {d['short_views_max']:.0f}・合計 {d['short_views_sum']:.0f}"
+            f"・**窓 {d['day_first']}〜{d['day_last']}**）"
+            f"・**見られた割合の中央 {d['watched_median']:.0f}%**"
+            f"・**長さの中央 {d['len_median']:.0f}秒**"
+            f"　**⚠ この窓は 8秒 の古い作りです。いまの作り（≈90秒・09/08 以降）は "
+            f"`analytics.per_video` で 1本 970〜1,144回・視聴 300〜415分 ＝ 桁がちがいます**")
+    if hb:
+        head += ("　割合の五分位 → 平均 再生 "
+                 + " / ".join(f"{b['metric']:.0f}%→{b['views_mean']:.0f}回" for b in hb))
+    if lb:
+        head += ("　長さの五分位 → 平均 再生 "
+                 + " / ".join(f"{b['metric']:.0f}秒→{b['views_mean']:.0f}回" for b in lb))
+    body = (f"　＝ **ショートの配りは籤ではありません**（09/18 11:1x §6(c) の読みは外れ）"
+            f"——**測れる変数が 2つ**、どちらも台帳の中に在りました。"
+            f"　**ただし天井**: 公開 300本 超で **1本 {CEILING_VIEWS}回 を越えたことが 0回**"
+            f"（`watched` の覆る条件 (2)）。**印は いいね {d['likes_per_1k']:.2f}／"
+            f"コメント {d['comments_per_1k']:.2f}／共有 {d['shares_per_1k']:.2f}（1,000回 あたり）**"
+            f" ＝ **次の段へ上がる印が出ていません。**")
+    if stale >= 3:
+        body += f"　**⚠ 報告は {stale:.0f}日 止まっています**（`reach_stale_days`）"
+    return head + body
+
+
+def watched_short(rows: "list[dict] | None" = None,
+               now: "dt.datetime | None" = None) -> str:
+    """`status` に置く短い形（`watched_line` と対。**同じ段落を 2度 読ませない**）。
+
+    **`status` に置く理由**: `trial_reach_short` と同じ —— **固定2 は立った側が
+    いちばん最初に答える問い**で、そのとき最初に撃つのが `status` です。
+    **面（12回/本）だけを読んだ回は「長尺のブラウズが死んでいる」で止まり、
+    流入の 93.9% を占めるショートについて、何が縛っているかを 1つ も知らないまま決めます。**
+    """
+    d = watched(rows)
+    if not d.get("n_short"):
+        return ""
+    hb = d.get("watched_bands") or []
+    slope = ""
+    if len(hb) >= 4 and hb[0]["views_mean"]:
+        slope = (f"・**割合 {hb[0]['metric']:.0f}% の本は平均 {hb[0]['views_mean']:.0f}回、"
+                 f"{hb[3]['metric']:.0f}% の本は平均 {hb[3]['views_mean']:.0f}回"
+                 f"（{hb[3]['views_mean'] / hb[0]['views_mean']:.1f}倍）**")
+    return (f"**ショートの配りを決めている数 中央 見られた割合 {d['watched_median']:.0f}%"
+            f"・長さ {d['len_median']:.0f}秒**（{d['n_short']}本・中央 "
+            f"{d['short_views_median']:.0f}回・窓 {d['day_first']}〜{d['day_last']}"
+            f" ＝ **8秒 の古い作り。いまの ≈90秒 は この窓に入っていません**）{slope}"
+            f"　**天井: 300本 超で 1本 {CEILING_VIEWS}回 を越えたことが 0回**"
+            f"（いいね {d['likes_per_1k']:.2f}／1,000回 ＝ 次の段へ上がる印が出ていない）"
+            f"・derivation は `reporting.watched`・**どの API も 0単位**")

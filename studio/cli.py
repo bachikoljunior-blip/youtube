@@ -805,6 +805,20 @@ def cmd_status(a):
             print("  " + tl)
     except Exception as e:      # 台帳が無い・形が違う回でも `status` を止めない
         print(f"  **面**: 読めませんでした（{e.__class__.__name__}: {e}）")
+    # **ショートの配りを決めている数**（2026-09-18 12:4x・optimizer・Opus）——
+    # 上の面（`trial_reach`）は**自分で「ショートの配りを見ません」と言っています**。
+    # ＝ **流入の 93.9% を占める側について、この盤は 1つ も数を持っていませんでした。**
+    # 報告の行に `watch_time_minutes`／`average_view_duration_percentage` が
+    # ずっと在ったのに、`studio/` の中の参照は **0件** でした。
+    # 実測: 見られた割合の中央 **51%**・長さの中央 **8秒**・その 2つ で再生が **5.9倍／4.4倍** 割れる。
+    # **天井**: 300本 超で 1本 1,891回 を越えたことが **0回**。
+    # 決めと derivation と覆る条件は `reporting.watched` の註（**どの API も 0単位**）。
+    try:
+        hl = reporting.watched_short()
+        if hl:
+            print("  " + hl)
+    except Exception as e:      # 報告の台帳が無い回でも `status` を止めない
+        print(f"  **見られた割合**: 読めませんでした（{e.__class__.__name__}: {e}）")
     print(f"いま {now_jst():%m/%d %H:%M} JST")
     print("きょうの枠:")
     lineup_today = yt.today_lineup(vids)
@@ -2087,6 +2101,13 @@ def cmd_trend(a):
         # ＝ **`long_per_video` の「長尺 1回/本」は、ここで説明が付きます**（面 13 × CTR 2% ＝ 1回）。
         # 出どころと覆る条件は `reporting.trial_reach` の註。
         print(reporting.trial_reach_line())
+        # **見られた割合と長さ**（2026-09-18 12:4x・optimizer・Opus）。
+        # `trial_reach` は長尺・ブラウズ側しか測らず、**ショート（流入の 93.9%）を決めている
+        # 変数はこちら**。実測 168本: 割合の中央 51%・長さの中央 8秒・
+        # 割合 26% の本は平均 114回、62% の本は平均 669回（**5.9倍**）。
+        # **天井**: 300本 超で 1本 1,891回 を越えたことが 0回（いいね 1.37/1,000回）。
+        # 出どころと覆る条件は `reporting.watched` の註。
+        print(reporting.watched_line())
     except Exception as e:      # 台帳が無い・形が違う回でも `trend` を止めない
         print(f"**面**: 読めませんでした（{e.__class__.__name__}: {e}）")
     return 0
