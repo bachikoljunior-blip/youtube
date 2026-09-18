@@ -7919,6 +7919,10 @@ def long_per_video_line(rows: list[dict], now: "dt.datetime | None" = None,
 
 #: 片側がこれ未満のときは倍率を印字しない（上の覆る条件 (2)）。
 FORM_MIN_N = 3
+#: 齢の帯の**上端**（下端は `LPV_MIN_AGE_H`）。理由と覆る条件は `form_yield` の註。
+FORM_AGE_MAX_H = 96.0
+#: 帯の中で「形ごとの測った齢の中央」がこの倍 以上 離れたら、倍率に**上端**の札を付ける。
+FORM_AGE_SKEW_X = 1.5
 
 
 def videos_by_form(rows: list[dict], scripts_dir: "Path | None" = None) -> dict[str, list[dict]]:
@@ -8051,25 +8055,66 @@ def same_day_spread_line(rows: list[dict], form: str = "short",
 
 
 def form_yield(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
-    """形ごとの **1本あたり再生**（齢 `LPV_MIN_AGE_H` 超の実測だけ・**API 0単位**）。
+    """形ごとの **1本あたり再生**（齢の**帯**の中の実測だけ・**API 0単位**）。
 
-    分母は `long_per_video` と**同じ齢の門**を使います（出したその周の本を 0回 と数えない）。
-    返り: `{form: {"n": 置いた本数, "n_measured": 測れた本数, "median": 中央, "views": [...]}}`
+    下端は `long_per_video` と**同じ齢の門**（`LPV_MIN_AGE_H`・出したその周の本を 0回 と
+    数えない）。**上端は `FORM_AGE_MAX_H`**（下の「帯にした理由」）。
+    1本につき採るのは**帯の中でいちばん新しい測り**です。
+    返り: `{form: {"n", "n_measured", "median", "views", "ages", "age_median"}}`
+
+    **帯にした理由（2026-09-19 01:5x・optimizer・Opus・1周1体。実測で踏んだ）**:
+
+    もとの実装は「齢 `LPV_MIN_AGE_H` 以上」の**最後の行**を 1本 1つ 採っていました
+    ＝ **上端が無く、形ごとに「いつ測ったか」が違っても同じ表に並びます。**
+    この回に同じ台帳を `measure` の前後で 2度 引いて、割れました:
+
+        measure の前   長尺の最後の行は 齢 4〜45h（[0,1,1,2,8]）・ショートは 齢 30〜167h  → **719倍**
+        measure の後   同じ 8本 が 齢 28〜78h（[0,0,1,1,3,4,13,234]）              → **約 350倍**
+
+    **本も再生も変わっていません。変わったのは測った刻だけ**で、倍率が 2倍 動きました
+    （実物: `uc0SceBfoxQ` は台帳 2回 → 実測 234回。`status` の「台帳の最大より +217回」の行）。
+    ＝ **長尺の側だけ測りが古いあいだ、この行は差を大きく印字し続けます。**
+    09/19 00:3x の決め（「長尺 3本 は座らせないこと ＝ 1本 座るたび 718回/日」）は
+    **その 719倍 の上に立っています**（`studio/cli.py` の `LONG_SLOTS` の註）。
+    **向きは変わりません**（350倍 でも長尺は下）。**桁が 1つ 動いただけ**です ——
+    それでも、次の回が「718回/日 を捨てる」を予算の根拠に使うなら、その数は帯の中の数であること。
+
+    **帯にした後の実測（2026-09-19 01:5x）**: short **714回/本**（測 11本・齢の中央 95h） 対
+    long **2回/本**（測 8本・齢の中央 53h）＝ **357倍**。両側とも `FORM_MIN_N` に届くので
+    倍率は出ますが、**齢の中央がまだ 1.8倍 ずれています**（`FORM_AGE_SKEW_X`）＝
+    `form_yield_line` は **「この倍率は上端」の札**を付けます。
+    **向きは変わりません。桁が 1つ 動いただけです。**
+
+    **覆る条件**:
+     (1) 上端 `FORM_AGE_MAX_H` は**ショートが 48h でほぼ止まる**という §1 の読みから置いた数で、
+         長尺の尾（`late_gain` が「まだ伸びている」と言い続けている側）には合っていません。
+         **長尺の 48h 後の伸びが 5% 未満で 3本 続いたら、上端は要りません**（そこで外すこと）。
+     (2) 逆に **長尺が 96h を越えて伸び続けるなら、この比べ方（同じ齢でそろえる）自体が
+         形の違いを消します** —— そのときは「齢ごとの曲線」を 2本 並べること
+         （`analytics_curve` の側）。1つ の中央では答えられません。
+     (3) 帯を広げて n を作らないこと。n が足りないのは**測りが足りない**のであって、
+         帯が狭いのではありません（`measure` を撃つ回を増やすのが正しい手）。
     """
     by = videos_by_form(rows, scripts_dir)
     seen: dict[str, dict] = {}
     for r in rows:
         if r.get("event") == "measured" and r.get("id"):
-            if float(r.get("age_h") or 0) >= LPV_MIN_AGE_H:
+            age = float(r.get("age_h") or 0)
+            if LPV_MIN_AGE_H <= age <= FORM_AGE_MAX_H:
                 seen[r["id"]] = r
     out: dict[str, dict] = {}
     for form, vids in by.items():
-        views = sorted(int(seen[v["video_id"]].get("views") or 0)
-                       for v in vids if v["video_id"] in seen)
+        got = [seen[v["video_id"]] for v in vids if v["video_id"] in seen]
+        views = sorted(int(r.get("views") or 0) for r in got)
+        ages = sorted(float(r.get("age_h") or 0) for r in got)
         mid = (None if not views else
                float(views[len(views) // 2]) if len(views) % 2 else
                (views[len(views) // 2 - 1] + views[len(views) // 2]) / 2.0)
-        out[form] = {"n": len(vids), "n_measured": len(views), "median": mid, "views": views}
+        amid = (None if not ages else
+                float(ages[len(ages) // 2]) if len(ages) % 2 else
+                (ages[len(ages) // 2 - 1] + ages[len(ages) // 2]) / 2.0)
+        out[form] = {"n": len(vids), "n_measured": len(views), "median": mid,
+                     "views": views, "ages": ages, "age_median": amid}
     return out
 
 
@@ -8083,19 +8128,35 @@ def form_yield_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
     for form in sorted(d, key=lambda f: -(d[f]["median"] or -1)):
         v = d[form]
         mid = "測り 0本" if v["median"] is None else f"**{v['median']:,.0f}回/本**"
-        parts.append(f"{form} {mid}（測 {v['n_measured']}/{v['n']}本）")
-    head = "**形ごとの 1本あたり再生**（齢{:.0f}h 超・METHOD §5「形の配り」・**API 0単位**）: ".format(
-        LPV_MIN_AGE_H)
+        age = "" if v.get("age_median") is None else f"・測った齢の中央 {v['age_median']:.0f}h"
+        parts.append(f"{form} {mid}（測 {v['n_measured']}/{v['n']}本{age}）")
+    head = ("**形ごとの 1本あたり再生**（齢 {:.0f}〜{:.0f}h の**帯**・"
+            "METHOD §5「形の配り」・**API 0単位**）: ").format(LPV_MIN_AGE_H, FORM_AGE_MAX_H)
     body = " ／ ".join(parts)
     s, l = d.get("short"), d.get("long")
     tail = ""
-    if s and l and s["median"] and l["median"] is not None:
-        if s["n_measured"] >= FORM_MIN_N and l["n_measured"] >= FORM_MIN_N:
+    # **片側の測りが 0本 の回も、必ず何か言うこと**（2026-09-19 01:5x に検査が捕まえた）——
+    # もとは `s["median"]` が None（＝ 帯の中に 1本 も無い）の回に **tail が空**で、
+    # 「そろっていない」と「差が無い」が同じ字になっていました（`reach_line` と同じ罠）。
+    if s and l:
+        if (s["n_measured"] >= FORM_MIN_N and l["n_measured"] >= FORM_MIN_N
+                and s["median"] and l["median"] is not None):
             tail = (f" ＝ ショートが長尺の **{s['median'] / max(l['median'], 1.0):,.0f}倍**"
                     f"（**配りの口の差であって、扉(b) の話ではありません** ——"
                     f" ショートの視聴は 4,000時間 に 1秒も入りません・GOAL (4-g) 1）")
+            # **帯の中でも、まだ齢はそろっていない場合がある**（帯は 24〜96h と広い）。
+            # 片方だけ帯の上のほうで測っていれば、その分だけ倍率は膨らみます ＝ **言うこと**。
+            sa, la = s.get("age_median"), l.get("age_median")
+            if sa and la and max(sa, la) / max(min(sa, la), 1.0) >= FORM_AGE_SKEW_X:
+                tail += (f"。**ただし帯の中でもまだそろっていません** —— 測った齢の中央が "
+                         f"short {sa:.0f}h 対 long {la:.0f}h（{max(sa, la) / max(min(sa, la), 1.0):.1f}倍）"
+                         f"で、**古いほうが有利に出る向き**です ＝ **この倍率は上端**。"
+                         "そろえるには `measure` を撃つこと（帯を狭めないこと）")
         else:
-            tail = (f" —— **倍率は読まないこと**（片側が {FORM_MIN_N}本 未満 ＝ 覆る条件 (2)）")
+            tail = (f" —— **倍率は読まないこと**（**帯 {LPV_MIN_AGE_H:.0f}〜{FORM_AGE_MAX_H:.0f}h の中で**"
+                    f"片側が {FORM_MIN_N}本 未満 ＝ 覆る条件 (2)）。"
+                    "**「齢をそろえた比べがまだ 1つ も無い」であって、「差が無い」ではありません** ——"
+                    "帯を広げて n を作らないこと（`form_yield` の覆る条件 (3)）")
     return head + body + tail
 
 

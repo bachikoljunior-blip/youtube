@@ -114,3 +114,77 @@ def test_差し替えた本は後の行が勝つ(tmp_path):
                  "at": "2026-09-17T19:00:00+09:00"})
     d = trend.form_yield(rows, _scripts(tmp_path, items))
     assert d["short"]["median"] == 900.0, d
+
+
+# ---- 齢の**帯**（2026-09-19 01:5x・optimizer・Opus・1周1体） ----------------------
+#
+# **踏んだ defect**: 門が下端だけだと、1本 につき採るのは「齢 24h 以上の**最後の行**」で、
+# **形ごとに測った刻が違っても同じ表に並びます**。この回に同じ台帳を `measure` の前後で
+# 引いて、同じ 8本 が 719倍 → 約 350倍 に動きました（本も再生も変わっていない）。
+# 決めと覆る条件は `studio/trend.form_yield` の註。
+
+
+def test_陽性対照_帯の上端より古い測りは分母に入らない(tmp_path):
+    """陽性対照を先に置くこと —— 帯が効いていなければ、この本が中央を動かします。"""
+    items = [("s0", "vs0", "short", 1000, 48.0),
+             ("s1", "vs1", "short", 999999, trend.FORM_AGE_MAX_H + 1.0)]
+    d = trend.form_yield(_rows(items), _scripts(tmp_path, items))
+    assert d["short"]["n"] == 2 and d["short"]["n_measured"] == 1
+    assert d["short"]["median"] == 1000.0
+
+
+def test_帯の中の測りは_あとから来た帯の外の測りに負けない(tmp_path):
+    """**この検査が、直した defect そのものです。**
+
+    同じ本を 2度 測り、2度目が帯の外（古すぎる齢）でも、帯の中の値が残ること。
+    もとの実装は「最後の行」を採るので、2度目に倒れていました。
+    """
+    items = [("s0", "vs0", "short", 700, 48.0)]
+    rows = _rows(items)
+    rows.append({"event": "measured", "id": "vs0", "views": 5,
+                 "age_h": trend.FORM_AGE_MAX_H + 50.0, "at": "2026-09-18T19:00:00+09:00"})
+    d = trend.form_yield(rows, _scripts(tmp_path, items))
+    assert d["short"]["median"] == 700.0, d
+
+
+def test_形ごとに測った齢がずれていたら倍率を印字しない(tmp_path):
+    """長尺だけ帯の中・ショートは全部 帯の外 ＝ **「差が無い」ではなく「そろっていない」**。"""
+    items = [(f"s{i}", f"vs{i}", "short", 1000, trend.FORM_AGE_MAX_H + 10.0) for i in range(4)]
+    items += [(f"l{i}", f"vl{i}", "long", 1, 48.0) for i in range(4)]
+    line = trend.form_yield_line(_rows(items), _scripts(tmp_path, items))
+    assert "倍率は読まないこと" in line, line
+    assert "そろえた比べがまだ 1つ も無い" in line, line
+
+
+def test_測った齢の中央を毎周_印字する(tmp_path):
+    """読む側が「いつ測った数か」を見ずに倍率を引き写さないため（`form_yield` の註）。"""
+    items = [(f"s{i}", f"vs{i}", "short", 1000, 48.0) for i in range(4)]
+    items += [(f"l{i}", f"vl{i}", "long", 1, 48.0) for i in range(4)]
+    d = trend.form_yield(_rows(items), _scripts(tmp_path, items))
+    assert d["short"]["age_median"] == 48.0 and d["long"]["age_median"] == 48.0
+    line = trend.form_yield_line(_rows(items), _scripts(tmp_path, items))
+    assert "測った齢の中央 48h" in line, line
+
+
+def test_帯の上端も1か所から来る():
+    """写しを持たないこと（下端の検査と同じ形）。"""
+    body = open(trend.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
+    assert body.count("FORM_AGE_MAX_H = ") == 1
+
+
+def test_帯の中で齢がそろっていなければ倍率に上端の札を付ける(tmp_path):
+    """帯 24〜96h は広く、片方だけ帯の上で測れば倍率は膨らみます（`FORM_AGE_SKEW_X`）。"""
+    items = [(f"s{i}", f"vs{i}", "short", 1000, 90.0) for i in range(4)]
+    items += [(f"l{i}", f"vl{i}", "long", 1, 30.0) for i in range(4)]
+    line = trend.form_yield_line(_rows(items), _scripts(tmp_path, items))
+    assert "1,000倍" in line, line
+    assert "この倍率は上端" in line, line
+
+
+def test_齢がそろっていれば上端の札は付かない(tmp_path):
+    """陰性対照 —— 札が常時 出ているわけではないこと。"""
+    items = [(f"s{i}", f"vs{i}", "short", 1000, 48.0) for i in range(4)]
+    items += [(f"l{i}", f"vl{i}", "long", 1, 48.0) for i in range(4)]
+    line = trend.form_yield_line(_rows(items), _scripts(tmp_path, items))
+    assert "1,000倍" in line, line
+    assert "この倍率は上端" not in line, line
