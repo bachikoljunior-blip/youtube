@@ -6933,3 +6933,7 @@
 {"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T07:13:05+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
 {"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T07:13:28+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
 {"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T07:13:42+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T07:16:51+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"cmd": "status", "at": "2026-09-19T07:17:13+09:00", "id": "-", "event": "quota_exceeded"}
+{"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T07:17:26+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"cmd": "status", "at": "2026-09-19T07:17:38+09:00", "id": "-", "event": "quota_exceeded"}
