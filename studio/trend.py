@@ -2514,6 +2514,14 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  **向きが逆**になります。**決めと覆る条件は `slot_value` の註と METHOD §5 ＝ ここへ数を写さないこと。**
     #  **この行も「どちらにしろ」とは言いません**（判断はサブ・09/06 14:0x）。
     out.append(slot_value_line(rows))
+    # **扉(b) を 報告の台帳で測った距離**（2026-09-19 03:xx に足した・`gate_measured` の註）——
+    #  すぐ上の行の `hours`（扉(b) の時間/枠）は **平均再生 × 分/回** で、その 分/回 は
+    #  `rev_deadline` の **前提**（4分/回）か、長尺 6本・再生 19回 の実測です。
+    #  **ところが扉(b) の通貨そのもの（視聴時間・登録）は `data/studio/reporting.jsonl` に
+    #  33日ぶん・249本ぶん、実物が載っています** ＝ **測れる数を前提で置いていました。**
+    #  **決めと覆る条件は `gate_measured` の註と METHOD §5 ＝ ここへ数を写さないこと。**
+    #  **この行も「どちらにしろ」とは言いません**（判断はサブ・09/06 14:0x）。
+    out.append(gate_measured_line(rows))
     # **いまの出し方の 円/月**（2026-09-18 09:4x に足した・GOAL (4-w)）——
     #  すぐ上の 3行 は全部 **再生**の単位です。**目標の単位は「円」**（「月収20万」）で、
     #  `studio/` には円を読む口が 1つ もありませんでした ＝ 在るのは「**要る**再生」側だけ
@@ -8482,6 +8490,16 @@ def _form_sub_rate(rows: list[dict]) -> "dict[str, tuple[float | None, int, int]
 def slot_value(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
     """**枠 1つ の値打ちを、扉の通貨で**（円・扉(b) の時間・登録）。**API 0単位**。
 
+    **【2026-09-19 03:xx】3つ のうち 2つ は、期限の中では使えない通貨です。**
+    `yen` は **RPM を掛けた数 ＝ 門（YPP）を通ったあとの円**、`hours`・`subs` は **門そのもの**。
+    その門までの距離を、前提ではなく報告の台帳で測ると **210倍**（`gate_measured`）＝
+    **期限（85日）の中に無い**ので、この 3つ で枠を比べると、**期限の外の物差しで
+    きょうの枠を配る**ことになります。**期限の中で読める通貨は 門の外の 1つ**
+    （成果報酬 ＝ `perf_need_rate`）で、その通貨は **再生 × 押される率**です。
+    **この口はその数を持ちません**（押された数が 1度も取れていないため）＝
+    いまは `mean`（1本あたり再生）が、門の外の通貨の**分かっている側**そのものです。
+    **決めと覆る条件は `gate_measured` の註と METHOD §5。**
+
     返り: `{form: {"mean","median","n_measured","n","yen","hours","subs",
                    "min_per_view","sub_rate","enough_n"}},
             "_gate": {...}}`
@@ -8540,7 +8558,8 @@ def slot_value_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
         parts.append(f"{form} **¥{v['yen']:,.1f}** ／ {hs} ／ {sb}"
                      f"（平均 {v['mean']:,.0f}回・中央 {v['median']:,.0f}回・測 {v['n_measured']}/{v['n']}本{n}）")
     out = ("**枠 1つ の値打ち（扉の通貨で・円／扉(b) の時間／登録）**"
-           "（`trend.slot_value`・**API 0単位**・掛けるのは**平均**で中央ではありません）: "
+           "（`trend.slot_value`・**API 0単位**・掛けるのは**平均**で中央ではありません・"
+           "**この 3つ は どれも門（YPP）の通貨で、門までの実測の距離は次の行**）: "
            + " ／ ".join(parts))
     s, l = forms.get("short"), forms.get("long")
     if s and l and s["enough_n"] and l["enough_n"]:
@@ -8555,6 +8574,209 @@ def slot_value_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
                 " —— **`rev_deadline` の 60,000回 は前提の側の数です**（混ぜないこと）")
     return out
 
+
+
+
+# --- 扉(b) を、前提ではなく**報告の台帳**で測る ------------------------------
+# **2026-09-19 03:xx・optimizer・Opus 5・ultracode。固定2 の答えを、この回はここで出しました。**
+#
+# **なぜ在るか**: `rev_deadline` の扉(b) は **「60,000回 × 4分/回」という前提**から出ています
+# （`REV_LONG_MIN_PER_VIEW` は自分で「前提で、実測ではありません」と書いています・覆る条件 (5)）。
+# `slot_value` の `hours` も同じ道（平均再生 × 分/回）です。
+# **ところが扉(b) の通貨そのもの（視聴時間）は、`data/studio/reporting.jsonl` に
+# 33日ぶん・249本ぶん、実物が載っています**（`watch_time_minutes`・`subscribers_gained`）。
+# **登録も同じ file に載っています。** ＝ **測れる数を、前提で置いていました。**
+# これは この repo が何度も踏んでいる形（JOURNAL 02:3x §8「『測っていない』と『測って違った』が
+# 同じ札を着ていた」）の裏返しで、**『測ってある』のに前提の札を着せていた**側です。
+#
+# **この回に撃って出た数**（`data/studio/reporting.jsonl`・20260811〜20260912 の 33日・**API 0単位**）:
+#
+#     形        本   再生      視聴時間     時間/日    登録+   登録/1,000回
+#     short    207  73,242    131.3時間    3.98      20      0.27
+#     long      33   2,342      7.4時間    0.22       1      0.43
+#     不明       8   5,159     25.6時間    0.77       1      0.19
+#
+# **扉(b)（4,000時間）に入るのは long の側だけです**（ショートの視聴は 1秒も入りません・GOAL (4-g) 1）。
+# **0.22時間/日 ＝ 4,000時間 まで 約18,000日（49年）。** 登録は 22人/33日 ＝ 0.67人/日 ＝
+# **1,000人 まで 約1,460日（4年）。** 期限は **85日** です。
+#
+# **＝ 扉(b) は「遠い」のではなく、扉(a) と同じ側に在ります。**
+# JOURNAL 2026-09-19 02:3x は「扉(a) は上限で閉じている。**だから期限の中で通れる扉は (b) だけです**」と
+# 書きました。**その行は、この台帳に当てると成り立ちません。**
+#
+# **いちばん甘い前提で解いても同じです**（下の `ifpeer`・**前提の側**・実測と混ぜないこと）:
+# うちの長尺が同じ登録帯の**中央**（`peers.capacity_by_size` 581回/本）まで上がり、
+# 視聴が 2分/回、枠 5本/日 を全部 長尺にしたとすると 97時間/日 ＝ 4,000時間 まで **41日**。
+# **ところが登録が残ります** —— 実測の 0.43人/1,000回 では 581×5×0.00043 ＝ **1.25人/日 ＝ 800日**。
+# 登録率が 10人/1,000回（相場の上の側）まで上がってやっと **34日**。
+# その先に **審査**（`REVIEW_MARGIN_DAYS` 30日・未測）が付き、**通ってからの収益**が要ります
+# —— 通った時点の再生は 2,905回/日 ＝ 87,000回/月 で、RPM ¥1,000 でも **¥87,000/月**（目標の 0.44倍）。
+# **＝ 19倍 と 25倍 の 2つ の段差を同時に、きょう 越えたとしても、期限内に ¥200,000/月 は出ません。**
+#
+# **この節が置く決めは 1つ だけです**（形の配りではありません）:
+# **扉(b) の時間と、RPM で引いた円は、期限の中では使えない通貨です。**
+# `slot_value` はその 2つ で枠を値付けしています ＝ **期限の中で読める通貨は、門の外の 1つ だけ**。
+#
+# **覆る条件**:
+#  (1) **報告が動き出して（いま 403 SERVICE_DISABLED で 6日 止まっています）、
+#      long の 時間/日 が 1週間 の窓で 10倍 を越えたら、この節を数え直すこと。**
+#      0.22 → 2.2時間/日 でも 4,000時間 は 1,800日 なので、**1桁 では覆りません**（2桁 要る）。
+#  (2) **オーナーが期限を動かしたら**（`REV_DEADLINE` は 1か所）、この節の「できない」は
+#      そのまま「できる」へ変わりえます —— **この節が殺しているのは扉ではなく、期限の中の扉です。**
+#  (3) `_forms()` は題の `#Shorts` で分けています（`reporting._forms` の覆る条件と同じ穴）。
+#      題の形を変えた回が出たら、long と short の取り分がそのまま入れ替わります。
+#  (4) **窓は台帳に在る日だけです**（いま 33日）。YPP が数えるのは直近 12か月 なので、
+#      **`long_hours` の水準は下端**です（率のほうを読むこと）。
+#  (5) この節は「アフィリエイトなら届く」とは言いません —— 言うのは
+#      「**広告の側は、測った数では期限の中に無い**」だけです（`perf_need_rate` 覆る条件 (3) と同じ形）。
+# ---------------------------------------------------------------------------
+
+#: 甘い側の前提（**実測ではありません**・上の註の `ifpeer`）。**1か所**。
+GATE_IF_PEER_VIEWS = 581.0      # `peers.capacity_by_size` 登録0〜1,000帯の 長尺 再生中央
+GATE_IF_PEER_MIN = 2.0          # 1回あたり視聴（分）
+GATE_IF_PEER_SUB_RATE = 0.010   # 登録/回（相場の上の側 ＝ 10人/1,000回）
+
+
+def _peer_rpm() -> float:
+    """長尺の RPM の中段（`peers.RPM_BAND` の 1か所から引く・写しを持たない）。"""
+    from . import peers as _peers
+    return float(_peers.RPM_BAND[1])
+
+
+def gate_measured(rows: "list[dict] | None" = None) -> dict:
+    """**扉(b) の距離を、報告の台帳から直に測る**（**API 0単位**・上の註）。
+
+    返り: `{"days","first","last","by_form":{form:{...}},
+             "long_hours","long_hours_per_day","subs_gained","subs_lost","subs_per_day",
+             "hours_need","subs_need","days_to_hours","days_to_subs","days_needed",
+             "days_left","times","stale_days","ifpeer":{...}}`
+    **測れない欄は None**（0 と書きません）。
+    """
+    from . import reporting as _rep
+
+    rep = _rep.latest_rows(_rep.load_rows())
+    forms = _rep._forms()
+    per: dict = {}
+    days: set = set()
+
+    def _n(r: dict, k: str) -> float:
+        try:
+            return float(r.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    for r in rep:
+        vid = str(r.get("video_id") or "")
+        if not vid:
+            continue
+        d = str(r.get("date") or "")
+        if d:
+            days.add(d)
+        a = per.setdefault(vid, {"views": 0.0, "wmin": 0.0, "sg": 0.0, "sl": 0.0})
+        a["views"] += _n(r, "views")
+        a["wmin"] += _n(r, "watch_time_minutes")
+        a["sg"] += _n(r, "subscribers_gained")
+        a["sl"] += _n(r, "subscribers_lost")
+
+    by: dict = {k: {"n": 0, "views": 0.0, "hours": 0.0, "subs_gained": 0.0, "subs_lost": 0.0}
+                for k in ("short", "long", "unknown")}
+    for vid, a in per.items():
+        k = "short" if forms.get(vid) else ("long" if vid in forms else "unknown")
+        t = by[k]
+        t["n"] += 1
+        t["views"] += a["views"]
+        t["hours"] += a["wmin"] / 60.0
+        t["subs_gained"] += a["sg"]
+        t["subs_lost"] += a["sl"]
+    nd = len(days)
+    for t in by.values():
+        t["hours_per_day"] = (t["hours"] / nd) if nd else None
+        t["sub_rate"] = (t["subs_gained"] / t["views"]) if t["views"] else None
+
+    rd = rev_deadline(rows) if rows is not None else {}
+    subs_need = rd.get("subs_need")
+    days_left = rd.get("days_left")
+    lh = by["long"]["hours"]
+    lhpd = by["long"]["hours_per_day"]
+    sg = sum(t["subs_gained"] for t in by.values())
+    sl = sum(t["subs_lost"] for t in by.values())
+    spd = ((sg - sl) / nd) if nd else None
+
+    d_hours = (REV_LONG_HOURS / lhpd) if lhpd else None
+    d_subs = (subs_need / spd) if (spd and subs_need) else None
+    need = max([x for x in (d_hours, d_subs) if x is not None], default=None)
+
+    # **前提の側**（甘く解く・上の註）。実測と混ぜないため、別の袋に入れます。
+    slots = SLOTS_PER_DAY
+    ip_views = GATE_IF_PEER_VIEWS * slots
+    ip_hours = ip_views * GATE_IF_PEER_MIN / 60.0
+    ip_subs = ip_views * GATE_IF_PEER_SUB_RATE
+    ifpeer = {
+        "views_per_day": ip_views, "hours_per_day": ip_hours, "subs_per_day": ip_subs,
+        "days_to_hours": (REV_LONG_HOURS / ip_hours) if ip_hours else None,
+        "days_to_subs": ((subs_need / ip_subs) if (ip_subs and subs_need) else None),
+        "yen_month": ip_views * 30.0 * _peer_rpm() / 1000.0,
+        "views": GATE_IF_PEER_VIEWS, "min_per_view": GATE_IF_PEER_MIN,
+        "sub_rate": GATE_IF_PEER_SUB_RATE, "slots": slots,
+    }
+    ifpeer["days_needed"] = max(
+        [x for x in (ifpeer["days_to_hours"], ifpeer["days_to_subs"]) if x is not None],
+        default=None)
+
+    stale = None
+    if days:
+        try:
+            last = dt.datetime.strptime(max(days), "%Y%m%d").date()
+            stale = (now_jst().date() - last).days
+        except ValueError:
+            stale = None
+
+    return {"days": nd, "first": (min(days) if days else None), "last": (max(days) if days else None),
+            "by_form": by, "long_hours": lh, "long_hours_per_day": lhpd,
+            "subs_gained": sg, "subs_lost": sl, "subs_per_day": spd,
+            "hours_need": float(REV_LONG_HOURS), "subs_need": subs_need,
+            "days_to_hours": d_hours, "days_to_subs": d_subs, "days_needed": need,
+            "days_left": days_left,
+            "times": ((need / days_left) if (need and days_left) else None),
+            "stale_days": stale, "ifpeer": ifpeer}
+
+
+def gate_measured_line(rows: "list[dict] | None" = None) -> str:
+    """毎周 1行。**決めは書きません**（数だけ）。決めと覆る条件は上の註と METHOD §5。"""
+    g = gate_measured(rows)
+    head = ("**扉(b) を 報告の台帳で測った距離**（`trend.gate_measured`・**API 0単位**・"
+            "`rev_deadline` の 4分/回 は**前提**で、この行は**実測**です）: ")
+    if not g["days"] or g["long_hours_per_day"] is None:
+        return head + "**報告の台帳が空です** ＝ この行は `reporting` が戻るまで読めません"
+    b = g["by_form"]
+    out = (head
+           + f"窓 **{g['days']}日**（{g['first']}〜{g['last']}）で "
+             f"**長尺の視聴 {g['long_hours']:,.1f}時間 ＝ {g['long_hours_per_day']:,.2f}時間/日**"
+             f"（ショート {b['short']['hours']:,.1f}時間 は**扉(b) に 1秒も入りません**・"
+             f"不明 {b['unknown']['hours']:,.1f}時間）")
+    if g["days_to_hours"]:
+        out += f" ＝ **4,000時間 まで {g['days_to_hours']:,.0f}日**"
+    if g["subs_per_day"]:
+        out += (f"。**登録 +{g['subs_gained']:,.0f}／−{g['subs_lost']:,.0f} ＝ "
+                f"{g['subs_per_day']:,.2f}人/日**")
+        if g["days_to_subs"]:
+            out += f" ＝ **{g['subs_need']:,.0f}人 まで {g['days_to_subs']:,.0f}日**"
+    if g["times"] and g["days_left"]:
+        out += f"。**期限まで {g['days_left']}日 ＝ 縛るほうで {g['times']:,.0f}倍**"
+    ip = g["ifpeer"]
+    if ip["days_needed"]:
+        subs_part = (f"／登録 {ip['days_to_subs']:,.0f}日"
+                     if ip["days_to_subs"] is not None else "／登録 未測")
+        out += ("。**甘いほうの前提で解くと**（**前提の側・実測と混ぜないこと**: "
+                f"長尺が同じ登録帯の中央 {ip['views']:,.0f}回/本・視聴 {ip['min_per_view']:.0f}分/回・"
+                f"登録 {ip['sub_rate'] * 1000:,.0f}人/1,000回・枠 {ip['slots']:.0f}本/日 を全部 長尺）＝ "
+                f"時間 {ip['days_to_hours']:,.0f}日{subs_part} ＝ "
+                f"**門まで {ip['days_needed']:,.0f}日**、その先に審査 {REVIEW_MARGIN_DAYS}日（未測）、"
+                f"通った時の 円/月 は **¥{ip['yen_month']:,.0f}**（目標の "
+                f"{ip['yen_month'] / 200000.0:,.2f}倍）")
+    if g["stale_days"] is not None and g["stale_days"] > 1:
+        out += f"。**⚠ 報告は {g['stale_days']}日 止まっています**（403 SERVICE_DISABLED）"
+    return out
 
 # --- 門の外の分子（企業案件） ------------------------------------------------
 # **2026-09-18 14:xx・optimizer・Opus・ultracode。この口が無かったこと自体が、この回の答えです。**
