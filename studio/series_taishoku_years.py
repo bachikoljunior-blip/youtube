@@ -46,8 +46,9 @@ AMOUNT = A * 10_000
 YOMI = dict(YOMI)
 YOMI.update({"壁": "かべ", "線": "せん", "未満": "みまん", "境": "さかい", "超": "こ", "少": "すく", "差": "さ",
              "働": "はたら", "勤続": "きんぞく", "満": "み", "満額": "まんがく", "段": "だん",
-             # `lint` が「読みが固定されていない」と鳴った語（20年 のコマ8・38年 のコマ5）
-             "目": "め", "方": "かた", "中": "なか", "大": "おお"})
+             # `lint` が「読みが固定されていない」と鳴った語（20年 のコマ8・38年 のコマ5・`critique` の直しで入った語）
+             "目": "め", "方": "かた", "中": "なか", "大": "おお",
+             "負担": "ふたん", "軽": "かる", "復興分": "ふっこうぶん"})
 
 
 def frame_text(y: int) -> tuple[str, int]:
@@ -65,19 +66,34 @@ def prem_seg(y: int, tail: str) -> dict:
                 tag="前提", board=["同じ会社で", f"{y}年はたらいた", f"退職金 {A}万円", "一度に受け取る"])
 
 
+#: **`series_taishoku` の同名を継がずに、この連作の中で書き直したもの**（2026-09-18 21:0x）。
+#: 継ぐと 09/19 に上げた 4本 の `build_sig` が動きます（上げ直し 1本 1,650単位）。
+#: 直した理由は `critique` の [real]（同刻・`2026-09-20-...-20nen-short` に撃った）:
+#:  (1) コマ6「税率20%の段で78万8700円」＝ **600万 × 20% は 120万 で、78万8700円 の出どころが本文に無い**
+#:      → 速算表の引き算と復興分を声に入れた（「段」だけでは、聞く側は検算できません）
+#:  (2) コマ5「まとめた収入なので半分にだけ税金」＝ **なぜ半分になるのかが無い** → 制度の目的を1文
+#:  (3) コマ1〜3 に「何と何をくらべるか」の宣言が無く、コマ8 で突然 比べる表が出る → フックで宣言する
+#: **字を足したぶんは、この 3つ を短くして返しています**（連作は 450字 まで ＝ METHOD §31）。
 RULE_SEG = dict(
-    say="決まりでは、退職金には税金のかからない枠があり、はたらいた年数で決まります。",
+    say="決まりでは、退職金には税金のかからない枠があり、年数で決まります。",
     show="枠は年数で決まる", sub="退職金には税金のかからない枠があり はたらいた年数で決まる",
     tag="決まり", board=["税金のかからない枠", "年数で決まる", "20年まで 1年40万円", "こえた分 1年70万円"],
     viz={"kind": "table", "title": "枠は年数で決まる", "head": ["はたらいた年数", "1年ごとにふえる枠"],
          "rows": [["20年まで", "40万円"], ["20年をこえた分", "70万円"]], "widths": [4, 4]})
 
 
+#: `series_taishoku` の CTA を短くしたもの（この連作の中だけ。継ぐと 09/19 の 4本 の `build_sig` が動く）。
+CTA_SEG = dict(
+    say="カワウソの年金計算室でした。自分の場合は、説明欄の無料相談から聞けます。広告のリンクです。",
+    show="説明欄の\n無料相談", sub="自分の場合いくらになるかは説明欄の無料相談から聞けます 広告のリンクです",
+    tag="", board=["カワウソの年金計算室", "自分の場合は？", "説明欄の無料相談", "（広告のリンク）"])
+
+
 def frame_seg(y: int) -> dict:
     say, d = frame_text(y)
     items = ([{"label": "20年まで", "value": 8_000_000}, {"label": f"こえた{y - 20}年", "value": 700_000 * (y - 20)}]
              if y > 20 else [{"label": f"{y}年 × 40万円", "value": d}])
-    return dict(say="計算すると、" + say, show=f"枠は {man(d)}", sub="計算すると " + say,
+    return dict(say=say, show=f"枠は {man(d)}", sub="計算すると " + say,
                 # 板の1行は 14字 まで（`lint`）。「＋ こえた15年 1050万円」は 15字 で鳴る ＝ 「ぶん」の形に畳む。
                 tag="計算", board=(["20年まで 800万円", f"＋{y - 20}年ぶん {man(700_000 * (y - 20))}", f"＝ 枠 {man(d)}"]
                                  if y > 20 else [f"40万円 × {y}年", f"＝ 枠 {man(d)}"]),
@@ -93,9 +109,10 @@ def taxable_seg(t: dict) -> dict:
                     tag="計算", board=[f"退職金 {A}万円", f"− 枠 {man(d)}", "＝ はみ出た分 0円", "税金のかかる金額 0円"],
                     viz={"kind": "bars", "title": "枠が退職金をこえている", "items": [{"label": "退職金", "value": AMOUNT},
                                                                           {"label": "枠", "value": d}]})
-    return dict(say=f"{A}万円から枠{man(d)}を引くと{man(over)}がはみ出ます。何年分かまとめた収入なので、半分の{man(half)}にだけ税金がかかります。",
+    # **1文は 40字 まで**（METHOD §3 の 6）＝ 「なぜ半分か」は足すが、句点で切る。
+    return dict(say=f"枠を引くと{man(over)}がはみ出ます。何年分かまとめた収入です。負担を軽くするため、半分の{man(half)}にだけ税金がかかります。",
                 show=f"税金がかかるのは {man(half)}",
-                sub=f"{A}万円から枠{man(d)}を引くと{man(over)}がはみ出る 何年分かまとめた収入なので半分の{man(half)}にだけ税金がかかる",
+                sub=f"{A}万円から枠{man(d)}を引くと{man(over)}がはみ出る 何年分かまとめた収入なので負担を軽くするため半分の{man(half)}にだけ税金がかかる",
                 tag="計算", board=[f"退職金 {A}万円", f"− 枠 {man(d)}", f"＝ はみ出た分 {man(over)}", "半分にだけ税金", f"＝ {man(half)}"],
                 viz={"kind": "table", "title": "税金がかかる金額",
                      "rows": [["退職金", f"{A}万円"], ["− 枠", man(d)], ["＝ はみ出た分", man(over)], ["半分にだけ税金", man(half)]],
@@ -105,10 +122,14 @@ def taxable_seg(t: dict) -> dict:
 def tax_seg(t: dict) -> dict:
     pct = int(round(t["rate"] * 100))
     sub = next(s for hi, r, s in BRACKETS if t["taxable"] <= hi)
+    # **速算表の引き算を声に入れる**（`critique` の [real] (1)）——
+    # 「税率20%の段で78万8700円」だけだと、600万 × 20% ＝ 120万 との差が本文のどこにも無い。
+    head = (f"所得税は{man(t['taxable'])}の{pct}%から{man(sub)}を引きます。復興分を入れて{man(t['income_tax'])}。"
+            if sub else f"所得税は{man(t['taxable'])}の{pct}%に復興分を入れて{man(t['income_tax'])}。")
     return dict(
-        say=f"所得税は税率{pct}%の段で{man(t['income_tax'])}。住民税は{man(t['taxable'])}の10%で{man(t['resident_tax'])}です。",
+        say=head + f"住民税は10%で{man(t['resident_tax'])}です。",
         show=f"所得税 {man(t['income_tax'])}",
-        sub=f"所得税は税率{pct}%の段で{man(t['income_tax'])} 住民税は{man(t['taxable'])}の10%で{man(t['resident_tax'])}",
+        sub=head + f"住民税は{man(t['taxable'])}の10%で{man(t['resident_tax'])}",
         tag="計算", board=[f"{man(t['taxable'])} の {pct}%", f"− {man(sub)}", "＋ 復興特別所得税",
                           f"所得税 {man(t['income_tax'])}", f"住民税 {man(t['resident_tax'])}"],
         viz={"kind": "bars", "title": "税金 2つ", "items": [{"label": "所得税", "value": t["income_tax"]},
@@ -197,10 +218,12 @@ def y20():
     t21 = tax(AMOUNT, 21)
     diff = t["tax"] - t21["tax"]
     segs = [
-        hook_seg(y, t, f"あと1年はたらくと、税金が{man(diff)}へります。"),
+        # **フックで「何と何をくらべるか」を宣言する**（`critique` の [real] (3)）。
+        hook_seg(y, t, "21年はたらいた人とくらべます。"),
         prem_seg(y, ""), RULE_SEG, frame_seg(y), taxable_seg(t), tax_seg(t), result_seg(t),
-        dict(say=f"20年が線です。21年目からは枠が1年70万円ずつふえます。1年で{man(diff)}の差です。",
-             show="20年が線", sub=f"20年が線 21年目からは枠が1年70万円ずつふえる 1年で{man(diff)}の差",
+        # **途中式を声に入れる**（`critique` の [real] (4)）—— 枠 +70万 → かかる金額 −35万 → 税金 −10万6500円。
+        dict(say=f"20年が線です。21年目からは枠が70万円ふえます。税金のかかる金額は35万円へり、税金は{man(diff)}へります。",
+             show="20年が線", sub=f"20年が線 21年目から枠が70万円ふえて税金のかかる金額が35万円へり 税金は{man(diff)}へる",
              tag="しくみ", board=["20年までは 1年40万円", "21年目から 1年70万円", "枠 ＋70万円", f"税金 −{man(diff)}"],
              viz={"kind": "table", "title": "20年 と 21年", "head": ["", "20年", "21年"],
                   "rows": [["枠", man(t["deduction"]), man(t21["deduction"])], ["税金", man(t["tax"]), man(t21["tax"])],
@@ -226,10 +249,10 @@ def y25():
     y, t = 25, tax(AMOUNT, 25)
     t20 = tax(AMOUNT, 20)
     segs = [
-        hook_seg(y, t, f"税金は{man(t['tax'])}です。"),
+        hook_seg(y, t, "20年の人とくらべます。"),
         prem_seg(y, ""), RULE_SEG, frame_seg(y), taxable_seg(t), tax_seg(t), result_seg(t),
-        dict(say=f"20年をこえた5年は、1年70万円ずつ枠がふえます。20年の人より税金が{man(t20['tax'] - t['tax'])}少なくなります。",
-             show="こえた5年で 350万円", sub=f"20年をこえた5年は1年70万円ずつ枠がふえる 20年の人より税金が{man(t20['tax'] - t['tax'])}少ない",
+        dict(say=f"20年をこえた5年で枠が350万円ふえ、税金のかかる金額が175万円へります。税金は{man(t20['tax'] - t['tax'])}の差です。",
+             show="こえた5年で 350万円", sub=f"20年をこえた5年で枠が350万円ふえ税金のかかる金額が175万円へる 税金は{man(t20['tax'] - t['tax'])}の差",
              tag="しくみ", board=["20年をこえた5年", "70万円 × 5年", "＝ 枠 ＋350万円", f"税金 −{man(t20['tax'] - t['tax'])}"],
              viz={"kind": "table", "title": "20年 と 25年", "head": ["", "20年", "25年"],
                   "rows": [["枠", man(t20["deduction"]), man(t["deduction"])], ["税金", man(t20["tax"]), man(t["tax"])],
@@ -280,7 +303,7 @@ def y35():
     y, t = 35, tax(AMOUNT, 35)
     t30 = tax(AMOUNT, 30)
     segs = [
-        hook_seg(y, t, f"税金は{man(t['tax'])}まで下がります。"),
+        hook_seg(y, t, "30年の人とくらべます。"),
         prem_seg(y, ""), RULE_SEG, frame_seg(y), taxable_seg(t), tax_seg(t), result_seg(t),
         dict(say="所得税は金額ごとに段があります。税金のかかる金額が195万円以下なら、いちばん下の5%の段です。",
              show="195万円以下は 5%", sub="所得税は金額ごとに段がある 税金のかかる金額が195万円以下ならいちばん下の5%の段",

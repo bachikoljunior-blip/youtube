@@ -5,7 +5,13 @@ tags は YouTube が並べ替えて返す（実測 09/09 01:4x `gv1u7n_pCAQ`）�
 """
 import json
 
-from studio import cli, script, yt
+from studio import asp, cli, script, yt
+
+# **2026-09-18 20:3x（optimizer）: live の説明欄は `asp.compose()` を通った字です**
+# （`studio/asp.py`・成果報酬の塊を `yt.upload` / `yt.update_meta` の口で足す）。
+# **比べる側（`cli.drift_fields` / `cli.desc_appended`）も同じ字と比べます** ——
+# 通さないと、上がっている本が毎周「食い違い」に見えて 50単位 の直しが空撃ちされます。
+# だから、この検査の「live」側も塊を通します（**陽性対照は通したまま でも拾えること**で守ります）。
 
 
 class _Svc:
@@ -35,7 +41,7 @@ ROWS = [{"event": "scheduled", "id": "2026-09-09-x", "video_id": "VID"}]
 
 
 def _rd(title="題A #Shorts", desc="説明欄A", tags=("加給年金", "年金")):
-    return {"ok": True, "title": title, "description": desc, "tags": list(tags)}
+    return {"ok": True, "title": title, "description": asp.compose(desc), "tags": list(tags)}
 
 
 def test_readinessは_snippetも返す(monkeypatch):

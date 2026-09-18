@@ -14,7 +14,13 @@
   (3) 前後の空白だけの差では返さないこと（`_trim` が先に当てる）
   (4) `meta_mark` が **`update_meta` を勧めない**こと ＝ 直す先が台本だと言うこと
 """
-from studio import cli
+from studio import asp, cli
+
+# **2026-09-18 20:3x（optimizer）: live の説明欄は `asp.compose()` を通った字です**
+# （`studio/asp.py`・成果報酬の塊を `yt.upload` / `yt.update_meta` の口で足す）。
+# **比べる側（`cli.drift_fields` / `cli.desc_appended`）も同じ字と比べます** ——
+# 通さないと、上がっている本が毎周「食い違い」に見えて 50単位 の直しが空撃ちされます。
+# だから、この検査の「live」側も塊を通します（**陽性対照は通したまま でも拾えること**で守ります）。
 
 
 class _S:
@@ -25,18 +31,20 @@ class _S:
 
 
 BODY = "本文です。\n#年金 #手取り"
+#: live の側（`asp.compose` を通った字 ＝ 上の註）。
+LIVE = asp.compose(BODY)
 BRIDGE = "\n\n【くわしい計算（長尺）】\n・https://youtu.be/4MpH3QliNi4"
 
 
 def test_足された分を返す():
-    rd = {"description": BODY + BRIDGE}
+    rd = {"description": LIVE + BRIDGE}
     added = cli.desc_appended(rd, _S(BODY))
     assert added is not None
     assert added.startswith("【くわしい計算（長尺）】")
 
 
 def test_陰性対照_全一致と書き換えでは返さない():
-    assert cli.desc_appended({"description": BODY}, _S(BODY)) is None
+    assert cli.desc_appended({"description": LIVE}, _S(BODY)) is None
     # 書き換え（前方一致でない）＝ 向きが分からないので、この口は黙る
     assert cli.desc_appended({"description": "ちがう本文\n" + BRIDGE}, _S(BODY)) is None
 

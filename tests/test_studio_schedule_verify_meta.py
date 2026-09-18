@@ -12,7 +12,13 @@ import json
 
 import pytest
 
-from studio import cli, script
+from studio import asp, cli, script
+
+# **2026-09-18 20:3x（optimizer）: live の説明欄は `asp.compose()` を通った字です**
+# （`studio/asp.py`・成果報酬の塊を `yt.upload` / `yt.update_meta` の口で足す）。
+# **比べる側（`cli.drift_fields` / `cli.desc_appended`）も同じ字と比べます** ——
+# 通さないと、上がっている本が毎周「食い違い」に見えて 50単位 の直しが空撃ちされます。
+# だから、この検査の「live」側も塊を通します（**陽性対照は通したまま でも拾えること**で守ります）。
 
 
 @pytest.fixture
@@ -43,6 +49,7 @@ def _wire(monkeypatch, reads, rows, backs=None):
 
     def _update_meta(vid, title, description, tags):
         rows.append(("update_meta", vid))
+        description = asp.compose(description)      # 本物の `yt.update_meta` と同じ口（上の註）
         if ups:
             return ups.pop(0)
         return {"title": title, "description": description, "tags": list(tags), "ok": True}
@@ -56,7 +63,7 @@ def _wire(monkeypatch, reads, rows, backs=None):
 
 
 def _ok(s, tags=None):
-    return {"ok": True, "title": s.title, "description": s.description,
+    return {"ok": True, "title": s.title, "description": asp.compose(s.description),
             "tags": list(s.tags if tags is None else tags)}
 
 

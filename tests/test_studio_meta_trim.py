@@ -11,6 +11,13 @@
 from __future__ import annotations
 
 import studio.cli as cli
+from studio import asp
+
+# **2026-09-18 20:3x（optimizer）: live の説明欄は `asp.compose()` を通った字です**
+# （`studio/asp.py`・成果報酬の塊を `yt.upload` / `yt.update_meta` の口で足す）。
+# **比べる側（`cli.drift_fields` / `cli.desc_appended`）も同じ字と比べます** ——
+# 通さないと、上がっている本が毎周「食い違い」に見えて 50単位 の直しが空撃ちされます。
+# だから、この検査の「live」側も塊を通します（**陽性対照は通したまま でも拾えること**で守ります）。
 
 
 class _S:
@@ -18,10 +25,19 @@ class _S:
         self.title, self.description, self.tags = title, description, list(tags)
 
 
-def _rd(s, *, title=None, description=None, tags=None):
+_MISSING = object()
+
+
+def _rd(s, *, title=None, description=_MISSING, tags=None):
+    if description is _MISSING:
+        live = asp.compose(s.description)
+    elif description is None:
+        live = None                      # 欄そのものが欠けている（空として比べる）
+    else:
+        live = asp.compose(description)
     return {
         "title": s.title if title is None else title,
-        "description": s.description if description is None else description,
+        "description": live,
         "tags": [t[:30] for t in s.tags[:15]] if tags is None else tags,
     }
 
@@ -55,6 +71,19 @@ def test_陽性対照_真ん中の改行は落とさない():
     assert cli.drift_fields(_rd(s, description="上\n下"), s) == ["説明欄"]
 
 
-def test_欠けた欄は空として比べる():
+def test_欠けた欄は空として比べる(monkeypatch):
+    """**欄の欠けだけを見る** —— 成果報酬の塊を外して（案件 0本）、正規化の側だけを残す。"""
+    monkeypatch.setattr(asp, "OFFERS", [])
     s = _S(description="")
     assert cli.drift_fields(_rd(s, description=None), s) == []
+
+
+def test_欄が欠けていれば_塊が在る限り食い違い():
+    """**2026-09-18 20:3x の新しい線**（`studio/asp.py`）。
+
+    台本の説明欄が空でも、上げるつもりの字は**塊のぶん だけ在ります** ——
+    live に何も無い本は「まだ成果報酬のリンクが入っていない本」＝ **`asp` で入れ直す相手**です
+    （`cli.cmd_asp --published`）。ここが `[]` に戻ったら、入れ直す相手を数える口が消えます。
+    """
+    s = _S(description="")
+    assert cli.drift_fields(_rd(s, description=None), s) == ["説明欄"]
