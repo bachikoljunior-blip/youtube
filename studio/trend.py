@@ -2474,6 +2474,15 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  **この行は「ショートにしろ」と言いません** —— 扉(b)（4,000時間）にショートの視聴は
     #  1秒も入らないので、形の配りは 1つ の数では決まりません（GOAL (4-g) 1）。
     out.append(form_yield_line(rows))
+    # **いまの出し方の 円/月**（2026-09-18 09:4x に足した・GOAL (4-w)）——
+    #  すぐ上の 3行 は全部 **再生**の単位です。**目標の単位は「円」**（「月収20万」）で、
+    #  `studio/` には円を読む口が 1つ もありませんでした ＝ 在るのは「**要る**再生」側だけ
+    #  （`peers.capacity`・`long_per_video`・`rev_deadline`）。**「在る」側がこの行です。**
+    #  これが無いあいだ、固定2 の答えは「門まで何倍」で止まっていました
+    #  —— **門を通った瞬間にいくらか**を、15周 のあいだ 1度も印字していません。
+    #  **決めと覆る条件は `yen_now` の註と GOAL (4-w) ＝ ここへ数を写さないこと。**
+    #  **この行は「ショートにしろ」とも「長尺にしろ」とも言いません**（判断はサブ・09/06 14:0x）。
+    out.append(yen_now_line(rows))
     # **同じ日の散らばり**（2026-09-18 05:xx に足した・`same_day_spread` の註）——
     #  すぐ上の行は「形ごとの 1本あたり」で、**同じ形の中で本数を増やした効き**を訊けません。
     #  実測 09/16: 同じ日・同じ形・同じ族で 10:00 **1,191回** 対 12:00 **1回**。
@@ -8074,3 +8083,190 @@ def form_yield_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
         else:
             tail = (f" —— **倍率は読まないこと**（片側が {FORM_MIN_N}本 未満 ＝ 覆る条件 (2)）")
     return head + body + tail
+
+
+# ---------------------------------------------------------------------------
+# **いま この機械は、月に何円 作っているか**
+# （2026-09-18 09:4x・optimizer・Opus・1周 1体。決めと覆る条件は `docs/GOAL.md` (4-w) と
+#   `docs/JOURNAL.md` 2026-09-18 09:4x）
+#
+# **なぜ足したか**（固定2「期限内に届くか → できる以外なら やり方を疑え」で、この回が疑った先）:
+#
+#   **目標の単位は「円」です**（`docs/GOAL.md`「月収20万」）。
+#   **`studio/` には、円を読む口が 1つ もありませんでした。**
+#   在るのは全部「**要る**再生」の側です —— `peers.capacity`（20万円 ÷ RPM ＝ 要る再生）・
+#   `trend.long_per_video`（要る 6,667回/本）・`trend.rev_deadline`（門までの倍率）。
+#   **どれも「いま いくらか」を返しません。** `studio/peers.py` の頭が自分でそう書いています:
+#   「オーナーの目標は門ではなく月収20万 ＝ 門を通った**あと**の数で、そこは 09/13〜09/16 の
+#     どの周も 1度も口を持っていませんでした」。**その口は、いまも半分しか開いていません**
+#   —— `capacity` は「要る」側を出しましたが、「**在る**」側は誰も出していません。
+#
+#   **「要る」しか無い盤では、固定2 に答えられません。** 倍率は「門まで」で止まり、
+#   **門を通った瞬間の収益がいくらか**を、15周 のあいだ 1度も印字していません。
+#
+# **この口が出す数**（**API 0単位**・台帳と台本を読むだけ）:
+#
+#     円/本   ＝ その形の 中央 再生/本（`form_yield`） × その形の RPM ÷ 1000
+#     円/日   ＝ Σ_形（円/本 × その形の 本/日）
+#     円/月   ＝ 円/日 × 30
+#     倍率    ＝ 200,000円 ÷ 円/月
+#
+# **この数は「門が いま開いたら」の数です**（`gated` が真）——
+# うちは収益化前で、**実収入は ¥0 です**。だから この行は収益の報告ではなく、
+# **門を通す価値が いくらあるか**の行です。
+#
+# **RPM は測っていません**（1円も入っていない）＝ 帯で出します。**写しを持ちません**:
+#   長尺  `peers.RPM_BAND`（¥500 / ¥1,000 / ¥1,400）
+#   ショート `SHORT_RPM_BAND`（¥20 / ¥35 / ¥60。`src/rpm_mix.py` の `BANDS` と同じ数・
+#            `data/rpm_mix.jsonl` の実測の混ざり `rpm_now` ¥20.2 は この帯の下端に乗ります
+#            ＝ 再生の 99.7% がショートなので、実効RPM ≒ ショートの帯）
+#
+# **覆る条件**:
+#  (1) 収益化が通って **実測の RPM が 1か月ぶん**たまったら、帯を捨ててその数で引き直すこと
+#      （`peers.RPM_BAND` と `SHORT_RPM_BAND` の 2か所・**帯はそこにしか無い**）。
+#  (2) `form_yield` の中央は**齢がまちまちの途中の数**（生涯ではない）＝ この円は**下端**です。
+#      本の齢を揃えて数え直せるようになったら、そこで引き直すこと。
+#  (3) **本/日 は既定値で床ではありません**（オーナー 09/14 06:1x）。n倍 出せば 円/日 も n倍 に
+#      出ますが、**1本あたりが 本/日 と無相関** という前の周の実測（JOURNAL 09/18 08:0x §2）が
+#      2窓 続けて崩れたら、この掛け算は線形ではなくなります ＝ そこで引き直すこと。
+#  (4) 片側の形の測りが `FORM_MIN_N` 未満のあいだは、**形どうしの倍率を読まないこと**
+#      （`form_yield_line` と同じ門）。
+# ---------------------------------------------------------------------------
+
+#: ショートの RPM の帯（円/1000回）。`src/rpm_mix.py` の `BANDS`「ショート 低/中/高」と同じ数。
+#: **長尺の帯はここに置きません** —— `peers.RPM_BAND` の 1か所から引きます（写しを持たない）。
+SHORT_RPM_BAND = (20.0, 35.0, 60.0)
+
+#: 月を日に直すときの日数（`peers.GOAL_YEN` は 円/月）。
+YEN_DAYS_PER_MONTH = 30.0
+
+#: 帯の 3点の呼び名（形ごとの帯を**同じ段**で足す）。
+YEN_LEVELS = ("低", "中", "高")
+
+
+def _form_per_day(vids: list[dict]) -> float:
+    """その形の **本/日**。分母は刻の在る日の数ではなく**最初から最後までの日数**。
+
+    `long_per_video` の `per_day` と**同じ数え方**です（置かなかった日を分母から落とさない）。
+    """
+    ds = sorted((v.get("publish_at") or "")[:10] for v in vids if v.get("publish_at"))
+    if not ds:
+        return 0.0
+    span = 1
+    if len(ds) >= 2:
+        try:
+            a = dt.date.fromisoformat(ds[0])
+            b = dt.date.fromisoformat(ds[-1])
+            span = max(1, (b - a).days + 1)
+        except ValueError:
+            span = len(set(ds)) or 1
+    return len(ds) / span
+
+
+def yen_now(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
+    """**いまの出し方が、門を通った瞬間に作る 円/月**（**API 0単位**・上の註）。
+
+    返り: `{"forms": {form: {"per_day", "median", "n_measured", "n", "rpm",
+                            "yen_per_video": {level: 円}, "yen_per_day": {level: 円}}},
+            "yen_day": {level: 円}, "yen_month": {level: 円},
+            "times": {level: 倍率 or None}, "goal": 200000, "gated": True,
+            "bands": {form: (低, 中, 高)}}`
+    """
+    from . import peers as _peers
+
+    bands = {"short": SHORT_RPM_BAND, "long": tuple(float(x) for x in _peers.RPM_BAND)}
+    by = videos_by_form(rows, scripts_dir)
+    fy = form_yield(rows, scripts_dir)
+
+    forms: dict[str, dict] = {}
+    yen_day = {lv: 0.0 for lv in YEN_LEVELS}
+    for form, vids in by.items():
+        band = bands.get(form)
+        y = fy.get(form) or {}
+        per_day = _form_per_day(vids)
+        mid = y.get("median")
+        ypv: dict[str, float] = {}
+        ypd: dict[str, float] = {}
+        if band and mid is not None:
+            for lv, rpm in zip(YEN_LEVELS, band):
+                ypv[lv] = mid * rpm / 1000.0
+                ypd[lv] = ypv[lv] * per_day
+                yen_day[lv] += ypd[lv]
+        forms[form] = {"per_day": per_day, "median": mid,
+                       "n_measured": y.get("n_measured", 0), "n": y.get("n", len(vids)),
+                       "rpm": dict(zip(YEN_LEVELS, band)) if band else None,
+                       "yen_per_video": ypv, "yen_per_day": ypd}
+
+    yen_month = {lv: v * YEN_DAYS_PER_MONTH for lv, v in yen_day.items()}
+    times = {lv: (_peers.GOAL_YEN / v if v > 0 else None) for lv, v in yen_month.items()}
+    return {"forms": forms, "yen_day": yen_day, "yen_month": yen_month,
+            "times": times, "goal": _peers.GOAL_YEN, "gated": True,
+            "bands": {f: b for f, b in bands.items() if f in forms}}
+
+
+def _yen_band_ratio(d: dict) -> float:
+    """帯の中段で、長尺の RPM がショートの何倍か（`yen_now_line` の註のためだけの数）。"""
+    b = d.get("bands") or {}
+    s, l = b.get("short"), b.get("long")
+    if not s or not l:
+        return 0.0
+    return float(l[1]) / float(s[1])
+
+
+def yen_now_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
+    """毎周 1行。**決めと覆る条件は `docs/GOAL.md` (4-w) ＝ ここへ決めを書かないこと。**"""
+    d = yen_now(rows, scripts_dir)
+    known = {f: v for f, v in d["forms"].items() if v["yen_per_video"]}
+    if not known:
+        return ("**いまの出し方の 円/月**（GOAL (4-w)・**API 0単位**・`trend.yen_now`）: "
+                "**まだ 1本 も読めていません**（齢{:.0f}h 超の測り 0件）"
+                "＝ **まず `measure` を撃つこと**".format(LPV_MIN_AGE_H))
+    parts = []
+    for form in sorted(known, key=lambda f: -known[f]["yen_per_day"].get("中", 0.0)):
+        v = known[form]
+        parts.append(f"{form} **¥{v['yen_per_video']['中']:,.1f}/本** × {v['per_day']:.2f}本/日 "
+                     f"＝ **¥{v['yen_per_day']['中']:,.0f}/日**（測 {v['n_measured']}/{v['n']}本・"
+                     f"RPM ¥{v['rpm']['中']:,.0f}）")
+    t = d["times"]["中"]
+    out = ("**いまの出し方の 円/月**（**門が いま開いたら**の数 ＝ 実収入は **¥0**・"
+           "帯の中段・GOAL (4-w)・**API 0単位**・`trend.yen_now`）: "
+           + " ／ ".join(parts)
+           + f" ＝ **¥{d['yen_month']['中']:,.0f}/月**"
+           f"（低 ¥{d['yen_month']['低']:,.0f} 〜 高 ¥{d['yen_month']['高']:,.0f}）"
+           f" 対 **¥{d['goal']:,}/月** ＝ "
+           + (f"**{t:,.0f}倍**" if t else "**倍率が引けません**"))
+    s, l = d["forms"].get("short"), d["forms"].get("long")
+    if (s and l and s["yen_per_video"] and l["yen_per_video"]
+            and s["n_measured"] >= FORM_MIN_N and l["n_measured"] >= FORM_MIN_N):
+        r = s["yen_per_video"]["中"] / max(l["yen_per_video"]["中"], 1e-9)
+        out += (f"。**円/本 は ショートが長尺の {r:,.0f}倍**"
+                f"（RPM は長尺が {_yen_band_ratio(d):,.0f}倍 高いのに ＝ 配りの差が RPM の差を食っています）"
+                f" —— **ただし ショートの円は扉(b) を 1秒も進めません**（GOAL (4-g) 1）")
+    return out
+
+
+def yen_now_short(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
+    """`status` に置く短い形（`trend` の側が長い形を出す ＝ **同じ段落を 2度 読ませない**）。
+
+    **なぜ `status` にも要るか**（`channel_line_short` と同じ形の判断・2026-09-18 09:4x）:
+    **固定2（期限内に届くか）は、立った側がいちばん最初に答える問い**で、
+    そのとき最初に撃つのは `status` です（親が渡す本文がそう名指ししている）。
+    **`trend` にしか無い行は、その最初の判断に間に合いません。**
+    **決めと derivation は `trend.yen_now_line` と GOAL (4-w) ＝ ここへ数を写さないこと。**
+
+    **覆る条件**: `status` と `trend` を同じ周に両方 読む形でなくなったら、
+    どちらか片方に畳むこと（**2か所 に長い形を置かない**）。
+    """
+    d = yen_now(rows, scripts_dir)
+    known = {f: v for f, v in d["forms"].items() if v["yen_per_video"]}
+    if not known:
+        return ""
+    t = d["times"]["中"]
+    parts = " ／ ".join(
+        f"{f} ¥{v['yen_per_video']['中']:,.1f}/本 × {v['per_day']:.2f}本/日"
+        for f, v in sorted(known.items(), key=lambda kv: -kv[1]["yen_per_day"].get("中", 0.0)))
+    return (f"**円/月 {d['yen_month']['中']:,.0f}円** 対 **{d['goal']:,}円** ＝ "
+            + (f"**{t:,.0f}倍**" if t else "**倍率が引けません**")
+            + f"（{parts}・帯の中段）。**実収入は ¥0**（収益化前）＝ この数は"
+            f"**門が いま開いたら**の側 —— 固定2 はこの行で答えること"
+            f"（GOAL (4-w)・derivation は `trend`・**API 0単位**）")

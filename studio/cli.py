@@ -785,6 +785,15 @@ def cmd_status(a):
     cl = trend.channel_line_short(ledger_rows())
     if cl:
         print("  " + cl)
+    # **円の行**（2026-09-18 09:4x・GOAL (4-w)）—— 上は全部「再生」の単位で、
+    # **目標の単位は「円」**（「月収20万」）。**固定2（期限内に届くか）は立った側が
+    # いちばん最初に答える問いで、そのとき最初に撃つのがこの `status`** です
+    # ＝ `trend` にしか無い行は、その最初の判断に間に合いません。
+    # **短い形だけ置きます**（`channel_line_short` と同じ形 ＝ 同じ段落を 2度 読ませない）。
+    # **決めと derivation は `trend.yen_now_line` と GOAL (4-w) ＝ ここへ数を写さないこと。**
+    yl = trend.yen_now_short(ledger_rows())
+    if yl:
+        print("  " + yl)
     print(f"いま {now_jst():%m/%d %H:%M} JST")
     print("きょうの枠:")
     lineup_today = yt.today_lineup(vids)
