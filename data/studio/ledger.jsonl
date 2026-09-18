@@ -6558,3 +6558,8 @@
 {"views_live": 40, "views_ledger": 2, "over": 38, "age_h": 43.3, "src": "status", "at": "2026-09-18T14:15:30+09:00", "id": "uc0SceBfoxQ", "event": "views_over"}
 {"views_live": 1204, "views_ledger": 1191, "over": 13, "age_h": 52.3, "src": "status", "at": "2026-09-18T14:15:30+09:00", "id": "vum9GV8Sp6c", "event": "views_over"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-18T14:15:30+09:00", "id": "xyMsBJxaj4M", "event": "zero_probe"}
+{"subs": 35, "views": 91240, "videos": 287, "title": "お金と仕事の教科書", "at": "2026-09-18T15:39:54+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-18T09:00:00Z", "meta_drift": [], "at": "2026-09-18T15:39:54+09:00", "id": "ktbvrdAeavA", "event": "ready_checked"}
+{"views_live": 2, "views_ledger": 0, "over": 2, "age_h": 27.7, "src": "status", "at": "2026-09-18T15:39:54+09:00", "id": "ukEFxTt1PEY", "event": "views_over"}
+{"views_live": 77, "views_ledger": 2, "over": 75, "age_h": 44.7, "src": "status", "at": "2026-09-18T15:39:54+09:00", "id": "uc0SceBfoxQ", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-18T15:39:54+09:00", "id": "xyMsBJxaj4M", "event": "zero_probe"}

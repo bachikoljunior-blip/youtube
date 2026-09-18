@@ -35,11 +35,27 @@ def test_門の外の分子は帯を1か所にしか持たない() -> None:
     assert hits == 1, "帯の定義が 2か所 以上 に在ります（写しを持たないこと）"
 
 
-def test_4つの分子のうち門の外は1つだけ() -> None:
-    """`CLAUDE.md` 2026-08-15 の 4つ。**門を通らないのは 企業案件 だけ。**"""
+def test_門を通る分子は3つ() -> None:
+    """**2026-09-18 15:4x に書き換えました。** 元は「4つ のうち門の外は 1つ だけ」で、
+    `UNGATED_FORMS == ("企業案件",)` を固定していました。
+
+    **なぜ書き換えたか**: その 4つ の一覧（広告・メンバーシップ・Super Thanks・企業案件）は
+    **`CLAUDE.md` 2026-08-15 のオーナー原文ではありません** —— 原文（615〜619行）は
+    「目標は **YouTubeの収益** で月収20万」だけで、4つ の括弧は **後の回が付けた註**です
+    （621〜622行）。同じ file の 633行 は「**収益の立て方は、全部あなたが決めます**」。
+    **＝ 4つ は床ではなく、前の回の読みでした**（09/04 17:3x「目標以外全部外して良いよ」と同じ族）。
+    この検査が 4 を固定していたので、**門の外を数え直す回は、まずここで赤くなる形**でした。
+
+    **いま固定するのは、門を通る側の 3つ だけ**です（これは YPP／拡張YPP の実物）。
+    **門の外の側は開いています** —— 足した回は `tests/test_studio_perf.py` に
+    その分子の口と覆る条件を置くこと。
+
+    **覆る条件**: オーナーが「収益」の読み方に言葉を出したら、その言葉が正本
+    （`docs/REVENUE.md` 5.(5)）。「広告だけを数える」なら、門の外の行は全部 畳むこと。
+    """
     assert set(trend.GATED_FORMS) == {"広告", "メンバーシップ", "Super Thanks"}
-    assert trend.UNGATED_FORMS == ("企業案件",)
-    assert len(trend.GATED_FORMS) + len(trend.UNGATED_FORMS) == 4
+    assert "企業案件" in trend.UNGATED_FORMS
+    assert set(trend.GATED_FORMS) & set(trend.UNGATED_FORMS) == set()
 
 
 def test_倍率の向きは要る単価わる相場() -> None:
@@ -100,6 +116,10 @@ def test_行は売れるとは言わない() -> None:
     short = trend.ungated_short(_rows())
     assert "売れる" in line
     assert "売れるとは言っていません" in short
+    # **門の外が 2つ になった**（2026-09-18 15:4x）＝ 両方の行が、もう一方を指すこと。
+    # **指さないと、読む側は「門の外は 1つ」のまま固定2 に答えます**（この行が 15周 そうでした）。
+    assert "成果報酬" in line
+    assert "門を通らないのは" in short
 
 
 def test_gated_の印が両側そろっている() -> None:
