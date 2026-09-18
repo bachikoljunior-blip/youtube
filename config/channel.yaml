@@ -8,7 +8,11 @@
 channel:
   # 日本語の高RPMニッチ（金融/ビジネス/キャリア）を既定にしている。
   # 変えるなら docs/STRATEGY.md の RPM 表を見てから変える。
-  name: "お金と仕事の教科書"
+  # **2026-09-18 20:2x JST にオーナーが YouTube Studio で変えました**（`channels.update` は
+  # 題を黙って無視する ＝ 機械の側では撃てない・`cli.rename_pending` の註）。
+  # **正本は YouTube 側**で、ここはその写しです（`trend.channel_title_drift_line` が毎周 見ています）。
+  # この字が `peers.title_identity` の升を決めます ＝ ずれていると「うちではない題」に判定が下ります。
+  name: "カワウソの年金計算室"
   niche: "日本の会社員向けの、お金・税金・キャリアの実務解説"
   audience: "25〜49歳の日本の会社員・個人事業主。数字と手順が知りたい実務家層"
   language: "ja"

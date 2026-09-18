@@ -2638,6 +2638,13 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
         #  註に在ったのに、**確かめる数が台帳に 1つ もありませんでした**）。
         #  `cli.record_channel` が 02:xx から題も残すので、**次の周から読めます**。
         out.append(channel_title_drift_line(rows, _cfg_name))
+        # **升の判定（上の 2行）は相関で、因果ではありません**（`peers.persona` の註 (1) が
+        #  2026-09-16 から名指ししていた所）。**割る手は 1つ ＝ うちが名前を付けて前後を測ること**で、
+        #  その実験は 2026-09-18 20:2x に始まりました（オーナーが Studio で変えた）。
+        #  **この 3行 は 1組 です** —— 升の判定（`title_identity_line`）・字のずれ
+        #  （`channel_title_drift_line`）・前後の実測（この行）。**離すと、前の 2行 だけを読んだ回が
+        #  相関を因果として使います。** 決めと覆る条件は `trend.rename_effect` の註。
+        out.append(rename_effect_line(rows, now=now))
     except Exception as e:  # noqa: BLE001
         out.append(f"**門の先（月20万）の距離**は引けなかった: {str(e)[:80]}")
     out.append(sub_rate_line(rows))
@@ -9174,3 +9181,245 @@ def perf_short(rows: list, scripts_dir=None) -> str:
             "**門の外は 2つ で、腕が届くのはこちら**（あちらは相手の yes・こちらは台本と説明欄）。"
             "**成果が出るとは言っていません**（derivation は `trend.perf_need_rate`・**API 0単位**）")
     return out
+
+
+#: **題を変えた前後を比べるとき、後ろの窓がこれより短ければ判定を出しません**（時間）。
+#: **72h に置いた理由**（`peers.title_identity` の升の中央で解いた・2026-09-19 03:xx）:
+#: いまの升（`named_topic` 中央 **78.5人/日**）と前の升（`plain_plain` 中央 **1.6人/日**）は
+#: 49倍 離れており、**間に在るのは隣の 2升（9.4／11.8人/日）**です。
+#: 真の率が 1.6人/日 なら 72h で **4.8人**、9.4人/日 なら **28人** ＝ **この 2つ は 72h で割れます**。
+#: 24h では 1.6 と 9.4 が **1.6人 対 9.4人** で、うちの目盛り（整数・複製から返る）では割れません。
+RENAME_AFTER_MIN_H = 72.0
+
+#: 同じ判定の、人数の側の門。**時間だけでは足りません** —— 72h 経っても
+#: 登録が 1人 も動かない窓が在り得る（09/10〜09/14 は **4日 で +0人**）。
+RENAME_AFTER_MIN_SUBS = 8
+
+#: 「1,000再生あたり」を出してよい分母の床（再生）。**これより少ないと率が跳ねます**
+#: （実測 2026-09-19 03:xx: 揃えた前の窓は `measured` が **0行** ＝ 分母 0 で 1000.0/1,000再生 と出た）。
+RENAME_MIN_VIEWS = 500
+
+
+def _cum_views_at(rows: list[dict], t: dt.datetime) -> tuple[int, int]:
+    """その刻までに台帳が見た**本ごとの最大再生の合計**と、数えた本の数（**API 0単位**）。
+
+    **チャンネルの `viewCount` を使わない理由**: あちらは複製から返り、実測で
+    **本ごとの合計が 4,100回 動いた日に +55回** しか動いていません（`channel_line` の註）。
+    ここは `measured` の**包絡**（本ごとの最大）なので、複製の低い読みに引きずられません。
+    **覆る条件**: `measure` を撃てない周が続くと、この分母は**止まります**（増えません）——
+    止まった分母で率を割ると跳ねるので、`RENAME_MIN_VIEWS` の床で止めること。
+    """
+    best: dict[str, int] = {}
+    for r in rows:
+        if r.get("event") != "measured" or not isinstance(r.get("views"), int):
+            continue
+        try:
+            if _at(r) > t:
+                continue
+        except Exception:  # noqa: BLE001
+            continue
+        k = str(r.get("id") or "")
+        if k:
+            best[k] = max(best.get(k, 0), r["views"])
+    return sum(best.values()), len(best)
+
+
+#: 窓の端で「同じ刻の読み」とみなす幅（時間）。複製から返る低い読みを外すために、
+#: **端の 1点 ではなく、端から この幅 の中の最大**を採ります（`settle_stats` と同じ規則）。
+#: **窓の全体の最大を端に使ってはいけません** —— 頭に使うと伸びが必ず 0 になります。
+RENAME_EDGE_CLUSTER_H = 0.75
+
+
+def _subs_edge(cs: list[dict], t: dt.datetime) -> int:
+    """窓の端の登録者数（`cs` は刻の順・**API 0単位**）。
+
+    **頭も尻も「その刻に至るまで」を見ます**（`[t - w, t]`）＝ **窓が開いた時点の値**。
+    **頭で前を向く（`[t, t + w]`）と、窓が開いた直後の伸びを頭に食わせます** ——
+    それは前の窓を小さく見せる向きで、**比を自分の仮説の側へ倒します**
+    （実測 2026-09-19 03:xx: 揃えた前が 34→35 なのに +0人 と出て、比が 4.0倍 → 17.3倍 に化けた）。
+    その幅に行が無ければ**いちばん近い 1行**。
+    """
+    w = dt.timedelta(hours=RENAME_EDGE_CLUSTER_H)
+    near = [r for r in cs if t - w <= _at(r) <= t]
+    if near:
+        return max(r["subs"] for r in near)
+    return min(cs, key=lambda r: abs((_at(r) - t).total_seconds()))["subs"]
+
+
+def rename_effect(rows: list[dict], now: dt.datetime | None = None) -> dict:
+    """**題を変えた前後で、登録の伸びがどう動いたか**（**API 0単位**）。
+
+    **なぜ要るか（2026-09-19 03:xx・optimizer・Opus 5・ultracode）**: `peers.persona` は
+    2026-09-16 19:xx から「名前を持つ口は 登録/日 が 6.8倍」と印字し、
+    `peers.title_identity` は 09/17 02:xx から「名前 × 制度名 の升は 78.5人/日・
+    うちの升は 1.6人/日」と印字しています。**どちらも相関で、因果ではありません** ——
+    そして `peers.persona` の註 (1) は **2026-09-16 から**、割る手を 1つ だけ名指ししていました:
+
+    > **分ける手は 1つ ＝ うちが名前を付けて、前後を測ること**（付けた日を刻むこと）。
+
+    **その実験は 2026-09-18 20:2x に始まっています**（オーナーが Studio で
+    `お金と仕事の教科書` → `カワウソの年金計算室` に変えた）。
+    **刻を刻んだ口も、前後を測る口も、この関数まで在りませんでした** ——
+    09/19 02:5x の周が `status`/`trend` を撃った時点で、台帳にはずれを言う行
+    （`channel_title_drift_line`）だけが在り、**`config` は 1日 古い題のまま**でした
+    ＝ **升の判定は 6時間 のあいだ「うちではない題」に下り続けていました。**
+
+    **返す物**: 前後の 登録/日 と、**長さを揃えた前**（後ろと同じ時間だけ遡った窓）。
+    **揃えた側を必ず一緒に出すこと** —— 前の窓が 194時間 で後ろが 6時間 なら、
+    比は「題の効き」ではなく「窓の長さ」を測ります（実測 2026-09-19 03:xx:
+    前 0.99人/日 対 揃えた前 4.27人/日 ＝ **同じ台帳で 4.3倍 違います**）。
+
+    **覆る条件**:
+     (1) 後ろの窓に**本が出ていたら**（`new_videos_after`）、この比は題の効きと
+         本の効きの**和**です。実験を割りたいなら、**本を出さない 24h** を 1度 作ること
+         —— ただし **それは再生（期限の中で唯一 生きている分子）を捨てる手**なので、
+         **撃つ前に `perf_need_rate` と突き合わせること**（値打ちは「割れること」だけ）。
+     (2) 題をもう一度 変えたら、この窓は作り直しです（YouTube は 14日 に 3回 まで）。
+         **この窓が閉じるまで、題を触らないこと。**
+     (3) 登録の目盛りは**整数で、複製から返ります**（`_channel_rows` の註）＝
+         後ろが 1桁 のあいだ、±1人 は 25%の揺れです。人数の門（`RENAME_AFTER_MIN_SUBS`）はそのため。
+     (4) `measured` が止まると分母が止まります（`_cum_views_at` の註）＝
+         1,000再生あたりは `RENAME_MIN_VIEWS` を切ったら出しません。
+    """
+    now = now or now_jst()
+    out: dict = {"marked": False}
+    mark = [r for r in rows if r.get("event") == "channel_renamed"]
+    if not mark:
+        return out
+    m = mark[-1]
+    try:
+        b_from = dt.datetime.fromisoformat(m.get("bound_from") or m["at"])
+        b_to = dt.datetime.fromisoformat(m.get("bound_to") or m["at"])
+    except Exception:  # noqa: BLE001
+        return out
+    cs = _channel_rows(rows)
+    if len(cs) < 2:
+        return out
+    before_rows = [r for r in cs if _at(r) <= b_from]
+    after_rows = [r for r in cs if _at(r) >= b_to]
+    if not before_rows or not after_rows:
+        return out
+
+    # 端は**その端の近くの塊の中の最大**を採る（複製の低い読みを掴まないため・`settle_stats` と
+    # 同じ規則）。**窓の全体の max を端に使わないこと** —— 頭に使うと伸びが必ず 0 になります
+    # （実測 2026-09-19 03:xx: 揃えた前の窓が 34→35 なのに +0人 と出た）。
+    s_at_bound = _subs_edge(before_rows, b_from)
+    s_now = _subs_edge(after_rows, _at(after_rows[-1]))
+    t_now = _at(after_rows[-1])
+    after_h = (t_now - b_to).total_seconds() / 3600.0
+    d_after = s_now - s_at_bound
+
+    t0 = _at(before_rows[0])
+    full_h = (b_from - t0).total_seconds() / 3600.0
+    d_full = s_at_bound - _subs_edge(before_rows, t0)
+
+    # **長さを揃えた前**（後ろと同じ時間だけ b_from から遡る）
+    m_start = b_from - dt.timedelta(hours=max(after_h, 0.01))
+    m_rows = [r for r in before_rows if _at(r) >= m_start]
+    d_match = (s_at_bound - _subs_edge(before_rows, m_start)) if m_rows else None
+
+    v_bound, _ = _cum_views_at(rows, b_from)
+    v_now, _ = _cum_views_at(rows, t_now)
+    v_mstart, _ = _cum_views_at(rows, m_start)
+
+    # **本が出た刻は「初めて測った刻」ではありません** —— `measure` は日枠が戻った周にまとめて
+    # 撃つので、**前の日に出た本が、境目の後ろで初めて台帳に載ります**（実測 2026-09-19 03:xx:
+    # 初めて測った刻で数えると後ろの窓に **7本**、`age_h` で戻すと **5本**）。
+    # `measured` の `age_h` で公開の刻へ戻し、本ごとの**いちばん早い推定**を採ります。
+    pubs: dict[str, dt.datetime] = {}
+    for r in rows:
+        if r.get("event") != "measured":
+            continue
+        k = str(r.get("id") or "")
+        if not k:
+            continue
+        try:
+            p = _at(r) - dt.timedelta(hours=float(r.get("age_h") or 0))
+        except Exception:  # noqa: BLE001
+            continue
+        if k not in pubs or p < pubs[k]:
+            pubs[k] = p
+    new_after = sum(1 for p in pubs.values() if p >= b_to)
+    new_match = sum(1 for p in pubs.values() if m_start <= p <= b_from)
+
+    def _per_day(d, h):
+        return (d / (h / 24.0)) if (d is not None and h > 0) else None
+
+    out.update({
+        "marked": True, "before": m.get("before"), "after": m.get("after"),
+        "bound_from": b_from, "bound_to": b_to,
+        "after_h": after_h, "subs_after": d_after, "spd_after": _per_day(d_after, after_h),
+        "full_h": full_h, "subs_full": d_full, "spd_full": _per_day(d_full, full_h),
+        "subs_match": d_match, "spd_match": _per_day(d_match, after_h),
+        "views_after": max(v_now - v_bound, 0), "views_match": max(v_bound - v_mstart, 0),
+        "new_videos_after": new_after, "new_videos_match": new_match,
+        "enough": after_h >= RENAME_AFTER_MIN_H and d_after >= RENAME_AFTER_MIN_SUBS,
+    })
+    return out
+
+
+def rename_effect_line(rows: list[dict], now: dt.datetime | None = None) -> str:
+    """`rename_effect` の 1行（**API 0単位**）。**判定は立ったサブ**。
+
+    **この行は「効いた」とは言いません** —— 門（`RENAME_AFTER_MIN_H` / `RENAME_AFTER_MIN_SUBS`）に
+    届くまでは数だけを出し、**何が混ざっているか**を名指しします。
+    """
+    d = rename_effect(rows, now=now)
+    if not d.get("marked"):
+        return ("**題を変えた前後の登録**（`trend.rename_effect_line`・**API 0単位**）: "
+                "**刻が台帳に在りません** —— `channel_renamed` の行を書くこと"
+                "（GOAL (4-p-1)「名前を付けて前後を測る・付けた日を刻む」）。")
+
+    def _f(x, n=2):
+        return "—" if x is None else f"{x:,.{n}f}"
+
+    ratio = ""
+    if d["spd_match"] is not None and d["spd_match"] > 0 and d["spd_after"] is not None:
+        ratio = f"（揃えた前の **{d['spd_after'] / d['spd_match']:.1f}倍**）"
+    elif d["spd_full"] and d["spd_after"] is not None:
+        ratio = f"（前の **{d['spd_after'] / d['spd_full']:.1f}倍**）"
+
+    if d["views_after"] >= RENAME_MIN_VIEWS and d["views_match"] >= RENAME_MIN_VIEWS:
+        a = d["subs_after"] / d["views_after"] * 1000
+        b = (d["subs_match"] or 0) / d["views_match"] * 1000
+        per1k = (f" **1,000再生あたり 前 {b:.2f}人 → 後 {a:.2f}人**"
+                 f"（分母 {d['views_match']:,}回 / {d['views_after']:,}回・`measured` の包絡）。")
+    else:
+        per1k = (f" **1,000再生あたりは出せません** —— 分母が床（{RENAME_MIN_VIEWS:,}回）に届きません"
+                 f"（前 {d['views_match']:,}回 / 後 {d['views_after']:,}回・`measure` が撃てていない窓）。")
+
+    head = (f"**題を変えた前後の登録**（`trend.rename_effect_line`・**API 0単位**・"
+            f"GOAL (4-p-1)「名前を付けて前後を測る」の読み出し）: "
+            f"刻は **{d['bound_from']:%m/%d %H:%M}〜{d['bound_to']:%H:%M} の挟み**"
+            f"（`{d['before']}` → `{d['after']}`・オーナーが Studio で変えた）。"
+            f"**前 {_f(d['spd_full'])}人/日**（{d['full_h']:.1f}h・+{d['subs_full']}人）／"
+            f"**揃えた前 {_f(d['spd_match'])}人/日**（同じ {d['after_h']:.1f}h・"
+            f"+{d['subs_match'] if d['subs_match'] is not None else '—'}人）／"
+            f"**後 {_f(d['spd_after'])}人/日**（{d['after_h']:.1f}h・**+{d['subs_after']}人**）{ratio}。")
+
+    if d["new_videos_after"]:
+        mixed = (f" **混ざっている物**: 後ろの窓に出た本 **{d['new_videos_after']}本**"
+                 f"（揃えた前は {d['new_videos_match']}本）＝ この比は題の効きと本の効きの**和**です"
+                 f"（覆る条件 (1)）。")
+    else:
+        mixed = (f" **後ろの窓に出た本は 0本**（揃えた前は {d['new_videos_match']}本）＝ "
+                 f"**後ろの伸びに『新しく出した本』は入っていません。** "
+                 f"**ただし混ざりは消えていません** —— 境目の手前に出た本は後ろの窓でも再生が伸び続けます"
+                 f"（覆る条件 (1)）。")
+    mixed += " 登録の目盛りは**整数・複製から返る**（覆る条件 (3)）。"
+
+    if not d["enough"]:
+        need = []
+        if d["after_h"] < RENAME_AFTER_MIN_H:
+            need.append(f"時間 {d['after_h']:.1f}h（門 {RENAME_AFTER_MIN_H:.0f}h）")
+        if d["subs_after"] < RENAME_AFTER_MIN_SUBS:
+            need.append(f"人数 {d['subs_after']}人（門 {RENAME_AFTER_MIN_SUBS}人）")
+        return (head + per1k + mixed +
+                f" !! **まだ判定を出しません** —— {'・'.join(need)}。"
+                f"**この窓が閉じるまで題を触らないこと**（YouTube は 14日 に 3回・覆る条件 (2)）。"
+                f"**判定は立ったサブ。**")
+
+    return (head + per1k + mixed +
+            f" **門に届きました**（{d['after_h']:.1f}h・+{d['subs_after']}人）＝ "
+            f"**この数を `peers.title_identity` の升の中央と、門が要る 登録/日 に当てること**"
+            f"（数は `title_identity_line` が持つ ＝ ここへ写さない）。**判定は立ったサブ。**")
