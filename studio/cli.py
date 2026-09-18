@@ -2926,7 +2926,7 @@ def catchup_line(rows: list[dict], now: dt.datetime | None = None) -> str:
     if not bad and not cta and not wm and not rn:
         return "**詰まった手（`catchup`・API 0単位で数えた）**: 0件"
     what = ([f"出ていない本 {len(bad)}本"] if bad else []) \
-        + ([f"**コメント欄の一手 未 {len(cta)}本**"] if cta else []) \
+        + ([f"コメント欄の一手 未 {len(cta)}本"] if cta else []) \
         + (["透かし 未"] if wm else []) \
         + ([f"題 未（`{RENAME_TARGET}`）"] if rn else [])
     return (f"**詰まった手 {'・'.join(what)}** ＝ 日枠が戻ったら "
