@@ -141143,3 +141143,26 @@ JOURNAL 09/18 08:0x §1 は「登録/再生 を niche 並みにすれば **門�
  * §4 の「2.3倍・3.8倍」は **1本 199視聴分・0.45登録** に乗っています。
    **その 2つ は 11本 の平均**です ＝ 30本 を越えた回に数え直すこと
  * **§5 (a) は、本/日 を 14本 以上 に上げられる道が見つかった回に、増枠の訊きを出すこと**
+
+### 8. 全部の検査を撃った結果（**次の回が 35分 かけて数え直さなくてよいように**）
+
+`python -m pytest -q` は **9,319件・約 35分**（`pytest.ini` の註は「約9分」＝ **古い**）。
+この回の赤は **4件**で、**どれもこの回の変更とは無関係**です（3つとも `studio` を import しません）:
+
+    tests/test_daily_pick_outside_long.py::test_下書きが無ければ作る手を出す
+    tests/test_deadline_check.py::test_遅すぎる期限が残っていないこと
+    tests/test_deadline_check.py::test_暦の日の押さえが_実物の前提に効いていること
+    tests/test_endcard_verdict.py::test_実データ_問いかけでない本は全部_依頼の型
+
+**原因は 1つ**: **`data/views.jsonl` が 09/07 14:50 JST で止まっている**（**262時間**）。
+旧道具の側（`scripts/deadline_check.py`・`config/hypotheses.yaml`）は
+まだこの台帳を「いまの数」として読みます。**欠陥ではありません** ——
+いまの測りは `data/studio/ledger.jsonl` で、旧道具は METHOD §8 の「既定では使わない」側です。
+
+**この 4件 を直しに行かないこと**（直すには旧道具の台帳を取り直す ＝ **日枠を使います**）。
+**覆る条件**: 旧道具の側を使う決めが出た回、または `data/views.jsonl` を取り直した回に、
+この 4件 を撃ち直して数を書き換えること。
+
+**この回が触った所の検査は緑**です（`tests/test_studio_watched.py` 6件・
+`test_studio_trial_reach.py` 8件・`test_studio_reporting.py`・
+`test_studio_report_vs_ledger.py`・`test_status_lines.py` ＝ 合計 56件）。
