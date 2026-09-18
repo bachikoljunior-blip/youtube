@@ -21,6 +21,8 @@
 import json, shutil, sys
 from pathlib import Path
 
+from . import asp
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "data/studio/scripts"
 IMAGES = ROOT / "assets/images"
@@ -195,10 +197,9 @@ BAKED_BEFORE_CTA_SWITCH = ("2026-09-19-taishokukin-1500man-tedori-short",
                            "2026-09-19-taishokukin-2500man-tedori-short",
                            "2026-09-19-taishokukin-3000man-tedori-short")
 
-CTA_SEG = dict(
-    say="カワウソの年金計算室でした。自分の場合いくらになるかは、説明欄の無料相談から聞けます。広告のリンクです。",
-    show="説明欄の\n無料相談", sub="自分の場合いくらになるかは説明欄の無料相談から聞けます 広告のリンクです",
-    tag="", board=["カワウソの年金計算室", "自分の場合は？", "説明欄の無料相談", "（広告のリンク）"])
+# **2026-09-19 08:xx: 指す先を「説明欄」から「プロフィールのリンク」へ**（Shorts では説明欄・コメント欄の URL が
+# 押せない ＝ YouTube 2023-08-31。理由・覆る条件は `studio/asp.py` の `PROFILE_NOTE` の註 ＝ **門は 1か所**）。
+CTA_SEG = dict(asp.CTA_SEG)
 
 
 def taxable_seg(A: int, t: dict) -> dict:

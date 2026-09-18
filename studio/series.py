@@ -15,6 +15,8 @@
 import json, shutil, sys
 from pathlib import Path
 
+from . import asp
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "data/studio/scripts"
 IMAGES = ROOT / "assets/images"
@@ -120,9 +122,9 @@ LOOK_SEG = dict(say="自分の場合は年金振込通知書の控除の欄で�
 # **広告だと声でも言います**（ステマ規制。説明欄の `【PR】` と同じことを、音の側でも）。
 # **覆る条件**: 向け直したあと **登録/日 の中央が 3日 続けて 1.0人 を下回ったら**、声は「登録」に戻し、
 # リンクの誘いは板（`board`）だけの黙った形にすること（**両方 言うと、どちらも取れません**）。
-CTA_SEG = dict(say="自分の場合いくらになるかは、説明欄の無料相談から聞けます。広告のリンクです。",
-               show="説明欄の\n無料相談", sub="自分の場合いくらになるかは説明欄の無料相談から聞けます 広告のリンクです",
-               tag="", board=["自分の場合は？", "説明欄の無料相談", "（広告のリンク）", "相談は無料"])
+# **2026-09-19 08:xx: 指す先を「説明欄」から「プロフィールのリンク」へ**（Shorts では説明欄・コメント欄の URL が
+# 押せない ＝ YouTube 2023-08-31。理由・覆る条件は `studio/asp.py` の `PROFILE_NOTE` の註 ＝ **門は 1か所**）。
+CTA_SEG = dict(asp.CTA_SEG)
 
 
 def base(vid, date, title, takeaway, desc, segs, extra_tags):

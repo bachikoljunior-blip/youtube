@@ -297,9 +297,16 @@ def channel_public(channel_id: str, timeout: float = 25.0, fetch=None) -> dict |
             title = json.loads('"' + t.group(1) + '"')
         except Exception:
             title = t.group(1)
+    # **プロフィールのリンク（成果報酬）が置かれたか**（2026-09-19 08:xx・optimizer・Fable 5.1）。
+    # Shorts では説明欄・コメント欄の URL が押せず、押せる面はチャンネルページのリンクだけ（`asp.PROFILE_NOTE` の註）。
+    # その欄は API に口が無い（オーナーの手・窓【2】）ので、置かれたかを**公開ページの字**で読みます ——
+    # 陽性対照: リンクを持つ他チャンネルの公開ページには、リンク先の host がそのまま載ります
+    # （2026-09-19 07:5x に `UCX6OQ3DkcsbYNE6H8uQQuVA` で `mrbeast.store` ほか 12 host を確かめた）。
+    from .asp import HOST as _ASP_HOST
     return {"id": channel_id, "subscriberCount": subs,
             "exact": subs < PUBLIC_SUBS_EXACT_MAX,
-            "title": title, "handle": handle, "src": "public_page"}
+            "title": title, "handle": handle, "src": "public_page",
+            "asp_link": _ASP_HOST in html}
 
 
 def channel_public_line(ch: dict | None) -> str:
@@ -317,4 +324,9 @@ def channel_public_line(ch: dict | None) -> str:
     if ch.get("handle") and ch.get("title") and ch["handle"] != ch["title"]:
         head += (f"・題 `{ch['title']}` に対して **handle は `@{ch['handle']}` のまま**"
                  f" ＝ 改名は片側だけ（handle は API から替えられない ＝ オーナーの手）")
+    if ch.get("asp_link") is False:
+        head += ("・**プロフィールのリンク（成果報酬）は 未** ＝ Shorts では説明欄・コメント欄の URL が押せないので、"
+                 "**押せる面が 1つ も無い**（API に口が無い ＝ オーナーの窓【2】・`asp.PROFILE_NOTE` の註）")
+    elif ch.get("asp_link"):
+        head += "・プロフィールのリンク（成果報酬）**在**（Shorts から押せる面が開いた）"
     return head

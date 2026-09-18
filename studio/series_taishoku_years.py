@@ -35,6 +35,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from . import asp
+
 from .series_taishoku import (BG_SRC, BRACKETS, CTA_SEG, IMAGES, LONG_URL, LOOK_SEG, NOT_SAID, SCRIPTS,
                               SOURCES, YEARS_TABLE, YOMI, deduction, man, tax)
 
@@ -89,10 +91,9 @@ RULE_SEG = dict(
 
 
 #: `series_taishoku` の CTA を短くしたもの（この連作の中だけ。継ぐと 09/19 の 4本 の `build_sig` が動く）。
-CTA_SEG = dict(
-    say="カワウソの年金計算室でした。自分の場合は、説明欄の無料相談から。広告のリンクです。",
-    show="説明欄の\n無料相談", sub="自分の場合いくらになるかは説明欄の無料相談から聞けます 広告のリンクです",
-    tag="", board=["カワウソの年金計算室", "自分の場合は？", "説明欄の無料相談", "（広告のリンク）"])
+# **2026-09-19 08:xx: 指す先を「説明欄」から「プロフィールのリンク」へ**（Shorts では説明欄・コメント欄の URL が
+# 押せない ＝ YouTube 2023-08-31。理由・覆る条件は `studio/asp.py` の `PROFILE_NOTE` の註 ＝ **門は 1か所**）。
+CTA_SEG = dict(asp.CTA_SEG)
 
 #: `series_taishoku.LOOK_SEG` を短くしたもの（同じ理由 ＝ 継ぐと 09/19 の 4本 が動く）。
 LOOK_SEG = dict(
