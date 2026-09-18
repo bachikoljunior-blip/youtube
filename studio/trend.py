@@ -2483,6 +2483,12 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  **決めと覆る条件は `yen_now` の註と GOAL (4-w) ＝ ここへ数を写さないこと。**
     #  **この行は「ショートにしろ」とも「長尺にしろ」とも言いません**（判断はサブ・09/06 14:0x）。
     out.append(yen_now_line(rows))
+    # **門を通らない分子（企業案件）**（2026-09-18 14:xx に足した・`ungated_yen` の註）——
+    #  すぐ上の行は `"gated": True` を返しています。**その印を読む口が 1つ もありませんでした。**
+    #  `CLAUDE.md` 2026-08-15 は稼ぎ方を 4つ 開けており、**門の外は 1つ**（企業案件）です。
+    #  ＝ 毎周 印字していた 151倍／34,286倍 は **広告の倍率**で、目標の倍率ではありません。
+    #  **決めと覆る条件は `ungated_yen` の註 ＝ ここへ数を写さないこと。**
+    out.append(ungated_line(rows))
     # **同じ日の散らばり**（2026-09-18 05:xx に足した・`same_day_spread` の註）——
     #  すぐ上の行は「形ごとの 1本あたり」で、**同じ形の中で本数を増やした効き**を訊けません。
     #  実測 09/16: 同じ日・同じ形・同じ族で 10:00 **1,191回** 対 12:00 **1回**。
@@ -8270,3 +8276,178 @@ def yen_now_short(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
             + f"（{parts}・帯の中段）。**実収入は ¥0**（収益化前）＝ この数は"
             f"**門が いま開いたら**の側 —— 固定2 はこの行で答えること"
             f"（GOAL (4-w)・derivation は `trend`・**API 0単位**）")
+
+
+# --- 門の外の分子（企業案件） ------------------------------------------------
+# **2026-09-18 14:xx・optimizer・Opus・ultracode。この口が無かったこと自体が、この回の答えです。**
+#
+# `yen_now` は返り値に **`"gated": True`** を書いています。**それを読む口が 1つ もありません**
+# （`grep '"gated"' studio/ tests/` ＝ 書く 2か所 だけ）。**印はあって、対になる側が無い。**
+#
+# `CLAUDE.md`（恒久・オーナーの言い直し 2026-08-15）はこう言っています:
+#
+#     「稼ぐ場所は YouTube に閉じますが、**その中の何で稼ぐかは開いています**
+#       （広告・メンバーシップ・Super Thanks・企業案件）」
+#
+# **4つ のうち 3つ は門（YPP）を通ります。1つ だけ通りません。**
+#
+#     広告              門（登録1,000人 ＋ 4,000時間／90日1,000万回）   `rev_deadline` が測る
+#     メンバーシップ     門（拡張YPP: 登録500人 ＋ 3,000時間／300万回）  **どの口も測らない**
+#     Super Thanks      同上                                        **どの口も測らない**
+#     **企業案件**       **門の外**                                   **どの口も測らない**
+#
+# **＝ 盤に乗っているのは 4つ のうち 1つ だけで、それは いちばん遠い 1つ です。**
+# `rev_deadline` が毎周 印字する 151倍／34,286倍 は、**広告の倍率**であって
+# 目標の倍率ではありません。
+#
+# **この見落としは新しくありません。** `docs/JOURNAL.md` は 2026-08月 から
+# **15回 以上**「企業案件だけが門の外」と書いています（53344・65211・66608・31244 ほか）。
+# **15回 とも、手を 1つ も置かずに次の周へ送られています。** 理由は毎回 同じ 2つ です:
+#   (i) 「人手の交渉が要る」（＝ オーナーの手 ＝ 後回し）
+#   (ii) 相場を **登録者 × ¥2〜5／件** で当てた（JOURNAL 75201）
+#        → 登録 35人 ＝ **¥175/件** ＝ 読むに値しない数が出る → 落ちる
+#
+# **(ii) が間違いです。** うちの資産は登録者ではなく**再生**です
+# （登録 35人 に対し 生涯 91,240回・いまも 700〜900回/日）。
+# ショート中心の口に付く案件は**再生で値が付きます**（登録で値を付けるのは長尺の紹介枠）。
+# **登録で当てたから 0 が出ただけで、測っていないのと同じです。**
+#
+# **この口が出す数**（**API 0単位**・`yen_now` と同じ台帳・同じ `form_yield`）:
+#
+#     再生/月       ＝ Σ_形（中央 再生/本 × 本/日）× 30       ← `yen_now` と同じ分子
+#     要る単価      ＝ 200,000円 ÷ 再生/月                    ← **円/回**
+#     倍率          ＝ 要る単価 ÷ 相場の帯
+#
+# **倍率ではなく「要る単価」を出すのが、この口の要点です。** 単価は人が相場と見比べられます。
+# 門の倍率（151倍）は見比べる相手がありません。
+#
+# **天井の側も同じ行で出します**: いまの 本/日 は日枠に絞られた数（ショート 1.27本/日）で、
+# **日枠が戻れば 6本/日** です（`studio/budget`）。**1本あたりを動かさずに 本/日 だけを
+# 天井まで上げた場合**の要る単価も出します —— この 2つ の差が、
+# 訊き `yt_quota_not_ours`（返事待ち）の**値打ちそのもの**です。
+#
+# **相場の帯は測っていません**（うちは 1件も受けていない）＝ `RPM_BAND` と同じ扱いで帯にします。
+# 金融・年金の族は広告主の単価がいちばん高い側なので、**帯の中段でも下振れの側に置きます**。
+#
+# **覆る条件**:
+#  (1) **1件でも実際の見積もり／成約が出たら、帯を捨ててその数で引き直すこと**
+#      （帯は `SPONSOR_YEN_PER_VIEW_BAND` の 1か所にしかありません）。
+#  (2) この行は **売れるとは言いません**。出すのは「いくらで売れれば届くか」だけです。
+#      相手が居るかは測れていません ＝ **この行の倍率が 1 を切っても、それは受注ではありません。**
+#  (3) `form_yield` の中央が動けば この単価も動きます（`yen_now` 覆る条件 (2) と同じ穴）。
+#  (4) **オーナーが「収益」の読み方に言葉を出したら、その言葉が正本**
+#      （`docs/REVENUE.md` 5.(5)）。「広告だけを数える」と言われたら、この行は畳むこと。
+#  (5) メンバーシップ / Super Thanks は**拡張YPP の門**の内側です。この行はその 2つ を
+#      出しません（門の内側 ＝ `rev_deadline` の側）。拡張YPP の距離を測る口が出来たら、
+#      この註の表をそちらから指すこと。
+# ---------------------------------------------------------------------------
+
+#: 企業案件の単価の帯（**円/回**・低/中/高）。**未測**（うちは 1件も受けていない）。
+#: `peers.RPM_BAND` と同じ扱い ＝ **帯はここ 1か所にしかありません**（写しを持たない）。
+SPONSOR_YEN_PER_VIEW_BAND = (0.5, 1.5, 3.0)
+
+#: 日枠（YouTube Data API 10,000単位/日）で出せるショートの本数の天井。
+#: **`studio/budget` の側の数で、ここは読むだけ**（1本 1650単位・測る側に 600 残す）。
+SPONSOR_DAILY_CAP_VIDEOS = 6.0
+
+#: 門を通る分子と、通らない分子（`CLAUDE.md` 2026-08-15 の 4つ）。
+GATED_FORMS = ("広告", "メンバーシップ", "Super Thanks")
+UNGATED_FORMS = ("企業案件",)
+
+
+def ungated_yen(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
+    """**門を通らない分子（企業案件）までの距離**（**API 0単位**・上の註）。
+
+    返り: `{"views_day", "views_month", "need_per_view",
+             "times": {level: 倍率}, "band": (低,中,高),
+             "cap": {"views_day","views_month","need_per_view","times"},
+             "goal": 200000, "gated": False}`
+
+    **`times` は「要る単価 ÷ 相場」** ＝ **1 以下なら相場の中で届く**という読みです
+    （`yen_now` の `times` は「円/月 の倍率」で、**向きが逆なので混ぜないこと**）。
+    """
+    from . import peers as _peers
+
+    goal = float(_peers.GOAL_YEN)
+    by = videos_by_form(rows, scripts_dir)
+    fy = form_yield(rows, scripts_dir)
+
+    views_day = 0.0
+    short_median = None
+    for form, vids in by.items():
+        mid = (fy.get(form) or {}).get("median")
+        if mid is None:
+            continue
+        views_day += float(mid) * _form_per_day(vids)
+        if form == "short":
+            short_median = float(mid)
+
+    def _case(v_day: float) -> dict:
+        v_month = v_day * YEN_DAYS_PER_MONTH
+        need = (goal / v_month) if v_month > 0 else None
+        times = ({lv: need / b for lv, b in zip(YEN_LEVELS, SPONSOR_YEN_PER_VIEW_BAND)}
+                 if need is not None else {})
+        return {"views_day": v_day, "views_month": v_month,
+                "need_per_view": need, "times": times}
+
+    out = _case(views_day)
+    # **天井**: 1本あたりを動かさず、ショートの 本/日 だけを日枠の天井まで上げた場合。
+    cap_day = views_day
+    if short_median is not None:
+        cur_short_per_day = _form_per_day(by.get("short") or [])
+        cap_day = views_day + short_median * max(0.0, SPONSOR_DAILY_CAP_VIDEOS - cur_short_per_day)
+    out["cap"] = _case(cap_day)
+    out.update({"band": SPONSOR_YEN_PER_VIEW_BAND, "goal": _peers.GOAL_YEN, "gated": False})
+    return out
+
+
+def ungated_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
+    """毎周 1行。**決めと覆る条件は上の註 ＝ ここへ決めを書かないこと。**"""
+    d = ungated_yen(rows, scripts_dir)
+    head = ("**門を通らない分子（企業案件）までの距離**（`CLAUDE.md` 2026-08-15「その中の何で"
+            "稼ぐかは開いています」の 4つ のうち **門の外は これ 1つ**・**API 0単位**・"
+            "`trend.ungated_yen`）: ")
+    if d["need_per_view"] is None:
+        return head + ("**再生/月 が引けません**（齢{:.0f}h 超の測り 0件）"
+                       "＝ **まず `measure` を撃つこと**".format(LPV_MIN_AGE_H))
+    t = d["times"]["中"]
+    c = d["cap"]
+    out = (head
+           + f"いまの 再生/月 **{d['views_month']:,.0f}回** ＝ **要る単価 ¥{d['need_per_view']:,.2f}/回** "
+             f"対 相場の帯 ¥{d['band'][0]}／**¥{d['band'][1]}**／¥{d['band'][2]} ＝ **{t:,.1f}倍**")
+    if c["need_per_view"] is not None and c["views_day"] > d["views_day"]:
+        out += (f"。**日枠が戻って ショート {SPONSOR_DAILY_CAP_VIDEOS:.0f}本/日 に上げると**"
+                f"（1本あたりは動かさない）再生/月 **{c['views_month']:,.0f}回** ＝ "
+                f"**要る単価 ¥{c['need_per_view']:,.2f}/回** ＝ **{c['times']['中']:,.1f}倍**"
+                f" —— **この差が 訊き `yt_quota_not_ours` の値打ちです**")
+    out += ("。**同じ周の `rev_deadline` の倍率は 広告の倍率**で、目標の倍率ではありません"
+            "（門を通る分子 " + "・".join(GATED_FORMS) + " の側）。"
+            "**この行は『売れる』とは言いません** —— 出すのは「いくらで売れれば届くか」だけです"
+            "（覆る条件 (2)）。**判定は立ったサブとオーナー。**")
+    return out
+
+
+def ungated_short(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
+    """`status` に置く短い形（`trend` の側が長い形を出す ＝ **同じ段落を 2度 読ませない**）。
+
+    **なぜ `status` にも要るか**: `yen_now_short` と同じ理由です ——
+    **固定2（期限内に届くか）は立った側がいちばん最初に答える問い**で、
+    そのとき最初に撃つのは `status` です。**この行はその答えを向きごと変えます**
+    （広告の 151倍 対 門の外の 1.0倍）＝ `trend` まで待たせると、
+    その周は「広告の倍率」で固定2 に答えてしまいます。
+
+    **決めと derivation は `ungated_yen` の註 ＝ ここへ数を写さないこと。**
+    """
+    d = ungated_yen(rows, scripts_dir)
+    if d["need_per_view"] is None:
+        return ""
+    c = d["cap"]
+    out = (f"**門の外の分子（企業案件）**: 要る単価 **¥{d['need_per_view']:,.2f}/回** "
+           f"対 相場の中段 ¥{d['band'][1]} ＝ **{d['times']['中']:,.1f}倍**")
+    if c["need_per_view"] is not None and c["views_day"] > d["views_day"]:
+        out += (f"（日枠が戻って {SPONSOR_DAILY_CAP_VIDEOS:.0f}本/日 なら "
+                f"**¥{c['need_per_view']:,.2f}/回 ＝ {c['times']['中']:,.1f}倍**）")
+    out += ("。**上の 円/月 の倍率は 広告の側**で、目標の倍率ではありません —— "
+            "稼ぎ方は 4つ 開いていて（`CLAUDE.md` 2026-08-15）、**門を通らないのは これ 1つ**。"
+            "**売れるとは言っていません**（derivation は `trend.ungated_yen`・**API 0単位**）")
+    return out

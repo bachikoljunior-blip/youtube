@@ -794,6 +794,14 @@ def cmd_status(a):
     yl = trend.yen_now_short(ledger_rows())
     if yl:
         print("  " + yl)
+    # **門の外の分子**（2026-09-18 14:xx・optimizer・Opus）—— すぐ上の行は `"gated": True`、
+    # ＝ **門を通った「あと」の数**です。オーナーが開けた稼ぎ方は 4つ で（`CLAUDE.md` 2026-08-15）、
+    # **門を通らないのは 1つ**（企業案件）。**その 1つ を、どの口も 1度も測っていませんでした。**
+    # この行が無いあいだ、固定2 は **広告の倍率**（151倍）で答えられていました。
+    # 決めと derivation は `trend.ungated_yen` の註（**API 0単位**・台帳だけ）。
+    ul = trend.ungated_short(ledger_rows())
+    if ul:
+        print("  " + ul)
     # **新しい本に配られる面**（2026-09-18 11:2x・optimizer・Opus）——
     # 上の円も再生も「出た後」の数で、**その手前に在る面（インプレッション）を
     # `status` は 1度も見ていませんでした**。実測 中央 **12回/本**・押された中央 **0**
