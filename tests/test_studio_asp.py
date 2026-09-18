@@ -100,3 +100,20 @@ def test_上限の中なら1字も落とさない():
     d = "本文\n" * 100
     out = asp.compose(d)
     assert d.strip() in out
+
+
+def test_入れ直しの蓋は実測で取る():
+    """推計（`budget.spent`）は台帳に `units` を書かない口を数えず、**必ず小さく出ます**。
+
+    2026-09-18 の実測: 推計 8,756 対 実測 9,126（差 370単位 ＝ 7本ぶん）。
+    推計だけで蓋を取ると「12本 撃てる」と出て、日枠を使い切ります
+    （`budget` の覆る条件 (1)「この行を信じて枠を使い切らないこと」）。
+    """
+    src = inspect.getsource(cli.cmd_asp)
+    assert "meter.spent(" in src
+    assert "max(est, real)" in src
+
+
+def test_入れ直しは台帳に印を残す():
+    """説明欄を**前に足す**形は前方一致では引けない（`cli.desc_appended` の覆る条件 (1)）。"""
+    assert '"redescribed"' in inspect.getsource(cli.cmd_asp)

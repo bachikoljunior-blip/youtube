@@ -2776,6 +2776,18 @@ def cmd_asp(a):
     rows = ledger_rows()
     if a.ids:
         ids = [x.strip() for x in a.ids.split(",") if x.strip()]
+    elif a.published:
+        # **公開ずみを再生の多い順に**（`yt.all_videos` 約32単位 ＝ 入れ直し 0.6本ぶん）。
+        # **台帳（`measured`）では選べません** —— 台帳に在るのは 58本 だけで、
+        # **きょう配られている新しい本ほど載っていません**（`measure` が追いつく前）。
+        # **再生の多い順に入れ直すのは、いちばん安い分子の作り方です**:
+        # 新しい 1本 を出すのは 1,650単位、入れ直しは 50単位（**1/33**）。
+        # `all_videos` の行は説明欄を持ち回らないので、**塊が入っているかはここでは見ません** ——
+        # 下の `yt.snippets`（1単位/50本）で引いた実物で 1本ずつ見送ります（`asp.has_block`）。
+        live = sorted(yt.published(), key=lambda v: -int(v.get("views") or 0))
+        ids = [v["id"] for v in live[:a.published]]
+        print(f"公開ずみ {len(live)}本 のうち 再生の多い順に {len(ids)}本 を相手にします"
+              f"（先頭 {live[0]['views']}回 → {live[min(len(live), a.published) - 1]['views']}回）")
     else:
         now = now_jst().isoformat(timespec="seconds")
         seen, ids = {}, []
@@ -2885,6 +2897,8 @@ def main(argv=None):
     # 既定の相手は「まだ公開していない予約」＝ **これから配られる側**（台帳から引く・0単位）。
     asp_p = sub.add_parser("asp")
     asp_p.add_argument("--ids", default="", help="video_id をコンマ区切りで名指し（既定は未公開の予約 全部）")
+    asp_p.add_argument("--published", type=int, default=0, metavar="N",
+                       help="公開ずみを**再生の多い順に N本**（`yt.all_videos` 約32単位。既定の予約の代わり）")
     asp_p.add_argument("--max", type=int, default=5, help="この回に撃つ本数の蓋（既定 5 ＝ 250単位）")
     asp_p.add_argument("--anyway", action="store_true", help="測る側の 600単位 を割り込んでも撃つ")
     asp_p.add_argument("--dry-run", action="store_true", help="入れる塊と相手だけ（**0単位**）")
