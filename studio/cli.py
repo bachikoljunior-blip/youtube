@@ -763,6 +763,11 @@ def channel_switch_line(ch: dict, rows: list[dict]) -> str:
 
 
 def cmd_status(a):
+    # **空きディスク**（`disk_line` の註・**API 0単位**）。**いちばん上に置くこと** ——
+    # 空きが無い周は `build` が 1行も出さずに落ちるので、**ほかのどの行より先に目に入る必要があります**。
+    dl = disk_line()
+    if dl:
+        print(dl)
     # **出たか**（`pubcheck` の註・**API 0単位**・oEmbed）。**`yt.channel()` より前に撃つ** ——
     # 日枠が尽きていると `channel()` で落ちる周があり、そこで落ちると
     # 「刻を過ぎたのに出ていない本」が**いちばん見たい周に限って**見えなくなる（2026-09-16 23:3x に踏んだ形）。
@@ -1608,6 +1613,58 @@ def next_long_slots(taken: list[dt.datetime], now: dt.datetime, n: int = 3) -> l
 def next_short_slots(taken: list[dt.datetime], now: dt.datetime, n: int = 3) -> list[dt.datetime]:
     """`SHORT_SLOTS` 側の口。**枠は上限であって床ではありません**（埋まらない枠は空のまま）。"""
     return next_slots(taken, now, n, SHORT_SLOTS)
+
+
+DISK_FLOOR_GB = 2.0
+#: **空きがこれを切ったら `status` がいちばん上で鳴る**（2026-09-18 15:0x・optimizer・Opus 5）。
+#: **2GB** は「長尺 1本 を焼き切れる」の目安（実測: `work/<id>` は 1本 200〜900MB）。
+#: **覆る条件**: (1) 2GB 在るのに焼きが `ENOSPC` で落ちた回が出たら、上げること。
+#: (2) 鳴っているのに 3周 とも焼きが通ったら、下げること（空振りは読む側の時間を食う）。
+
+
+def disk_line(path: str | None = None) -> str:
+    """**空きディスクが足りない周を、いちばん上で名指しする**（**API 0単位**・止めない）。
+
+    **なぜ在るか**（2026-09-18 15:0x に踏んだ実測）: `build` が **exit 1** で落ち、
+    出力は 1行も残りませんでした。原因は台本でも道具でもなく **`/` が 100%（空き 89MB）**です。
+    **どの門もこれを見ていませんでした** —— `lint` は通り、`critique` は輪を閉じ、
+    `status` の在庫は「出せる」と言い、**落ちたのは焼きの途中だけ**。
+    ＝ **「台本が悪いのか、道具が壊れたのか」を数時間 探せる形**でした。
+
+    **何が埋めたか**: `.claude/worktrees/` の**サブの作業場**です。**1周に 1つ 増えて、消えません**
+    （実測 2026-09-18: **55個・16GB**・いちばん古いのは 09/03 ＝ **15日ぶん**・1つ 約 560MB）。
+    **1周 約560MB × 1日 十数周 ＝ 1日 数GB** なので、**掃かないかぎり必ずまた埋まります。**
+
+    **掃くのは親の側です**（サブは自分の作業場の外を消せません ＝ この回に試して
+    permission で止まりました。**それでよい** —— 他のサブの未 push の作業を消す手だからです）。
+    **24時間 触られていない作業場だけが安全**です（親が畳んだあとの殻 ＝
+    値打ちの在る commit は push ずみ・`docs/spawn_prompt.md`「押していない分は親が畳まれると消える」）。
+
+    **覆る条件**: (1) この行が鳴っているのに焼きが 3周 とも通ったら `DISK_FLOOR_GB` を下げること。
+    (2) 親が掃く手を持ったら、この行は「掃いた数」を出す側へ変えてよい（鳴らす側は残すこと ——
+    掃く手が壊れた周に、これが最後の砦になります）。
+    """
+    import shutil
+    try:
+        u = shutil.disk_usage(path or str(common.ROOT))
+    except OSError:
+        return ""
+    free = u.free / 2**30
+    if free >= DISK_FLOOR_GB:
+        return ""
+    wt = common.ROOT.parent if common.ROOT.name.startswith("agent-") else common.ROOT / ".claude/worktrees"
+    n = 0
+    try:
+        n = sum(1 for d in wt.iterdir() if d.is_dir() and d.name.startswith("agent-"))
+    except OSError:
+        pass
+    return (f"**!! ディスクの空きが {free:.2f}GB です（{DISK_FLOOR_GB:.0f}GB を切りました）** ＝ "
+            f"**`build` は `exit 1` で、1行も出さずに落ちます**（2026-09-18 15:0x に踏んだ）。"
+            f"**台本や道具を疑う前に、ここを見ること。**"
+            + (f" いま `.claude/worktrees/` に**サブの作業場が {n}個**あります（1つ 約560MB・**1周 1つ 増えて消えない**）。"
+               if n else "")
+            + " **掃くのは親**（サブは自分の外を消せません）＝ **24時間 触られていない作業場だけ**"
+            " （親が畳んだあとの殻・値打ちの在る commit は push ずみ）。`disk_line` の註")
 
 
 def pubcheck_line(now: dt.datetime | None = None) -> str:
