@@ -144682,3 +144682,31 @@ Reporting API だけの窓を 09/21 09:00〜10:00 に 1つ 足す（畳んだ本
  4. 残り（触っていません）: `critique` の輪 未閉（コマ8）／報告は停止のまま（403・窓【4】）／視聴者コメント 未返信 1件（`DSZfGUQ_NyQ`）／
     handle はオーナーの手（**09/21 06:31 まで題は触らない**）／旧手法側の赤 2件 は既知。在庫 13本（うち焼き直し 10本）。
  5. オーナーの窓: **09/19 09:00〜10:00**（4件・【2】が差し替わった）・**09/19 20:00〜21:00**（増枠）。
+
+### 焼き直しの実測（`build` → `hear`・10本・API 0単位）
+
+    本                                            秒    build  hear  コマ10（出口）
+    2026-09-20-taishokukin-2000man-20nen-short    90.3  0      1     OK
+    2026-09-20-taishokukin-2000man-25nen-short    88.8  0      0     OK
+    2026-09-20-taishokukin-2000man-31nen-short    89.3  0      1     OK
+    2026-09-20-taishokukin-2000man-35nen-short    82.7  0      1     OK
+    2026-09-20-taishokukin-2000man-38nen-short    75.6  0      0     OK
+    2026-09-21-kuriage-60sai-short                85.7  0      1     OK
+    2026-09-21-kuriage-61sai-short                90.3  0      1     OK
+    2026-09-21-kuriage-62sai-short                90.3  0      1     OK
+    2026-09-21-kuriage-63sai-short                91.4  0      1     OK
+    2026-09-21-kuriage-64sai-short                89.3  0      1     OK
+
+`hear` の `[!]`（本ごと）:
+    2026-09-20-taishokukin-2000man-20nen-short: [!] 予定「え」→ 聞こえた「へ」が コマ2・10 の 2か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の 
+    2026-09-20-taishokukin-2000man-25nen-short: [!] 予定「え」→ 聞こえた「へ」が コマ6・8 の 2か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の (
+    2026-09-20-taishokukin-2000man-35nen-short: [!] 予定「ん」→ 聞こえた「」が コマ1・2 の 2か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の (1
+    2026-09-20-taishokukin-2000man-35nen-short: [!] 予定「え」→ 聞こえた「へ」が コマ4・7 の 2か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の (
+    2026-09-21-kuriage-60sai-short: [!] 予定「ん」→ 聞こえた「」が コマ1・4・6 の 3か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の 
+    2026-09-21-kuriage-61sai-short: [!] 予定「」→ 聞こえた「お」が コマ1・3・5 の 3か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の 
+    2026-09-21-kuriage-61sai-short: [!] 予定「」→ 聞こえた「う」が コマ5・6 の 2か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の (1
+    2026-09-21-kuriage-63sai-short: [!] 予定「え」→ 聞こえた「へ」が コマ1・6 の 2か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の (
+    2026-09-21-kuriage-63sai-short: [!] 予定「」→ 聞こえた「お」が コマ3・5 の 2か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の (1
+    2026-09-21-kuriage-64sai-short: [!] 予定「」→ 聞こえた「う」が コマ4・6 の 2か所 ＝ **同じ本で散らずに重なった ＝ TTS 側を先に疑うこと**（whisper の癖はコマをまたいで散る・hear.near_repeats の註）。その語を §2 の (1
+
+**`hear exit` が 0 でない本の `!!` は、本文（コマ1〜9）の側に前からある whisper の桁の取りこぼし**（前の周が「hear 済」と判断した当のもの・`[落ち] → 音は台本どおり`）。**この周は本文を 1字も触っていない**ので、その判断を引き継ぐ。
