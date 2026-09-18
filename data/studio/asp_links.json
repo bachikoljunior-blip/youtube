@@ -11,6 +11,17 @@
       "cookie_days": 90,
       "youtube_ok": true,
       "at": "2026-09-18T20:2x+09:00"
+    },
+    {
+      "id": "fp_no_madoguchi",
+      "advertiser": "FPの窓口｜中立FPによる保険の相談窓口",
+      "asp": "もしもアフィリエイト",
+      "url": "https://af.moshimo.com/af/c/click?a_id=5809176&p_id=5352&pc_id=14603&pl_id=69702",
+      "reward": "成果 5,000円（FP相談ご予約受付フォームの送信完了）",
+      "click_only": false,
+      "cookie_days": 90,
+      "youtube_ok": true,
+      "at": "2026-09-18T20:2x+09:00"
     }
   ]
 }
