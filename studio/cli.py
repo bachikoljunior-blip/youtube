@@ -1566,6 +1566,22 @@ def cmd_schedule(a):
 #   (4) 上の 09/15 の「閉じた本が枠で 3〜4日 座る」は**本当に起きた欠陥**です ——
 #   1枠 に戻したこの形でまた座ったら、畳むのは枠ではなく**焼く速さ**の側
 #   （`schedule --force` で同じ日に 2本目 を置けます）。
+#
+# **【2026-09-19 01:5x・optimizer・Opus・1周1体】上の「719回 対 1回」は 357倍 でした。**
+#   **決めは変えていません**（`LONG_SLOTS` は 1枠 のまま。**向きは同じ**）。
+#   直したのは**分母の読み方**だけです。同じ回に `form_yield` の齢の門を**帯**（24〜96h）に
+#   しました —— もとは下端だけで、1本 につき「齢 24h 以上の**最後の行**」を採っており、
+#   **形ごとに測った刻が違っても同じ表に並んでいました**。
+#   この回に同じ台帳を `measure` の前後で引いて割れています:
+#       measure の前  長尺の最後の行は 齢 4〜45h（中央 1回）  → **719倍**
+#       measure の後  同じ 8本 が 齢 28〜78h（中央 2回）      → **357倍**
+#   **本も再生も変わっていません。変わったのは測った刻だけです**（実物 `uc0SceBfoxQ` は
+#   台帳 2回 → 実測 234回。`status` が「台帳の最大より +217回」と鳴らしていた当の本）。
+#   いまの字は **short 714回（測 11本・齢の中央 95h） 対 long 2回（測 8本・齢の中央 53h）**で、
+#   **齢がまだ 1.8倍 ずれているので「この倍率は上端」の札が付きます**（`FORM_AGE_SKEW_X`）。
+#   **719 / 718 / 1 を字で持たないこと** —— `form_priority_line` は
+#   `_form_gap_phrase()` でそのつど `form_yield` から引きます。
+#   derivation と覆る条件は `studio/trend.form_yield` の註・`docs/JOURNAL.md` 同刻。
 LONG_SLOTS = ("19:00",)
 # ショートの枠（**1日に複数**。同じ 2026-09-17 19:xx の決め）。
 # 5枠 は `src/day_cap.py` の実測（再生が付く上限 **10本/日**）の半分で、
@@ -1699,8 +1715,10 @@ def long_slot_line(vids: list[dict], now: dt.datetime) -> str:
     # **枠は上限であって床ではありません**（埋まらない枠は空のままでよい・`SHORT_SLOTS` の註）。
     shorts = next_short_slots(taken, now, n=3)
     if shorts:
-        out.append("次のショートの枠（空いている順・`SHORT_SLOTS`・**いま 1本あたり再生は"
-                   "こちらが上です** ＝ `trend` の `form_yield_line`）: "
+        out.append("次のショートの枠（空いている順・`SHORT_SLOTS`・**1本あたり再生の比べは"
+                   "`trend` の `form_yield_line` を読むこと** —— **この行は数を持ちません。**"
+                   "齢の帯（24〜96h）でそろえた比べと、齢がずれているときの札は、あちらが出します"
+                   "＝ 2026-09-19 01:5x・`trend.form_yield` の註）: "
                    + "・".join(f"{s:%m/%d %H:%M}" for s in shorts))
     return "\n".join(out)
 
@@ -3243,6 +3261,28 @@ def day_upload_cap() -> int:
     return max((budget.DAY_UNITS - budget.RESERVE) // budget.UPLOAD_UNITS, 0)
 
 
+def _form_gap_phrase() -> str:
+    """**1本 長尺を座らせると何回 捨てるか**を、そのつど `trend.form_yield` から引く。
+
+    引けない回（齢の帯の中で片側が `trend.FORM_MIN_N` 未満）は**数を出しません** ——
+    そこで字の数に戻すと、`form_yield` を帯にした意味が消えます（上の註）。
+    """
+    try:
+        d = trend.form_yield(ledger_rows())
+        s, l = d.get("short"), d.get("long")
+        if (s and l and s["n_measured"] >= trend.FORM_MIN_N
+                and l["n_measured"] >= trend.FORM_MIN_N
+                and s["median"] is not None and l["median"] is not None):
+            return (f"1本 座るたび **{s['median'] - l['median']:,.0f}回/日** を捨てます ＝ "
+                    f"`trend.form_yield_line` の {s['median']:,.0f}回 対 {l['median']:,.0f}回"
+                    f"（齢 {trend.LPV_MIN_AGE_H:.0f}〜{trend.FORM_AGE_MAX_H:.0f}h の帯）")
+    except Exception:       # noqa: BLE001 —— この行のために周を止めない
+        pass
+    return ("**捨てる回数は、いま引けません** —— 齢をそろえた比べが台帳に 1つ もありません "
+            "＝ 「長尺のほうが低い」は**まだ測れていない**ことであって、測って出た差ではありません"
+            "（`trend.form_yield` の覆る条件・**この一文を数に置き換えないこと**）")
+
+
 def form_priority_line(ok: list[str], forms: "dict[str, str]") -> str:
     """**在庫のうち、きょうの口をどちらの形で埋めるか**（**API 0単位**・`status` の在庫の行の下）。
 
@@ -3257,6 +3297,13 @@ def form_priority_line(ok: list[str], forms: "dict[str, str]") -> str:
 
     **この行は止めません** —— 出す順を選ぶのは、立った側です（オーナー 2026-09-06 14:0x
     「親が判断すんじゃなくて、サブが判断する」）。**数を目に入れるだけ**です。
+
+    **捨てる回数は、毎回 `trend.form_yield` から引くこと**（2026-09-19 01:5x に直した）——
+    もとは **719 / 718 / 1 を字で埋め込んでいました**。同じ回に `form_yield` の齢の門が
+    **帯**になり、同じ 8本 の倍率が 719 → 約 350 に動いています（本も再生も変わっていない ＝
+    変わったのは測った刻だけ。derivation は `trend.form_yield` の註）。
+    **字で置いた数は、下の関数が直っても直りません。** 引けない回は、
+    **数を出さずに「そろっていない」と言うこと**（`form_yield` が倍率を伏せる回と同じ答え）。
     """
     cap = day_upload_cap()
     if not ok or not cap:
@@ -3268,8 +3315,8 @@ def form_priority_line(ok: list[str], forms: "dict[str, str]") -> str:
     if len(short) >= cap:
         return (f"    **形の順**: 上げられるのは **1日 {cap}本** で、ショートの在庫は **{len(short)}本** "
                 f"＝ **{cap}本 ともショートで埋まります。長尺 {len(long_)}本 は座らせないこと** "
-                f"（1本 座るたび **718回/日** を捨てます ＝ `trend.form_yield_line` の 719回 対 1回・"
-                "決めと覆る条件は `docs/METHOD.md` §5 2026-09-19 00:3x）")
+                f"（{_form_gap_phrase()}・"
+                "決めと覆る条件は `docs/METHOD.md` §5 2026-09-19 00:3x と 01:5x）")
     return (f"    **形の順**: 上げられるのは **1日 {cap}本**・ショートの在庫は **{len(short)}本** "
             f"＝ **余る {cap - len(short)}本 が長尺の口**です（ショートを先に置くこと・"
             "`docs/METHOD.md` §5 2026-09-19 00:3x）")
