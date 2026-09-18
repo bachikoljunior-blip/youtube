@@ -6881,3 +6881,9 @@
 {"day": "2026-09-16", "start": "2026-08-29", "studio": true, "views": 879, "marks": {"p10": 1.006, "p25": 0.773, "p50": 0.612, "p75": 0.524, "p95": 0.473}, "at": "2026-09-19T04:04:40+09:00", "id": "4l3DDCLIRxg", "event": "analytics_curve"}
 {"day": "2026-09-16", "start": "2026-08-29", "studio": true, "views": 277, "marks": {"p10": 0.781, "p25": 0.505, "p50": 0.343, "p75": 0.241, "p95": 0.179}, "at": "2026-09-19T04:04:41+09:00", "id": "gv1u7n_pCAQ", "event": "analytics_curve"}
 {"day": "2026-09-16", "start": "2026-08-29", "studio": true, "views": 251, "marks": {"p10": 0.761, "p25": 0.451, "p50": 0.336, "p75": 0.257, "p95": 0.204}, "at": "2026-09-19T04:04:41+09:00", "id": "Ws32ZrBAuFQ", "event": "analytics_curve"}
+{"cmd": "status", "at": "2026-09-19T04:12:59+09:00", "id": "-", "event": "quota_exceeded"}
+{"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T04:13:51+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T04:14:15+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"cmd": "status", "at": "2026-09-19T04:17:46+09:00", "id": "-", "event": "quota_exceeded"}
+{"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T04:17:55+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"subs": 39, "title": "カワウソの年金計算室", "handle": "お金と仕事の教科書", "exact": true, "src": "public_page", "at": "2026-09-19T04:18:14+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}

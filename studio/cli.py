@@ -776,6 +776,65 @@ def channel_switch_line(ch: dict, rows: list[dict]) -> str:
             " ＝ この口の `schedule`／`measure` はこちらのチャンネルへ向きます・台帳の本はもう一方の側（GOAL (4-f)・判定は hourly とオーナー）")
 
 
+def zero_unit_lines(rows: "list[dict]", with_shippable: bool = True) -> "list[str]":
+    """**Data API を 1単位 も撃たずに出せる `status` の行**（台帳と報告の台帳だけ）。
+
+    **なぜ足したか**（2026-09-19 04:xx・optimizer・Opus・1周1体。踏んだのはこの周）:
+    `cmd_status` は `yt.channel()` が 403 で落ちた回、**その場で `return` していました** ——
+    註は「ここから先はどの行も Data API を引くので」と書いていましたが、**それは本当ではありません**。
+    落としていた行のうち **7行 は自分の註に「API 0単位」と書いてある**（台帳と報告の台帳だけを読む）:
+    `channel_line_short` ／ `yen_now_short` ／ `ungated_short` ／ `perf_short` ／
+    `trial_reach_short` ／ `watched_short` ／ `shippable_line`。
+
+    **値段**: 落ちるのは日枠が尽きた回**だけ**で、日枠が尽きるのは **16:00 JST までの丸ごと**です。
+    この周（09/19 04:1x）から戻り（16:00）まで **約12周** が、
+    **METHOD §5 が「周の手はまず見ろ」と名指しした「出せる在庫」の行を 1度も見ずに**立ちます
+    ——そして「出せない周」は**まさに在庫を焼いておく周**です（`shippable_line` の註が
+    「窓が開く前の周が焼き直しておけます」と書いた当の形）。
+    実測: この周の `status` は **13行** で畳まれ、在庫 8本（ショート 5・長尺 3）は 1行 も出ませんでした。
+    **固定2（期限内に届くか）に答えるための `yen_now_short`（58倍）も落ちていました。**
+
+    **なぜ関数にしたか**: 同じ 7行 を 2か所（通る周・落ちる周）に書くと、片方だけ直る。
+    **順は通る周のまま**（上から円→門の外→面→在庫）＝ 読む側が 2つ の並びを覚えなくてよい。
+
+    **覆る条件**:
+     (1) ここに挙げた関数のどれかが Data API を引くようになったら、この一覧から外すこと
+         （見分け方は註の「**API 0単位**」の字・`meter` の実測が本当の出どころ）。
+     (2) 落ちる周でだけ要る行（例: 日枠が尽きた理由）を足したくなったら、この関数ではなく
+         呼ぶ側に置くこと ＝ この関数は「**どちらの周でも同じ意味を持つ行**」だけ。
+     (3) **通る周（`cmd_status` の本体）に 0単位 の行を足したら、ここにも足すこと。**
+         `tests/test_studio_zero_unit_lines.py` が**両方向**で数えます
+         （本体に在ってここに無い＝落ちる周が見落とす／ここに在って本体に無い＝二重印字）。
+         **この関数を本体側の印字に置き換えなかったのは**、本体の並びの註（1行ごとの derivation の宛先）を
+         動かすと `cmd_status` の源を読む検査 4件 の当てが外れるからです ＝ 源はそのまま、検査で縛りました。
+    """
+    out: "list[str]" = []
+    for fn in (trend.channel_line_short, trend.yen_now_short,
+               trend.ungated_short, trend.perf_short):
+        try:
+            s = fn(rows)
+        except Exception as e:      # noqa: BLE001  台帳の形が違う回でも `status` を止めない
+            s = f"**{fn.__name__}**: 読めませんでした（{e.__class__.__name__}: {e}）"
+        if s:
+            out.append("  " + s)
+    for fn in (reporting.trial_reach_short, reporting.watched_short):
+        try:
+            s = fn()
+        except Exception as e:      # noqa: BLE001  報告の台帳が無い回でも `status` を止めない
+            s = f"**{fn.__name__}**: 読めませんでした（{e.__class__.__name__}: {e}）"
+        if s:
+            out.append("  " + s)
+    # **出せる在庫**（`shippable_line` の註・**API 0単位**）。
+    # 通る周では「枠」の行と隣り合わせにしたいので**そちらでは呼ばない** —— ここでは
+    # 枠の行（`long_slot_line` は `yt.all_videos()` が要る ＝ この周には出せません）が無いぶん、
+    # **在庫だけでも見えることのほうが大きい**（上の「値段」の段）。
+    if with_shippable:
+        shl = shippable_line(rows)
+        if shl:
+            out.extend("  " + x for x in shl.splitlines())
+    return out
+
+
 def cmd_status(a):
     # **空きディスク**（`disk_line` の註・**API 0単位**）。**いちばん上に置くこと** ——
     # 空きが無い周は `build` が 1行も出さずに落ちるので、**ほかのどの行より先に目に入る必要があります**。
@@ -806,8 +865,13 @@ def cmd_status(a):
             ledger("channel", pub["id"], subs=pub["subscriberCount"],
                    title=pub.get("title"), handle=pub.get("handle"),
                    exact=pub["exact"], src="public_page")
-        # ここから先はどの行も Data API を引くので、この周はここで畳みます
-        # （**目盛りは上で残っています** ＝ 落ちる前と違い、周は無駄になりません）。
+        # **ここから先の「全部」が Data API を引くわけではありません**（2026-09-19 04:xx に踏んだ）——
+        # 台帳と報告の台帳だけで出る 7行 は、日枠が尽きた周こそ要ります
+        # （在庫を焼いておくのは、出せない周だから）。**決めと値段は `zero_unit_lines` の註。**
+        for _l in zero_unit_lines(ledger_rows()):
+            print(_l)
+        # Data API が要る行（`all_videos`／`today_lineup`／`readiness`／`published`／
+        # `viewer_comments`）だけを畳みます。**目盛りは上で残っています。**
         return
     vids = yt.all_videos()
     sids = studio_video_ids()
