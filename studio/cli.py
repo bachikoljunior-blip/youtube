@@ -2843,23 +2843,96 @@ def rename_pending(rows: list[dict]) -> bool:
     return bool(m) and m.group(1) != RENAME_TARGET
 
 
+# ---- 出た本に、成果報酬の塊がまだ置かれていない（**台帳だけ・API 0単位**） ----
+# **2026-09-19 07:xx・optimizer・Opus 5・ultracode。なぜ足したか（この回に数えた数）**:
+#
+# 齢の表（`data/studio/ledger.jsonl` の `measured` 65本）で、**ショートは生涯の再生の
+# 93〜100% を最初の 48h に受け取ります**（`vum9GV8Sp6c` 1,191回@30h → 1,219回@63.6h ＝ 97.7%）。
+# ＝ **公開の瞬間に塊が無い本は、生涯の 9割 を成果報酬 0 のまま配り終えます。**
+#
+# **50単位 あたり何回 届くか**（この回に台帳から数えた・**順はこの数で決まっています**）:
+#
+#     若い本（齢 48h 以内）  1本 50単位 で これから来る **約900回** ＝ **1,800回/100単位**
+#     古い本（48h を過ぎた）  54本 合計 **47回/日** ＝ 残り85日 で 約4,000回。
+#                            2,700単位 で割って **148回/100単位**
+#     （比べ）本を 1本 上げる  1,650単位 で 約900回 ＝ **55回/100単位**
+#
+# **＝ 古い本への置き直しも、本を上げるより 2.7倍 効率が良い。**
+# **「古いから捨てる」ではありません** —— 捨てるのではなく**後ろに並べます**。
+# 若い本が 12倍 先なので、この口は **新しい順**（`cmd_cta` の既定「再生の多い順」＝
+# もう配り終えた側が先 とは逆）。古い側は `cmd_cta` の日枠の蓋が許す端から順に片づきます
+# （1日の余り ＝ 10,000 −（5本 × 1,650 ＋ 読み 約1,300）≒ **450単位 ＝ 9本/日**）
+# **＝ 本を 1本 も減らさずに、6日 で back catalog が終わります。**
+#
+# **覆る条件（数）**: `trend.hold` の 48h の割合の中位が 80% を切ったら、上の 1,800回 は多すぎます。
+#
+# **既に 2つ 在ったのに、届いていませんでした**:
+#   `cta_gap_line`（`status` の中）  `yt.published()` が要る ＝ **日枠が尽きた周では落ちます**。
+#                                    塊を置き忘れるのは、まさにその周です
+#   `cli cta`                        **その回が思い出したときだけ**撃つ手
+# **＝ 「撃て と書く手はもう 3度 効かなかった」**（`for_owner.py` 冒頭の註と同じ形）。
+# だから **台帳だけで数え、`catchup` の 1コマンドに載せます** —— 日枠が尽きていても数えられ、
+# 戻った周の最初の 1コマンドで撃たれます。
+#
+# **覆る条件**:
+#  (1) `cta --check` の「消えた」が 2周 続けて出たら、置くのをやめること
+#      （YouTube 側がリンクを落としている ＝ `studio/asp.py` の覆る条件 (2)）。
+#  (2) 置いた本と置いていない本で 24h の中央が**変わらない**まま 10本 たまったら、
+#      効いているのは塊ではないので、**この節ではなく当てている案件**を疑うこと。
+#  (3) `cta_comment_failed` が同じ本で `CTA_FAIL_CAP` 回 出たら、その本はもう数えません
+#      （**50単位 を毎周 捨てないため**）。
+CTA_FAIL_CAP = 2
+#: 1回の `catchup` で置く上限（**5本 ＝ 250単位** ＝ `SHORT_SLOTS` 1日ぶん）。
+CTA_CATCHUP_MAX = 5
+
+
+def cta_pending(rows: list[dict], now: dt.datetime | None = None,
+                skip: "set[str] | None" = None) -> list[str]:
+    """**刻を過ぎたのに、コメント欄の塊がまだ無い本**（新しい順・**API 0単位**・台帳だけ）。
+
+    新しい順なのは、上の註の 48h —— **これから再生が来る側が先**です
+    （`cmd_cta` の既定は「再生の多い順」＝ もう配り終えた側が先に来ます）。
+    """
+    now = now or now_jst()
+    placed = {r.get("video_id") for r in rows if r.get("event") == "cta_comment"}
+    gone = {r.get("video_id") or r.get("id") for r in rows if r.get("event") == "comment_gone"}
+    fails: dict[str, int] = {}
+    for r in rows:
+        if r.get("event") == "cta_comment_failed" and r.get("video_id"):
+            fails[r["video_id"]] = fails.get(r["video_id"], 0) + 1
+    skip = set(skip or ())
+    out = []
+    for vid, sid, at, title in pubcheck.overdue(rows, now):
+        if vid in placed or vid in gone or vid in skip:
+            continue
+        if fails.get(vid, 0) >= CTA_FAIL_CAP:
+            continue
+        out.append((at, vid))
+    return [v for _, v in sorted(out, reverse=True)]
+
+
 def catchup_line(rows: list[dict], now: dt.datetime | None = None) -> str:
     """**詰まっている手が在るか**の 1行（**API 0単位**・`cmd_catchup` の註）。
 
     `status` の**いちばん上**（`yt` を撃つ前）で出すこと —— この行がいちばん要るのは
     日枠が尽きた周で、そこでは `yt.channel()` から先が落ちます。
     """
-    bad = pubcheck.missing(rows, now or now_jst())
+    now = now or now_jst()
+    bad = pubcheck.missing(rows, now)
+    # **出ていない本には置けません**（コメント欄がまだ無い）＝ 相手から外す。
+    cta = cta_pending(rows, now, skip={b["video_id"] for b in bad})[:CTA_CATCHUP_MAX]
     wm = not any(r.get("event") == "watermark_set" for r in rows)
     rn = rename_pending(rows)
-    if not bad and not wm and not rn:
+    if not bad and not cta and not wm and not rn:
         return "**詰まった手（`catchup`・API 0単位で数えた）**: 0件"
-    what = ([f"出ていない本 {len(bad)}本"] if bad else []) + (["透かし 未"] if wm else []) \
+    what = ([f"出ていない本 {len(bad)}本"] if bad else []) \
+        + ([f"**コメント欄の一手 未 {len(cta)}本**"] if cta else []) \
+        + (["透かし 未"] if wm else []) \
         + ([f"題 未（`{RENAME_TARGET}`）"] if rn else [])
     return (f"**詰まった手 {'・'.join(what)}** ＝ 日枠が戻ったら "
             f"`python -m studio.cli catchup`"
-            f"（**約{1 + len(bad) * 51 + (50 if wm else 0) + (52 if rn else 0)}単位**・安い順・"
-            f"1,650単位 の `schedule --replace` は撃ちません）")
+            f"（**約{1 + len(bad) * 51 + len(cta) * 50 + (50 if wm else 0) + (52 if rn else 0)}単位**"
+            f"・安い順・1,650単位 の `schedule --replace` は撃ちません）")
 
 
 def cmd_catchup(a):
@@ -2908,16 +2981,18 @@ def cmd_catchup(a):
     now = now_jst()
     rows = ledger_rows()
     bad = pubcheck.missing(rows, now)
+    cta = cta_pending(rows, now, skip={b["video_id"] for b in bad})[:CTA_CATCHUP_MAX]
     done_wm = any(r.get("event") == "watermark_set" for r in rows)
     rn = rename_pending(rows)
     print(f"catchup（安い順・**判定はしません**）: 出ていない本 {len(bad)}本・"
+          f"コメント欄の一手 未 {len(cta)}本・"
           f"透かし {'置いてある' if done_wm else '**未**'}・"
           f"題 {'打ってある' if not rn else f'**未**（`{RENAME_TARGET}`）'}")
-    if not bad and done_wm and not rn:
+    if not bad and not cta and done_wm and not rn:
         print("  撃つものがありません（**0単位**）")
         return 0
     if getattr(a, "dry_run", False):
-        print(f"  [dry-run] 撃てば 約{1 + len(bad) * 51 + (0 if done_wm else 50) + (52 if rn else 0)}単位"
+        print(f"  [dry-run] 撃てば 約{1 + len(bad) * 51 + len(cta) * 50 + (0 if done_wm else 50) + (52 if rn else 0)}単位"
               f"（**いまは 0単位**）")
         return 0
     ch = yt.channel()                      # **1単位**。尽きていれば ここで 403 ＝ `main()` が受ける
@@ -2941,6 +3016,16 @@ def cmd_catchup(a):
     if len(bad) > len(slots):
         print(f"  !! 空き枠が {len(slots)}個 しかありません（出ていない本 {len(bad)}本）"
               f" ＝ 残りは次の周（`LONG_SLOTS` は {'/'.join(LONG_SLOTS)}）")
+    # **透かしより先**（2026-09-19 07:xx の決め・上の `cta_pending` の註）。
+    # 安い順では同じ 50単位 ですが、**向きが違います** ——
+    # 透かしが増やすのは 登録（扉(a)）で、**実測 0.67人/日 ＝ 1,000人 まで 約1,460日**（期限の外）。
+    # コメント欄の塊が触るのは**門の外の分子**で、`trend.rev_deadline` が
+    # 「期限の中で 1 を切りうる」と数えている ただ 1本 の腕です。
+    # **そして相手は 48h で消えます**（上の註）—— 透かしの相手は消えません。
+    if cta:
+        print(f"  コメント欄の一手（**新しい順**・{len(cta)}本 ＝ {len(cta) * 50}単位）")
+        cmd_cta(argparse.Namespace(ids=",".join(cta), max=len(cta), anyway=False,
+                                   dry_run=False, check=False))
     if not done_wm:
         cmd_watermark(argparse.Namespace(offset_ms=15000, dry_run=False))
     if rn:

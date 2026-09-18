@@ -8779,6 +8779,49 @@ def slot_value_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
 #      （いまは 3桁 なので、近似の幅では向きが変わりません）。
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# **【2026-09-19 07:xx】上の覆る条件 (1) は、期限を見ていませんでした**
+# （optimizer・Opus 5・ultracode・**API 0単位**・この回に数え直した）
+#
+# (1) は「**在庫 ≦ 枠/日**（13本 対 5本/日）なら枠が縛る」と書いています。
+# **この問いは「きょう」しか見ていません。** 在庫 13本 は 2.6日ぶんなので、
+# きょうの答えは「枠は余っている ＝ 周が縛る」で正しい。
+# **ところが期限は 85日 あり、そちらで数えると答えが入れ替わります**:
+#
+#     吸える枠   85日 × `SLOTS_PER_DAY` 5本  ＝ **425本**（**日枠 10,000 が天井** ——
+#                6本目 は `videos.insert` 9,600 ＋ 読み 約1,300 で入りません）
+#     書ける周   85日 × **13周/日**（`data/studio/scripts` を触った commit の**中位** ——
+#                09/15 35・09/16 12・09/17 14・09/18 11。35 は積み戻しの外れ値なので中位）
+#                ＝ **1,105周**
+#     要る周     425本 × **0.7周/本** ＝ **298周**
+#     ------------------------------------------------------------------
+#     **298 / 1,105 ＝ 27%**  ＝ **書く周の 73% は、本を 1本 も増やせません**
+#
+# **＝ 「short は ¥1,960/周 だから周を short に注げ」は、27% までしか成り立ちません。**
+# 28%目 の周が書いた本には座る枠が無く、限界の値打ちは **¥1,960 ではなく ¥0** です
+# （在庫が伸びるだけ。いまの在庫 13本 は、既にその 2.6日ぶん）。
+#
+# **残りの 73% が触れるのは、本数ではなく「枠 1つ の値打ち」のほうだけです**:
+# 再生/本 ・ 押される率 ・ 成約率 ・ **枠の天井そのもの**（増枠の申請 ＝ 09/19 20:00 の窓）。
+# **この段は、そのどれを選べとも言いません**（判断は立ったサブ・09/06 14:0x）——
+# **「周を注いでも本が増えない所から先が在る」ことを、数で見えるようにするだけ**です。
+#
+# **覆る条件**:
+#  (6) **日枠が増えたら**（申請が通ったら）`SLOTS_PER_DAY` が動き、27% は上がります
+#      （`budget.DAY_UNITS` と同じ所を見ること。**写しを持たないこと**）。
+#  (7) **`周/本` が下がったら**（道具が育ったら）27% は下がります ＝ **余る側がもっと増えます**。
+#      「速く書けるようになった」は「もっと書け」ではありません。
+#  (8) **在庫が 0 に近づいたら**（出す側が書く側を追い越したら）、この段は役目を終えます ——
+#      判定は `lap_value()["_lap"]["write_share"]`（**門は 1か所**）。1.0 以上 ＝ 周が縛る。
+#  (9) **13周/日 は 4日 の中位です。** 親の間隔が変われば動きます（覆る条件 (2) と同じ所）。
+# ---------------------------------------------------------------------------
+
+#: 期限（オーナー 2026-09-13 20:0x「達成期限3ヶ月」＝ 09/13 から 3か月）。
+LAP_DEADLINE = "2026-12-13"
+#: 書く周が 1日 に何回 立つか（`LAP_SCRIPTS_REL` を触った commit の**日ごとの中位**）。
+#: **写しではありません** —— `lap_per_day()` が git から数え直します。
+LAP_PER_DAY_FALLBACK = 13.0
+
 #: 周を数える台帳（この下の file を触った commit を 1周 と数える）。
 LAP_SCRIPTS_REL = "data/studio/scripts"
 #: 数え始める日（**両方の形が同じ台帳に並び始めた日**。これより前は `form` を持たない本ばかりで、
@@ -8870,6 +8913,70 @@ def lap_cost(since: str = LAP_SINCE, scripts_dir: "Path | None" = None) -> dict:
     return out
 
 
+def lap_per_day(since: str = LAP_SINCE) -> "float | None":
+    """**書く周が 1日 に何回 立つか**（日ごとの commit 数の**中位**）。**API 0単位**・git だけ。
+
+    **中位なのは 09/15 が 35周（積み戻し）で、平均だと 1日 が全部を決めるから**です
+    （09/15 35・09/16 12・09/17 14・09/18 11 → 平均 18.0・中位 **13.0**）。
+    **きょうの分は数えません**（まだ終わっていない日を中位に混ぜると下へ引かれます）。
+    git が引けなければ None（呼ぶ側が `LAP_PER_DAY_FALLBACK` へ倒します）。
+    """
+    from . import common as _c
+    try:
+        raw = _c.run(["git", "log", "--pretty=format:@@@ %ad", "--date=format:%Y-%m-%d",
+                      "--name-only", "--", LAP_SCRIPTS_REL], cwd=str(_c.ROOT)).stdout
+    except Exception:                                   # noqa: BLE001 —— 止めない
+        return None
+    today = now_jst().strftime("%Y-%m-%d")
+    per: dict[str, int] = {}
+    at, files = "", set()
+
+    def _close():
+        if files and at >= since and at != today:
+            per[at] = per.get(at, 0) + 1
+
+    for ln in raw.split("\n"):
+        if ln.startswith("@@@ "):
+            _close()
+            at, files = ln[4:].strip(), set()
+        elif ln.strip():
+            files.add(ln.strip())
+    _close()
+    if not per:
+        return None
+    v = sorted(per.values())
+    n = len(v)
+    return float(v[n // 2]) if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0
+
+
+def slot_saturation(rows: list[dict], scripts_dir: "Path | None" = None,
+                    now: "dt.datetime | None" = None) -> dict:
+    """**期限までの枠を埋めるのに、書く周の何割 が要るか**（**API 0単位**・上の【07:xx】の註）。
+
+    返り: `{"days","slots_left","laps_left","laps_needed","write_share","laps_per","per_day"}`。
+    **`write_share` が 1.0 未満なら、残りの周は本を 1本 も増やせません**（＝ 枠が縛る側）。
+    **測れない欄は None**（0 と書きません）。
+    """
+    now = now or now_jst()
+    end = dt.datetime.fromisoformat(LAP_DEADLINE).replace(tzinfo=JST)
+    days = max((end - now).total_seconds() / 86400.0, 0.0)
+    per_day = lap_per_day() or LAP_PER_DAY_FALLBACK
+    lc = lap_cost(scripts_dir=scripts_dir)
+    # **書く周の値打ちがいちばん高い形の `周/本`** で数えます（＝ いちばん安く枠を埋める道）。
+    cands = [v["laps_per"] for f, v in lc.items() if f != "_lap" and v.get("laps_per")]
+    laps_per = min(cands) if cands else None
+    slots_left = days * SLOTS_PER_DAY
+    laps_left = days * per_day
+    inv = _inventory_upper(rows, scripts_dir) or 0
+    # **在庫は もう書いてある枠ぶん** ＝ これから書く本数から引きます。
+    need_books = max(slots_left - inv, 0.0)
+    laps_needed = (need_books * laps_per) if laps_per else None
+    return {"days": days, "slots_left": slots_left, "laps_left": laps_left,
+            "inventory": inv, "laps_needed": laps_needed, "laps_per": laps_per,
+            "per_day": per_day,
+            "write_share": (laps_needed / laps_left) if (laps_needed and laps_left) else None}
+
+
 def _inventory_upper(rows: list[dict], scripts_dir: "Path | None" = None) -> "int | None":
     """**まだ `scheduled` に出ていない台本の数**（＝ 在庫の上端・**API 0単位**）。
 
@@ -8958,7 +9065,22 @@ def lap_value_line(rows: list[dict], scripts_dir: "Path | None" = None,
         out += (f"。**在庫 {inventory}本 対 枠 {g.get('slots_per_day')}本/日** ＝ "
                 + ("**枠が縛る側です ＝ この行の分母を枠に戻してよい**（覆る条件 (1)）"
                    if binds else
-                   "**枠は余っていて、縛っているのは周です**（在庫のほうが多い ＝ 覆る条件 (1) は立っていません）"))
+                   "**きょうの枠は余っていて、きょう縛っているのは周です**"
+                   "（在庫のほうが多い ＝ 覆る条件 (1) は立っていません）"))
+    # **期限まで数えると、答えが入れ替わります**（2026-09-19 07:xx の註・覆る条件 (6)〜(9)）。
+    sat = slot_saturation(rows, scripts_dir)
+    ws = sat.get("write_share")
+    if ws is not None:
+        out += (f"。**ただし期限まで数えると**（残り {sat['days']:.0f}日）: "
+                f"吸える枠 **{sat['slots_left']:,.0f}本** ／ 書ける周 **{sat['laps_left']:,.0f}周**"
+                f"（{sat['per_day']:.0f}周/日 の中位）／ 埋めるのに要る周 **{sat['laps_needed']:,.0f}周**"
+                f"（在庫 {sat['inventory']}本 を引いて {sat['laps_per']:.1f}周/本）"
+                f" ＝ **書く周の {ws * 100:.0f}% で枠が満ちます**"
+                + ("。**残り {:.0f}% は本を 1本 も増やせません** ＝ そこから先の限界の値打ちは"
+                   " 上の ¥/周 ではなく **¥0** で、周が触れるのは"
+                   "**枠 1つ の値打ち（再生・押される率・成約率）と枠の天井そのもの**だけです"
+                   .format((1 - ws) * 100) if ws < 1 else
+                   "。**周が足りません ＝ 分母は周のままで正しい**（覆る条件 (8)）"))
     return out
 
 
