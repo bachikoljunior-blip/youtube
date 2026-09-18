@@ -159,3 +159,26 @@ def test_台帳に題を残している_追加0単位():
     from studio import cli, yt
     assert '"title": ch["snippet"]["title"]' in inspect.getsource(yt.channel)
     assert 'title=ch.get("title")' in inspect.getsource(cli.record_channel)
+
+
+def test_門の話は_どの升に居ても言う():
+    """**2026-09-19 03:5x に踏んだ欠陥。**
+
+    「門が要るのは N人/日」の 1文 は、長らく `key == "plain_plain"` の中にしか在りませんでした
+    ＝ **09/18 20:2x に題が `named_topic` へ移った瞬間、この行は門について黙りました。**
+    docstring の 覆る条件 (4) は その場合を 09/17 から予告していたのに、
+    **書いてあったのは註だけで、印字する側が持っていませんでした。**
+
+    **陽性対照を両向きに置きます** —— 足りない升でも、上回る升でも、門の数が行に出ること。
+    """
+    from studio import peers
+
+    short = peers.title_identity_line("お金と仕事の教科書", need_spd=11.3)
+    assert "門が要るのは" in short and "足りません" in short
+
+    over = peers.title_identity_line("カワウソの年金計算室", need_spd=11.3)
+    assert "門が要るのは" in over, "上回る升に移ったら門について黙っている"
+    assert "上回ります" in over
+    # **升の中央を「うちの数」と読ませないこと**（この行が最も誤読されやすい向き）
+    assert "うちが足りている」ではありません" in over
+    assert "rename_effect_line" in over, "うちの実測の持ち主を名指ししていない"

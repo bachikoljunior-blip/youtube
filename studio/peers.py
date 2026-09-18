@@ -1023,15 +1023,33 @@ def title_identity_line(mine_title: str = "", need_spd: float | None = None) -> 
         if mine_cell.get("spd") is not None:
             line += f"（升の中央 登録/日 **{mine_cell['spd']:.1f}**）"
         out.append(line)
-        if need_spd and mine_cell.get("spd") is not None and key == "plain_plain":
-            best = c.get("named_topic", {})
-            out.append(f"  **門が要るのは {need_spd:.1f}人/日** ＝ **この升の中央でも "
-                       f"{need_spd / max(mine_cell['spd'], 1e-9):.1f}倍 足りません。**"
-                       + (f" 隣の升は {c['plain_topic']['spd']:.1f}／{c['named_plain']['spd']:.1f}人/日 ＝ "
-                          f"**どちらも単独で門の要求に届きます**（両方 ＝ {best['spd']:.1f}）。"
-                          if c.get("plain_topic", {}).get("spd") and c.get("named_plain", {}).get("spd")
-                          and best.get("spd") else "")
-                       + " **判定は立ったサブとオーナー**（`docs/GOAL.md` (4-r)）。")
+        # **門との関係は、どの升に居ても言うこと**（2026-09-19 03:5x に直した）。
+        #  **この 1文 は長らく `key == "plain_plain"` の中だけに在りました** ＝
+        #  **09/18 20:2x に題が `named_topic` へ移った瞬間、この行は門について黙りました。**
+        #  下の docstring の 覆る条件 (4) は その場合を 09/17 から予告していたのに、
+        #  **書いてあったのは註だけで、印字する側が持っていませんでした**
+        #  （この repo でいちばん多い壊れ方 ＝ 言っている所と、している所が別）。
+        #  **覆る条件**: 升の中央と「うちの実測」を同じ行に並べたくなったら、
+        #  並べるのはこの行ではなく `trend.rename_effect_line`（あちらが前後を持つ）。
+        if need_spd and mine_cell.get("spd") is not None:
+            short = need_spd / max(mine_cell["spd"], 1e-9)
+            if short > 1:
+                best = c.get("named_topic", {})
+                out.append(f"  **門が要るのは {need_spd:.1f}人/日** ＝ **この升の中央でも "
+                           f"{short:.1f}倍 足りません。**"
+                           + (f" 隣の升は {c['plain_topic']['spd']:.1f}／{c['named_plain']['spd']:.1f}人/日 ＝ "
+                              f"**どちらも単独で門の要求に届きます**（両方 ＝ {best['spd']:.1f}）。"
+                              if c.get("plain_topic", {}).get("spd") and c.get("named_plain", {}).get("spd")
+                              and best.get("spd") else "")
+                           + " **判定は立ったサブとオーナー**（`docs/GOAL.md` (4-r)）。")
+            else:
+                out.append(f"  **門が要るのは {need_spd:.1f}人/日** ＝ この升の中央（{mine_cell['spd']:.1f}）は "
+                           f"**{1 / short:.1f}倍 上回ります**。 !! **これは「うちが足りている」ではありません** —— "
+                           f"**升の中央は corpus の数で、うちの数ではありません。** "
+                           f"**うちの実測は `trend.rename_effect_line` が持ちます**"
+                           f"（題を変えた前後・門に届くまで判定を出さない側）＝ **ここへ写さないこと**。"
+                           f" **この行が読むのは、もう「升の差」ではなく「うちの前後」です**"
+                           f"（覆る条件 (4)・`docs/GOAL.md` (4-x)）。")
     ex = p.get("examples", [])[:4]
     if ex:
         out.append("  うちに**開いている**形（人間の経歴を 1つ も主張していない・制度名を持つ口）: "

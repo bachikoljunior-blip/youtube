@@ -133,7 +133,11 @@ def test_升の判定の行と前後の実測の行が隣り合う():
     """**この検査が本体** —— 離すと、升の判定（相関）だけを読んだ回が因果として使います。"""
     from studio.common import ledger_rows
     lines = trend.lines(ledger_rows())
-    idx_id = [i for i, s in enumerate(lines) if "title_identity" in s]
-    idx_re = [i for i, s in enumerate(lines) if "rename_effect_line" in s]
+    # **中身の語で拾わないこと** —— `title_identity_line` の本文は 2026-09-19 03:5x から
+    # `rename_effect_line` を**名指しします**（升の中央を「うちの数」と読ませないため）＝
+    # 「`rename_effect_line` を含む行」で拾うと、**同じ 1行 が両方に当たり、差が 0 になります**
+    # （この検査が最初にそれで落ちた）。**行の頭の印で拾うこと。**
+    idx_id = [i for i, s in enumerate(lines) if s.startswith("**題の身元")]
+    idx_re = [i for i, s in enumerate(lines) if s.startswith("**題を変えた前後の登録")]
     assert idx_id and idx_re, (idx_id, idx_re)
     assert 0 < idx_re[0] - idx_id[0] <= 2, "升の判定と前後の実測が離れている"
