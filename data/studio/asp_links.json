@@ -5,12 +5,14 @@
       "id": "rakuten_ichiba",
       "advertiser": "楽天市場の商品購入 / 楽天グループ株式会社",
       "asp": "もしもアフィリエイト",
-      "url": "https://af.moshimo.com/af/c/click?a_id=5809172&p_id=54&pc_id=54&pl_id=38582&url=http%3A%2F%2Fwww.rakuten.co.jp%2F",
+      "url": "https://af.moshimo.com/af/c/click?a_id=5809172&p_id=54&pc_id=54&pl_id=38582",
       "reward": "成果 2%（購入完了）",
       "click_only": false,
       "cookie_days": 90,
       "youtube_ok": true,
-      "at": "2026-09-18T20:2x+09:00"
+      "at": "2026-09-18T20:2x+09:00",
+      "link_type": "SNS専用リンク",
+      "note": "オーナーが 20:2x に SNS専用リンクへ差し替えた（前の url= 付きは通常URL）"
     },
     {
       "id": "fp_no_madoguchi",
