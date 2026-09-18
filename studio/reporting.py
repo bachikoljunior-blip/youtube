@@ -452,3 +452,196 @@ def reach_line(rows: list[dict] | None = None, days: int = 7) -> str:
             "**率と量は別の腕です** —— CTR（題とサムネ）が上がっても、面が落ちれば押された数は落ちます。"
             "**いちばん新しい 2日 は報告がまだ揃っていないので、そこだけで「落ちた」と読まないこと**"
             "（`channel_reach` の覆る条件 (1)）。**この口はショートの配りを見ません**（同 註）")
+
+
+# ---------------------------------------------------------------------------
+# **新しい本に配られる面（trial impressions）** —— 2026-09-18 11:2x・optimizer・Opus
+# ---------------------------------------------------------------------------
+
+#: 公開の刻の出どころ（**2つ を合わせる**。片方だけを見ないこと）。
+#: `data/studio/ledger.jsonl` の `scheduled` は studio が出した本だけ（09/05 以降・39本）で、
+#: **285本 のうち大半は旧道具が出しており、そちらは `data/uploaded.jsonl` にしか在りません。**
+_UPLOADED = Path("data/uploaded.jsonl")
+_LEDGER_FOR_PUB = Path("data/studio/ledger.jsonl")
+
+
+def publish_days() -> dict[str, str]:
+    """`video_id` → **報告の日**（`pt_day`）。台帳 2つ を合わせる。
+
+    **`pt_day` で返すこと** —— 面の行の `date` は太平洋時間の日で、JST の日と 1日 ずれます
+    （`pt_day` の註）。**JST の日で突き合わせると、公開日の面が丸ごと「前日」に落ちます。**
+    """
+    out: dict[str, str] = {}
+
+    def put(vid: str, when: str) -> None:
+        if not vid or not when or vid in out:
+            return
+        try:
+            t = dt.datetime.fromisoformat(str(when).replace("Z", "+00:00"))
+        except ValueError:
+            return
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=JST)
+        out[vid] = pt_day(t)
+
+    for path, when_keys in ((_LEDGER_FOR_PUB, ("publish_at",)),
+                            (_UPLOADED, ("at", "uploaded_at"))):
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            for k in when_keys:
+                if r.get(k):
+                    put(str(r.get("video_id", "")), r[k])
+                    break
+    return out
+
+
+def trial_reach(rows: "list[dict] | None" = None, window_days: int = 7,
+                first_day: str = "20260818", last_day: "str | None" = None) -> dict:
+    """**1本の新しい本が、公開から `window_days` のあいだに何回 面に出たか。**
+
+    **なぜこの数か（2026-09-18 11:2x に初めて数えた・`trend`／`status` はどちらも持っていなかった）**:
+
+        窓 08/18〜09/05 に出した **232本**    面の中央 **12.5**・押されたの中央 **0**
+                                            面の平均 64.4・押されたの平均 1.13
+                                            p90 85 ／ p99 1,484 ／ 最大 1,946
+        その 232本 の合計                    面 **14,938**・押された **262**
+
+    ＝ **ふつうの新しい本は、1週間で 13回 しか面に出ません。**
+    **`long_per_video` の「長尺 1回/本」は、ここで説明が付きます** ——
+    面 13回 × CTR 2% ＝ **1回**。**謎ではありませんでした。**
+
+    **この数が効かせる決め（ここが大事）**: 面が 13回 なら、**CTR を何倍にしても再生は動きません**
+    （13 × 20% ＝ 2.6回）。**題・サムネ・分かりやすさ・読みの輪は、全部 CTR の腕**です。
+    ＝ **縛っている腕は面のほうで、そこに手が届いていない。**
+    **この行を読まずに CTR の手を選んだ回は、効かない腕を磨いています。**
+
+    **この口はショートの配りを見ません**（モジュールの註・面 ÷ 再生 11.3%）。
+    ＝ **ここに出るのは長尺・ブラウズ側の配り**で、ショートは別（`analytics` の `SHORTS` 93.9%）。
+
+    **覆る条件**:
+      (1) 報告が止まっています（`reach_stale_days`）。**止まったままの窓を伸ばさないこと。**
+      (2) 面の中央が **100回 を越えた**回が出たら、そこで初めて CTR が縛る腕になります
+          —— そのときに `thumb.py`／題の手を上へ戻すこと。
+      (3) `publish_days` に刻の無い本は分母から落ちています（`n` と台帳の本数を比べること）。
+    """
+    import statistics
+    rows = load_rows(REACH_STORE) if rows is None else rows
+    pub = publish_days()
+    per: dict = {}
+    for r in latest_rows(rows):
+        vid, day = r.get("video_id", ""), r.get("date", "")
+        if not vid or not day:
+            continue
+        i = float(r.get("video_thumbnail_impressions") or 0)
+        c = i * float(r.get("video_thumbnail_impressions_ctr") or 0)
+        per.setdefault(vid, []).append((day, i, c))
+    imps: list = []
+    clicks: list = []
+    for vid, days in per.items():
+        p = pub.get(vid)
+        if not p or p < first_day or (last_day and p > last_day):
+            continue
+        end = (dt.datetime.strptime(p, "%Y%m%d")
+               + dt.timedelta(days=window_days)).strftime("%Y%m%d")
+        imps.append(sum(i for d, i, _ in days if p <= d <= end))
+        clicks.append(sum(c for d, _, c in days if p <= d <= end))
+    if not imps:
+        return {"n": 0}
+    s = sorted(imps)
+    return {"n": len(s), "window_days": window_days,
+            "median": statistics.median(s), "mean": statistics.mean(s),
+            "p90": s[min(len(s) - 1, int(len(s) * 0.9))], "max": s[-1],
+            "clicks_median": statistics.median(sorted(clicks)),
+            "clicks_mean": statistics.mean(clicks),
+            "imp_sum": sum(s), "clicks_sum": sum(clicks)}
+
+
+def reach_stale_days(rows: "list[dict] | None" = None,
+                     now: "dt.datetime | None" = None) -> float:
+    """**面の報告が何日 止まっているか**（いちばん新しい `date` から きょうまで）。
+
+    **足した理由（2026-09-18 11:2x に踏んだ）**: `python -m studio.cli reporting` は
+    **`403 SERVICE_DISABLED`（YouTube Reporting API がプロジェクト 219932230272 で無効）**
+    を返しており、面の行は **2026-09-11 で止まっています**。
+    それでも `reach_line` は台帳に残った古い 7日 を毎周 元気に印字していたので、
+    **7日 のあいだ 誰も気づきませんでした** ＝ **黙って凍る盤**。
+    「0」と「報告が来ていない」が同じ字になる族（`reach_line` の註と同じ罠）。
+
+    **覆る条件**: プロジェクトで API を戻した回が出たら、この註の日付と 403 の行を書き直すこと。
+    """
+    rows = load_rows(REACH_STORE) if rows is None else rows
+    days = [r.get("date", "") for r in rows if r.get("date")]
+    if not days:
+        return float("inf")
+    now = now or dt.datetime.now(JST)
+    # **報告の日の「終わり」から数えること**（`pt_day` の逆・2026-09-18 11:3x に検査が捕まえた）。
+    # `date` は太平洋時間の日 ＝ 期間は **その日の 07:00Z 〜 翌日 07:00Z**。
+    # 日の**始まり**（JST 00:00）から数えると、止まっていない報告を **1.5日 遅れ**と印字します
+    # ＝ 門（3日）を偽で鳴らす向き。
+    end = (dt.datetime.strptime(max(days), "%Y%m%d")
+           + dt.timedelta(days=1)).replace(hour=7, tzinfo=dt.timezone.utc)
+    return round((now - end).total_seconds() / 86400.0, 1)
+
+
+def trial_reach_line(rows: "list[dict] | None" = None,
+                     now: "dt.datetime | None" = None) -> str:
+    """`trend`／`status` が毎周 印字する 1行（**どの API も 0単位**・台帳だけ）。
+
+    `now` は検査のための口（既定は いま）。**止まりの日数は `reach_stale_days` が数えます。**
+    """
+    rows = load_rows(REACH_STORE) if rows is None else rows
+    d = trial_reach(rows)
+    stale = reach_stale_days(rows, now=now)
+    # **止まりの報せは、数えられない回でも出すこと**（2026-09-18 11:3x に検査が捕まえた）——
+    # 「数えられる本が 1本も在りません」で早く返すと、**報告が止まっている周ほど
+    # 警告が消えます**（＝ いちばん要る回に黙る向き。この repo の「0 と 無い を同じ字にする」族）。
+    tail = (f"　**⚠ 面の報告は {stale:.0f}日 止まっています**"
+            "（`reach_stale_days`・実測 `403 SERVICE_DISABLED` ＝ "
+            "Reporting API がプロジェクトで無効）**＝ この数は古い窓のものです。**"
+            ) if stale >= 3 else ""
+    if not d.get("n"):
+        return ("**新しい本に配られる面**: 数えられる本が 1本も在りません"
+                "（`trial_reach` の覆る条件 (3)）" + tail)
+    head = (f"**新しい本に配られる面（`reporting.trial_reach`・公開から {d['window_days']}日・"
+            f"どの API も 0単位）**: {d['n']}本 の中央 **{d['median']:.0f}回**"
+            f"（平均 {d['mean']:.0f}・p90 {d['p90']:.0f}・最大 {d['max']:.0f}）"
+            f"・押されたの中央 **{d['clicks_median']:.0f}**（平均 {d['clicks_mean']:.2f}）"
+            f"・合計 面 {d['imp_sum']:.0f} → 押された {d['clicks_sum']:.0f}")
+    body = ("　＝ **面が 2桁 なら CTR は縛っていません**（13 × 20% ＝ 2.6回）。"
+            "**題・サムネ・分かりやすさ・読みの輪は全部 CTR の腕**で、"
+            "**縛っているのは面のほう**（`trial_reach` の註・覆る条件 (2)）。"
+            "**この口はショートの配りを見ません**（`channel_reach` の註）")
+    return head + body + tail
+
+
+def trial_reach_short(rows: "list[dict] | None" = None,
+                      now: "dt.datetime | None" = None) -> str:
+    """`status` に置く短い形（`trial_reach_line` の長い形と対。**同じ段落を 2度 読ませない**）。
+
+    **`status` にも置く理由**: **固定2（期限内に届くか）は立った側がいちばん最初に答える問い**で、
+    そのとき最初に撃つのが `status` です。**この行が無いと、その回は
+    「CTR の腕（題・サムネ・分かりやすさ）を磨く」を最初の手に選びます** ——
+    面が 2桁 のあいだ、それは効かない腕です（`trial_reach` の註）。
+
+    **覆る条件**: `status` と `trend` を同じ周に両方 読む形でなくなったら、片方に畳むこと
+    （`trend.yen_now_short` と同じ行）。
+    """
+    d = trial_reach(rows)
+    if not d.get("n"):
+        return ""
+    stale = reach_stale_days(rows, now=now)
+    s = (f"**新しい本に配られる面 中央 {d['median']:.0f}回/本**（{d['n']}本・押された中央 "
+         f"{d['clicks_median']:.0f}・合計 面 {d['imp_sum']:.0f} → 押された {d['clicks_sum']:.0f}）"
+         f" ＝ **縛っているのは面で、CTR ではありません**"
+         f"（題・サムネ・分かりやすさ・読みの輪は全部 CTR の腕・derivation は "
+         f"`reporting.trial_reach`・**どの API も 0単位**）")
+    if stale >= 3:
+        s += f"　**⚠ 報告は {stale:.0f}日 止まっています**（`reach_stale_days`・403 SERVICE_DISABLED）"
+    return s

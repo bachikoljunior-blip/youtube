@@ -794,6 +794,17 @@ def cmd_status(a):
     yl = trend.yen_now_short(ledger_rows())
     if yl:
         print("  " + yl)
+    # **新しい本に配られる面**（2026-09-18 11:2x・optimizer・Opus）——
+    # 上の円も再生も「出た後」の数で、**その手前に在る面（インプレッション）を
+    # `status` は 1度も見ていませんでした**。実測 中央 **12回/本**・押された中央 **0**
+    # ＝ **CTR の腕（題・サムネ・分かりやすさ・読みの輪）は、面が 2桁 のあいだ効きません。**
+    # 決めと derivation は `reporting.trial_reach` の註（**どの API も 0単位**・報告の台帳だけ）。
+    try:
+        tl = reporting.trial_reach_short()
+        if tl:
+            print("  " + tl)
+    except Exception as e:      # 台帳が無い・形が違う回でも `status` を止めない
+        print(f"  **面**: 読めませんでした（{e.__class__.__name__}: {e}）")
     print(f"いま {now_jst():%m/%d %H:%M} JST")
     print("きょうの枠:")
     lineup_today = yt.today_lineup(vids)
@@ -2070,6 +2081,12 @@ def cmd_trend(a):
     # 出どころと覆る条件は `reporting.channel_reach` の註（**Data API 0単位**・報告の台帳だけ）。
     try:
         print(reporting.reach_line())
+        # **1本あたりの面**（2026-09-18 11:2x・optimizer・Opus）。`reach_line` は
+        # チャンネルの合計（日ごと）で、**新しい本 1本 に何回 配られるか**を持っていませんでした。
+        # 実測 246本 の中央 **12回**・押された中央 **0**（合計 面 14,772 → 押された 266）
+        # ＝ **`long_per_video` の「長尺 1回/本」は、ここで説明が付きます**（面 13 × CTR 2% ＝ 1回）。
+        # 出どころと覆る条件は `reporting.trial_reach` の註。
+        print(reporting.trial_reach_line())
     except Exception as e:      # 台帳が無い・形が違う回でも `trend` を止めない
         print(f"**面**: 読めませんでした（{e.__class__.__name__}: {e}）")
     return 0
