@@ -93,3 +93,45 @@ def test_mp4が無い作業場は数えない(bench) -> None:
     (work / "kara").mkdir()
     _script("kara", scripts)
     assert cli.shippable_line([]) == ""
+
+
+def test_輪が開いたままの本は出せるの側に出さない(bench) -> None:
+    """**2026-09-18 23:2x に足した**（`cli.shippable_line` の【23:2x】の段）。
+
+    **実物**: この周が `2026-09-20-nenkin-tedori-hayamihyou` に `critique` を撃ち、
+    台帳に `done: false`・`n_real: 2` が入りました（[real] の 1件 は
+    「所得税の基礎控除 104万円」と「43万円との差は 5万円」が同時に立っている
+    ＝ 差は 61万円 で、どちらかが誤り）。**それでも同じ周の `status` は
+    「出せる」と印字していました** —— `build_sig` は「焼きがいまの本文か」しか見ず、
+    `trend.loop_open` は「指紋が古いか」しか見ないため、**どちらも答えを見ていません。**
+
+    **止めません**（`schedule` に門は足していない ＝ 投稿が途切れるのが最大の損失）——
+    **選ぶ側の目に入れるだけ**です。
+
+    **覆る条件**: `done: false` の本を次の回がわざと出した回が 2度 出たら、この印を畳むこと。
+    """
+    work, scripts = bench
+    _bake(work, scripts, "2026-09-30-a", fresh=True)
+    _bake(work, scripts, "2026-09-30-b", fresh=True)
+    rows = [
+        {"event": "critique", "id": "2026-09-30-a", "done": False, "n_real": 2},
+        {"event": "critique", "id": "2026-09-30-b", "done": True, "n_real": 0},
+    ]
+    out = cli.shippable_line(rows)
+    assert "輪が開いている" in out and "2026-09-30-a" in out
+    # 閉じた本は今までどおり「出せる」の側
+    for ln in out.splitlines():
+        if "2026-09-30-b" in ln:
+            assert "出せる" in ln and "輪が開いている" not in ln
+    # 本数の見出しは 2本 のまま（印は数え直しではない）
+    assert "出せる **2本**" in out
+
+
+def test_doneを書かない台帳では黙る(bench) -> None:
+    """**覆る条件 (5)** ＝ `critique` の行が `done` を持たない周は、印を出さないこと
+    （`unknown` と同じ扱い ＝ **嘘より安い**）。"""
+    work, scripts = bench
+    _bake(work, scripts, "2026-09-30-a", fresh=True)
+    out = cli.shippable_line([{"event": "critique", "id": "2026-09-30-a", "n_real": 2}])
+    assert "輪が開いている" not in out
+    assert "出せる       2026-09-30-a" in out

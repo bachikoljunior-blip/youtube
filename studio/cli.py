@@ -3117,9 +3117,31 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
      (2) 長尺が在庫に積み上がったまま 3日 動かなければ、**在庫は本数ではなく形で数えること**
          （ショートと長尺は出す枠が別で、1本あたり再生が 2桁 違う ＝ `trend.form_yield_line`）。
      (3) `STUDIO_WORK` を別の所へ向けた回は、この行は空になります（作業場を跨ぐと `work/` は見えない）。
+
+    **【2026-09-18 23:2x】「出せる」は `build_sig` しか見ていませんでした**
+    （optimizer・Opus 5・1周 1体）。**実物**: この周が `2026-09-20-nenkin-tedori-hayamihyou` に
+    `critique` を撃ち、台帳に **`done: false`・`n_real: 2`** が入りました ——
+    [real] の 1件 は「所得税の基礎控除 104万円」と「43万円との差は 5万円」が**同時に立っている**
+    （差は 61万円。どちらかが誤り）＝ **数が矛盾したまま出る手前**でした。
+    それでもこの行は、同じ周に **`出せる       2026-09-20-nenkin-tedori-hayamihyou`** と印字しています。
+    **`build_sig` は「焼きがいまの本文か」しか見ず、「その本文が輪を閉じたか」を見ません**
+    （`trend.loop_open` も見ているのは**指紋が古いか**だけで、**答えが `done` だったか**は見ていません）。
+    ＝ **3つ の口が、どれも「閉じていない本」を止めません。**
+    **足したのは 1つ だけ**: 台帳のいちばん新しい `critique` の行が `done: false` なら、
+    その本を `出せる` ではなく **`輪が開いている`** の側に出す（**API 0単位**・台帳だけ）。
+    **止めません**（投稿が途切れるのが最大の損失 ＝ `schedule` には門を足していない）——
+    **選ぶ側の目に入れるだけ**です。
+    **覆る条件**: (4) `done: false` の本を、次の回が**わざと**出した回が 2度 出たら、
+    この印は判断の邪魔になっている ＝ 畳むこと（**そのとき理由を JOURNAL に書く**）。
+    (5) `critique` の行が `done` を書かなくなったら、この印は黙ります（`unknown` と同じ扱い ＝ 嘘より安い）。
     """
     from . import render
     up = {r.get("id") for r in rows if r.get("event") == "scheduled"}
+    # **輪の答え**（`done`）。**指紋（`trend.loop_open`）とは別の問い** ＝ 上の註。
+    verdict: "dict[str, dict]" = {}
+    for r in rows:
+        if r.get("event") == "critique" and r.get("id") and "done" in r:
+            verdict[r["id"]] = r
     ok, stale = [], []
     try:
         dirs = sorted(d for d in common.WORK.iterdir() if d.is_dir())
@@ -3136,10 +3158,21 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
         (ok if render.built_sig(vid) == s.build_sig(image_for(vid)) else stale).append(vid)
     if not ok and not stale:
         return ""
-    out = [f"**出せる在庫（焼いてあって まだ上げていない本）**: 出せる **{len(ok)}本**"
-           f"・**焼き直しが要る {len(stale)}本**（`build` 1本 92秒・**API 0単位**）"]
+    open_loop = [v for v in ok if verdict.get(v) and verdict[v].get("done") is False]
+    head = (f"**出せる在庫（焼いてあって まだ上げていない本）**: 出せる **{len(ok)}本**"
+            f"・**焼き直しが要る {len(stale)}本**（`build` 1本 92秒・**API 0単位**）")
+    if open_loop:
+        head += (f"　**うち 輪が開いたままの本 {len(open_loop)}本**"
+                 "（台帳の `critique` が `done: false` ＝ **[real] が残っています**。"
+                 "**止めてはいません** —— 出す前に `critique` を撃つかどうかは、その回が決めること）")
+    out = [head]
     for vid in ok[:6]:
-        out.append(f"    出せる       {vid}")
+        r = verdict.get(vid) or {}
+        if r.get("done") is False:
+            out.append(f"    **輪が開いている** {vid}"
+                       f"（`critique` `done: false`・[real] {r.get('n_real', '?')}件 ＝ 出す前に見ること）")
+        else:
+            out.append(f"    出せる       {vid}")
     for vid in stale[:6]:
         out.append(f"    焼き直す     {vid}（台本が build のあとに動いた ＝ `schedule` は止めます）")
     return "\n".join(out)
