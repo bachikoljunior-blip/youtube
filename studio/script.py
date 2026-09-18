@@ -510,6 +510,10 @@ class Segment(BaseModel):
     viz: dict = Field({}, description="動く図（`studio/viz.py`）。計算・しくみ のコマに。板と同じ所に出て、板より勝つ。")
 
 
+# **説明欄の「条件」と「所得」**（`warnings` の 説明欄の段が使う）。`合計所得` の付かない `所得` だけを拾う。
+_DESC_CAP = re.compile(r"合計所得([0-9,]+)万円以下")
+_DESC_INCOME = re.compile(r"(?<!合計)所得([0-9,]+)万円")
+
 class Script(BaseModel):
     id: str
     date: str                       # 公開する日（JST）
@@ -917,6 +921,26 @@ class Script(BaseModel):
                            f"（いちばん早いのは コマ{where}）。**毎コマ ではありません** ——"
                            "1度 出れば札との対応が渡ります（§3 の 7-b・2026-09-16 14:3x に"
                            "オーナー `be77dee9`「決まりでは、と言うのが連続してくると違和感ある」で変えた）")
+        # **説明欄が、自分の書いた条件と矛盾していないか**（2026-09-18 23:5x・optimizer・Opus 5）。
+        # **なぜ在るか**: `critique` は `say`／`show`／`sub` しか読まないので、**説明欄だけに在る誤りは
+        # 1件も映りません**。実物: 09/17 の年金の連作は「基礎控除104万円（令和8年分・**合計所得132万円以下**の人）」と
+        # 12か所 に書いていましたが、**25万円 の本人は 合計所得190万円** ＝ その行が自分自身と矛盾していました
+        # （国税庁 No.1199 の表で 104万円 のセルは rowspan=3 ＝ 正しい境目は **489万円**。数のほうは合っていた）。
+        # ＝ **数が正しいので、どの門にも映らない穴**でした。ここは「同じ行の中で」しか見ません（＝ 空振りが安い）。
+        # **止めません** —— 段を跨ぐ人を わざと 例に出す本が在りえます（そのときは notes に理由を書くこと）。
+        # **覆る条件**: (1) この行が 3本 続けて空振りしたら（書き手が毎回「わざと」と答えたら）畳むこと。
+        # (2) 同じ穴が「合計所得」以外の条件語（「〜歳未満」「〜年以上」）で出たら、語を足すのではなく
+        #     **`crosscheck`（説明欄と声を突き合わせる側）に寄せること** —— ここを厚くしない。
+        for ln in (self.description or "").splitlines():
+            caps = [int(m.group(1).replace(",", "")) for m in _DESC_CAP.finditer(ln)]
+            if not caps:
+                continue
+            vals = [int(m.group(1).replace(",", "")) for m in _DESC_INCOME.finditer(ln)]
+            over = [v for v in vals if v > min(caps)]
+            if over:
+                out.append(f"説明欄の 1行 が自分と矛盾しています: 「合計所得{min(caps)}万円以下」と書きながら、"
+                           f"同じ行に 所得{max(over)}万円 が在ります。**数ではなく条件の側を疑うこと**"
+                           f"（実物は 国税庁 No.1199 の表で、正しい境目は 1段目ではなく rowspan の下端でした）: {ln[:48]}…")
         # **notes の引き写しが古い**（`stale_note_quotes` の註）。止めない
         out += stale_note_quotes(self.notes, [x.say for x in self.segments])
         return out
