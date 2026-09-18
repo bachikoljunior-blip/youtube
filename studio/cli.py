@@ -868,6 +868,11 @@ def cmd_status(a):
     for v in yt.scheduled_all():
         if yt.when(v).date() > now_jst().date():
             print(f"  {yt.when(v):%m/%d %H:%M} {v['id']} {v['title'][:40]}{lineup_mark(v, sids)}")
+    # **出せる在庫**（`shippable_line` の註・**API 0単位**）—— 枠の行のすぐ上に置く。
+    # 枠（どこへ出せるか）と在庫（何が出せるか）は、同じ判断の 2つ の側で、離すと片方だけ見て終わります。
+    shl = shippable_line(ledger_rows())
+    if shl:
+        print("\n".join("  " + x if not x.startswith(" ") else "  " + x for x in shl.splitlines()))
     lsl = long_slot_line(vids, now_jst())
     if lsl:
         # **2行 返る**（長尺の枠・ショートの枠。2026-09-17 19:xx）—— 字下げは行ごとに当てること。
@@ -2855,5 +2860,62 @@ def main(argv=None):
         return 2
 
 
+# ---- 出せる在庫（焼いてあって、まだ上げていない本）。**2026-09-18 18:xx・optimizer・Opus・API 0単位** ----
+
+def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
+    """**焼いてあって まだ上げていない本**を、`schedule` が通る側と通らない側に分けて出す。
+
+    **なぜ足したか**（2026-09-18 17:0x に踏んだ実測）: `work/` に焼けた本が **6本** 座っていて、
+    `status` はその 1本 も映していませんでした。日枠が 16:00 に戻った窓で 5本 出そうとしたところ、
+    **5本 とも `schedule` が止めました** —— 04:1x の build のあとに台本が動いていて指紋が古い
+    （`script.build_sig`）。**焼き直し（1本 92秒）が要ると分かったのは、上げようとした瞬間**です。
+
+    **これは在庫の帳面の穴です**: 日枠は 1日 5本 で、**使わなかった分は 16:00 に消えます**
+    （貯まりません）。前の周（15:4x）は戻りの 19分 手前に立ち、**0本** で終わりました。
+    出せる在庫が 1行 で見えていれば、**窓が開く前の周が焼き直しておけます**。
+
+    数（この回に `ledger` で数えた・09/07〜09/18 の 12日）:
+        日枠の天井   **5本/日 × 12日 ＝ 60本**
+        実際に上げた **39本**（うち初めての本 **35本**・残りは上げ直し）
+        1日あたり    09/07〜09/13 は **1本/日**・09/16 **2本**・09/18（この周の前）**2本**
+    ＝ **天井の 58%**。**縛っていたのは作る側でも日枠でもなく、出す側の段取り**でした。
+
+    返り: 数行（在庫が 0 なら空文字）。**API 0単位**（`work/` と台帳だけを見る）。
+
+    **覆る条件**:
+     (1) 「焼き直しが要る」が **3周 続けて 0本** なら、指紋が古くなる形は直った ＝ この行は
+         「出せる N本」だけに畳んでよい。
+     (2) 長尺が在庫に積み上がったまま 3日 動かなければ、**在庫は本数ではなく形で数えること**
+         （ショートと長尺は出す枠が別で、1本あたり再生が 2桁 違う ＝ `trend.form_yield_line`）。
+     (3) `STUDIO_WORK` を別の所へ向けた回は、この行は空になります（作業場を跨ぐと `work/` は見えない）。
+    """
+    from . import render
+    up = {r.get("id") for r in rows if r.get("event") == "scheduled"}
+    ok, stale = [], []
+    try:
+        dirs = sorted(d for d in common.WORK.iterdir() if d.is_dir())
+    except OSError:
+        return ""
+    for d in dirs:
+        vid = d.name
+        if vid in up or not (d / f"{vid}.mp4").exists():
+            continue
+        try:
+            s = script.load(vid)
+        except Exception:  # noqa: BLE001  台本が消えた作業場は数えない
+            continue
+        (ok if render.built_sig(vid) == s.build_sig(image_for(vid)) else stale).append(vid)
+    if not ok and not stale:
+        return ""
+    out = [f"**出せる在庫（焼いてあって まだ上げていない本）**: 出せる **{len(ok)}本**"
+           f"・**焼き直しが要る {len(stale)}本**（`build` 1本 92秒・**API 0単位**）"]
+    for vid in ok[:6]:
+        out.append(f"    出せる       {vid}")
+    for vid in stale[:6]:
+        out.append(f"    焼き直す     {vid}（台本が build のあとに動いた ＝ `schedule` は止めます）")
+    return "\n".join(out)
+
 if __name__ == "__main__":
     sys.exit(main())
+
+
