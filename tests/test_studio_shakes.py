@@ -108,9 +108,22 @@ def test_齢_48h_超で割れた行は_低いほうが窓で通った値() -> No
     # **2026-09-10 19:0x に 4つ目の状態が出ました**（`still` かつ **保留**）——`CIPYV_r1Hdo`
     # 齢 101.6h・290 対 287。低いほうは窓の先頭より下だが `recounts()` はまだ挙げられない
     # （1度目の数え直しは `hours_below` が 0）＝ **決着が付くまで分子に入れない**。
+    # **2026-09-19 03:1x に 5つ目の状態が出ました**（`nowindow`）—— `uc0SceBfoxQ` 齢 54.1h・
+    # 219 対 234・`floor` **None**・`rounds` [2, 234]。**測りが 2点 しかなく、33時間 離れている** ＝
+    # 窓（`ENVELOPE_LAG_H` 6時間）の中に前の読みが **1つ もありません**。
+    # それまで この行は `still`（＝ 第3の口）を着ていましたが、`explained` が False なのは
+    # 「遅れでは説明が付かない」ではなく **「説明を試せる材料が台帳に無い」**です。
+    # **「測っていない」と「測って違った」に同じ札を着せないこと**（`trend.shakes` の同刻の註）。
     recounted = {r["id"] for r in trend.recounts(_rows())}
     for s in sh:
-        assert s["verdict"] in ("lag", "recount", "still")
+        assert s["verdict"] in ("lag", "recount", "still", "nowindow")
+        if s["verdict"] == "nowindow":
+            # **証拠が無いことが、この札の定義そのもの**（窓の中の前の読みが 0件）。
+            assert s["floor"] is None, f"窓の先頭が在るのに `nowindow` と貼っている: {s}"
+            assert not s["explained"], s
+            # **分子に入れないこと** —— `over_max` は `floor` を要求するので構造的に偽。
+            assert not s["over_max"], s
+            continue
         if s["verdict"] == "recount":
             assert s["id"] in recounted, f"数え直しの本でないのに `recount` と貼っている: {s}"
             continue

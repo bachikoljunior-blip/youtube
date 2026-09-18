@@ -95,10 +95,19 @@ def test_行に_目標と実収入0と倍率が出る(tmp_path):
 
 
 def test_形の倍率は_片側が_FORM_MIN_N_未満なら出さない(tmp_path):
+    """**この検査が挟んでいるのは n の門であって、倍率の向きではありません。**
+
+    2026-09-19 02:3x に直しました（optimizer・Opus・1周1体）。それまで この 2行 は
+    **「円/本 は ショートが長尺の」という字**を探しており、**向きを決め打ち**していました。
+    同じ回に `yen_now` を 中央 → **平均** に直したら（円は n本 の**合計**なので掛けるのは平均・
+    あちらの註）、**長尺のほうが高く出て、この検査が落ちました** —— 落ちた理由は
+    n の門ではなく、**検査が書いた向きのほう**です。
+    いまは向きに依らない字（`円/本 は `）で挟みます。**向きを字で固定しないこと。**
+    """
     rows = _board(tmp_path, 1000, 100, n_long=trend.FORM_MIN_N - 1)
-    assert "円/本 は ショートが長尺の" not in trend.yen_now_line(rows, tmp_path)
+    assert "円/本 は " not in trend.yen_now_line(rows, tmp_path)
     rows = _board(tmp_path, 1000, 100)
-    assert "円/本 は ショートが長尺の" in trend.yen_now_line(rows, tmp_path)
+    assert "円/本 は " in trend.yen_now_line(rows, tmp_path)
 
 
 def test_実物の台帳で_倍率が引ける():

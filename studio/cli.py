@@ -3267,15 +3267,35 @@ def _form_gap_phrase() -> str:
     引けない回（齢の帯の中で片側が `trend.FORM_MIN_N` 未満）は**数を出しません** ——
     そこで字の数に戻すと、`form_yield` を帯にした意味が消えます（上の註）。
     """
+    # **【2026-09-19 02:3x・optimizer・Opus・1周1体】この句は「捨てる回数」を**中央の差**で出していました。
+    # **再生はどちらの扉の通貨でもなく**（扉(a) はショートの再生・扉(b) は時間と登録・収益は円）、
+    # **中央は「ふつうの1本」で、円も時間も合計**です。同じ台帳で 中央 357倍 対 平均 18.7倍、
+    # **円/枠 では long ¥31.1 対 short ¥20.4 ＝ 向きが逆**（`trend.slot_value` の註・METHOD §5 同刻）。
+    # **だから、この句は「捨てる」と言い切りません** —— 3つ の通貨を並べ、決めは `slot_value_line` へ送ります。
     try:
-        d = trend.form_yield(ledger_rows())
+        rows = ledger_rows()
+        d = trend.form_yield(rows)
         s, l = d.get("short"), d.get("long")
         if (s and l and s["n_measured"] >= trend.FORM_MIN_N
                 and l["n_measured"] >= trend.FORM_MIN_N
-                and s["median"] is not None and l["median"] is not None):
-            return (f"1本 座るたび **{s['median'] - l['median']:,.0f}回/日** を捨てます ＝ "
-                    f"`trend.form_yield_line` の {s['median']:,.0f}回 対 {l['median']:,.0f}回"
-                    f"（齢 {trend.LPV_MIN_AGE_H:.0f}〜{trend.FORM_AGE_MAX_H:.0f}h の帯）")
+                and s["median"] is not None and l["median"] is not None
+                and s["mean"] is not None and l["mean"] is not None):
+            sv = trend.slot_value(rows)
+            sy, ly = (sv.get("short") or {}).get("yen"), (sv.get("long") or {}).get("yen")
+            yen = ""
+            if sy is not None and ly is not None:
+                yen = (f"・**円/枠 では long ¥{ly:,.1f} 対 short ¥{sy:,.1f}**"
+                       f"（RPM が {'長尺' if ly > sy else 'ショート'}側で効く ＝ **向きが再生と逆**）"
+                       if ly > sy else
+                       f"・円/枠 は short ¥{sy:,.1f} 対 long ¥{ly:,.1f}")
+            return (f"再生の差は **中央 {s['median']:,.0f}回 対 {l['median']:,.0f}回**"
+                    f"（{s['median'] / max(l['median'], 1e-9):,.0f}倍）／"
+                    f"**平均 {s['mean']:,.0f}回 対 {l['mean']:,.0f}回**"
+                    f"（{s['mean'] / max(l['mean'], 1e-9):,.1f}倍）"
+                    f"（齢 {trend.LPV_MIN_AGE_H:.0f}〜{trend.FORM_AGE_MAX_H:.0f}h の帯）{yen}"
+                    "。**ショートの枠は扉(b) を 1秒も進めません**（GOAL (4-g) 1）"
+                    " ＝ **配りは `trend.slot_value_line` の 3つ の通貨で決めること**"
+                    "（**この句を「N回/日 を捨てる」に戻さないこと** ＝ METHOD §5 2026-09-19 02:3x）")
     except Exception:       # noqa: BLE001 —— この行のために周を止めない
         pass
     return ("**捨てる回数は、いま引けません** —— 齢をそろえた比べが台帳に 1つ もありません "
@@ -3312,14 +3332,18 @@ def form_priority_line(ok: list[str], forms: "dict[str, str]") -> str:
     long_ = [v for v in ok if forms.get(v, "short") != "short"]
     if not long_:
         return ""       # 長尺の在庫が無い日は、選ぶ所がありません（1字も出さない）
+    # **【2026-09-19 02:3x】「座らせないこと」という命令を外しました**（optimizer・Opus・1周1体）。
+    # 決めるのは立ったサブです（オーナー 2026-09-06 14:0x「親が判断すんじゃなくて、サブが判断する」）。
+    # そして その命令が乗っていた数（中央の差）は、円では**向きが逆**でした（`trend.slot_value` の註）。
+    # **この行は選択肢と数を出すだけ**にします。**命令の字に戻さないこと。**
     if len(short) >= cap:
-        return (f"    **形の順**: 上げられるのは **1日 {cap}本** で、ショートの在庫は **{len(short)}本** "
-                f"＝ **{cap}本 ともショートで埋まります。長尺 {len(long_)}本 は座らせないこと** "
+        return (f"    **形の順**: 上げられるのは **1日 {cap}本** で、ショートの在庫は **{len(short)}本**・"
+                f"長尺 **{len(long_)}本** ＝ **どちらで埋めるかを選ぶ日です**（ショートだけで埋まります）"
                 f"（{_form_gap_phrase()}・"
-                "決めと覆る条件は `docs/METHOD.md` §5 2026-09-19 00:3x と 01:5x）")
+                "決めと覆る条件は `docs/METHOD.md` §5 2026-09-19 02:3x）")
     return (f"    **形の順**: 上げられるのは **1日 {cap}本**・ショートの在庫は **{len(short)}本** "
-            f"＝ **余る {cap - len(short)}本 が長尺の口**です（ショートを先に置くこと・"
-            "`docs/METHOD.md` §5 2026-09-19 00:3x）")
+            f"＝ **{cap - len(short)}本 は長尺でしか埋まりません**（{_form_gap_phrase()}・"
+            "`docs/METHOD.md` §5 2026-09-19 02:3x）")
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -15,6 +15,14 @@
 **だから、この検査は数を字で持ちません** —— 字で持つと、下の関数が直っても検査が古い数を守ってしまいます
 （それがこの回に踏んだ欠陥そのもの）。守るのは「**`form_yield` から来ていること**」です。
 derivation は `docs/JOURNAL.md` 2026-09-19 01:5x。
+
+**【2026-09-19 02:3x・optimizer・Opus 5・1周1体】「座らせないこと」という命令を、この行からも外しました。**
+その命令が乗っていた数は **中央の差**で、同じ台帳の**平均**では 357倍 → **18.7倍**、
+**円/枠 では long ¥31.1 対 short ¥20.4 ＝ 向きが逆**でした（`trend.slot_value` の註・METHOD §5 同刻）。
+**再生はどちらの扉の通貨でもありません**（扉(a) はショートの再生・扉(b) は時間と登録・収益は円）。
+だから この行は**選択肢と数を出すだけ**にし、配りの決めは `trend.slot_value_line` へ送ります。
+**検査が守るのは、いまも「数が `form_yield` から来ていること」**です（字で持たない）。
+derivation は `docs/JOURNAL.md` 2026-09-19 02:3x。
 """
 from studio import budget, cli, trend
 
@@ -28,31 +36,35 @@ def test_日枠の上限は枠の数ではなく日枠から出る():
     assert len(cli.LONG_SLOTS) + len(cli.SHORT_SLOTS) > cli.day_upload_cap()
 
 
-def test_ショートが上限ぶん在れば長尺を座らせないと言う():
+def test_ショートが上限ぶん在る日は_選ぶ日だと言い_命令しない():
     ok = [f"s{i}" for i in range(5)] + ["L1"]
     forms = {f"s{i}": "short" for i in range(5)} | {"L1": "long"}
     line = cli.form_priority_line(ok, forms)
-    assert "ともショートで埋まります" in line
-    assert "座らせないこと" in line
+    assert "どちらで埋めるかを選ぶ日です" in line
+    # **命令の字に戻さないこと**（判断はサブ・オーナー 2026-09-06 14:0x）。
+    assert "座らせないこと" not in line, line
     # **数は字で持たず、`form_yield` から来ていることを挟む**（上の註）。
     d = trend.form_yield(cli.ledger_rows())
     s_, l_ = d.get("short"), d.get("long")
     if (s_ and l_ and s_["n_measured"] >= trend.FORM_MIN_N
             and l_["n_measured"] >= trend.FORM_MIN_N
-            and s_["median"] is not None and l_["median"] is not None):
-        assert f"{s_['median'] - l_['median']:,.0f}回/日" in line, line
-        assert f"{s_['median']:,.0f}回 対 {l_['median']:,.0f}回" in line, line
+            and s_["median"] is not None and l_["median"] is not None
+            and s_["mean"] is not None and l_["mean"] is not None):
+        # **中央と平均を両方 出すこと** —— 片方だけだと、この回の欠陥に戻ります。
+        assert f"中央 {s_['median']:,.0f}回 対 {l_['median']:,.0f}回" in line, line
+        assert f"平均 {s_['mean']:,.0f}回 対 {l_['mean']:,.0f}回" in line, line
+        # **扉(b) の通貨の札**（ショートの再生はそこへ 1秒も入らない）。
+        assert "扉(b) を 1秒も進めません" in line, line
     else:
         # **齢をそろえた比べが台帳に無い回は、数を出さないこと**（`form_yield` の覆る条件）。
         assert "いま引けません" in line, line
-        assert "回/日" not in line, line
 
 
 def test_ショートが足りない日は余りが長尺の口だと言う():
     ok = ["s0", "s1", "L1"]
     forms = {"s0": "short", "s1": "short", "L1": "long"}
     line = cli.form_priority_line(ok, forms)
-    assert "余る 3本 が長尺の口" in line
+    assert "3本 は長尺でしか埋まりません" in line
     assert "座らせないこと" not in line
 
 
@@ -70,4 +82,4 @@ def test_form_を持たない古い台本はショートとして数える():
     """`script.form_of` と同じ既定（**古い台本は `form` を持ちません**）。"""
     ok = ["old0", "old1", "old2", "old3", "old4", "L1"]
     line = cli.form_priority_line(ok, {"L1": "long"})     # old* は forms に無い
-    assert "ともショートで埋まります" in line
+    assert "どちらで埋めるかを選ぶ日です" in line

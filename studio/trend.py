@@ -561,10 +561,27 @@ def shakes(rows: list[dict]) -> list[dict]:
             ev = _lag_evidence(pts, k, lo)
             # **覆る条件 (1)（「その行の本を `recounts()` も挙げているかを先に見ること」）を、
             # 次の回が手で見なくてよいように、ここで当てる**（2026-09-10 17:3x・`_settled_after` の註）。
+            # **【2026-09-19 03:1x・optimizer・Opus・1周1体】5つ目の状態を分けました（`nowindow`）。**
+            # **踏んだ行**: `uc0SceBfoxQ` 齢 54.1h・219 対 234・`floor` **None**・`rounds` [2, 234]。
+            # この本は**測りが 2点 しかなく、その 2点 が 33時間 離れています** ＝
+            # 窓（`ENVELOPE_LAG_H` 6時間）の中に**前の読みが 1つ もありません**。
+            # `explained` は False になりますが、それは「遅れでは説明が付かない」ではなく
+            # **「説明を試せる材料が台帳に無い」**です。ところが下の `else` は、その行に
+            # `still`（＝ 第3の口・遅れでも数え直しでもない別の出どころ）を貼っていました。
+            # **＝ 「測っていない」と「測って違った」が、同じ札を着ます** ——
+            # この repo が何度も踏んでいる形（`reach_line` の 0／未着、`form_yield` の tail 空）。
+            # **`still` は証拠のある札なので、証拠が無い行を入れないこと。**
+            # **覆る条件**: (1) `nowindow` の本に、窓の中の測りが 2点 たまったら、その行は
+            #   自動で `lag`／`still` のどちらかへ落ちます（この札は**測りの薄さの印**であって、
+            #   本の性質ではありません）。**`nowindow` が続く本は、`measure` の間隔のほうを見ること。**
+            # (2) `nowindow` が `shakes` の過半を占めたら、`ENVELOPE_LAG_H`（6時間）より
+            #   `measure` の間隔のほうが長い ＝ 窓ではなく**撃つ回数**を直すこと。
             if ev["explained"]:
                 verdict = "lag"
             elif vid in recounted:
                 verdict = "recount"
+            elif ev["floor"] is None:
+                verdict = "nowindow"
             else:
                 verdict = "still"
             after = _settled_after(pts, k, lo, hi)
@@ -683,13 +700,18 @@ def shakes_line(rows: list[dict]) -> str:
     confirmed = [s for s in still if s["confirmed"]]
     pending = [s for s in still if not s["confirmed"]]
     rec = [s for s in sh if s["verdict"] == "recount"]
+    # **窓の中に前の読みが 1つ も無い行**（2026-09-19 03:1x・`shakes` の同刻の註）。
+    # **分子に入れません** —— 説明が付かないのではなく、説明を試せていない行です。
+    nowin = [s for s in sh if s["verdict"] == "nowindow"]
     over = [s for s in sh if s["over_max"]]
     if not sh:
         return ("**同じ周に割れた読み（`n_values > 1`）: 0行** ＝ §7 (h) の覆る条件 (3) の分子は **0**"
                 "（`trend.shakes` の註。分けるのは齢でも周の数でもなく、**低い読みを台帳がこの窓で通ったか**）。")
     worst = max(sh, key=lambda s: s["span"])
     old = [s for s in sh if s["age_h"] > 48]
-    lag_n = len(sh) - len(still) - len(rec)
+    # **`nowindow` を遅れの側へ足さないこと**（2026-09-19 03:1x）——
+    # ここは引き算で遅れを数えているので、5つ目の札を引かないと、**証拠の無い行が「遅れ」に化けます。**
+    lag_n = len(sh) - len(still) - len(rec) - len(nowin)
     after_txt = {"low": "低い側が水準になった ＝ **数え直しで決着**",
                  "high": "高い側が続いた ＝ **低い読みは一過性**（`max` が正解・20:2x）",
                  "between": "あいだに落ちた ＝ まだ言えない",
@@ -740,11 +762,21 @@ def shakes_line(rows: list[dict]) -> str:
                  "**どの本の 1度目の数え直しも、その瞬間は必ずこの形**になります"
                  "（`trend.shakes` の 19:0x の註）。**分子は 0 のままで、`settle_stats` は動かさないこと** ——"
                  "決着は `_settled_after` があとの点で付けます（低い側が水準になれば数え直し ＝ `recounts()` の側・高い側へ戻れば低い読みが一過性 ＝ `max` の側。**どちらでも `settle_stats` は動きません**・20:2x）。")
-    if not rec and not still:
+    if nowin:
+        tail += ("**窓の中に前の読みが 1つ も無い行が在ります —— これは「第3の口」ではありません**"
+                 "（2026-09-19 03:1x に `still` から分けました・`trend.shakes` の同刻の註）: "
+                 + "・".join(
+                     f"{s['id']} 齢 {s['age_h']:.1f}h（{s['low']} 対 {s['high']}・"
+                     f"窓（{ENVELOPE_LAG_H:.0f}時間）の中の前の読み **0件**）" for s in nowin)
+                 + "。**`explained` が False なのは「遅れでは説明が付かない」ではなく"
+                 "「説明を試せる材料が台帳に無い」**です ＝ **分子に入れません。**"
+                 "**直すのは窓ではなく `measure` の間隔のほう**（覆る条件 (2)）。")
+    if not rec and not still and not nowin:
         tail += ("**齢 48h 超の行が割れても、低いほうがこの窓で本が通った値なら遅れの側です** ——"
                  "この道の分子は **0** のまま（`trend.shakes` の覆る条件 (1)）。")
     return (f"**同じ周に割れた読み（`n_values > 1`）: {len(sh)}行**（うち齢 48h 超 **{len(old)}行**）"
             f" —— **遅れ {lag_n}行 / 数え直しの本 {len(rec)}行 / "
+            f"窓の中に前の読みが無い {len(nowin)}行 / "
             f"低い読みが一過性 {len(confirmed)}行 / 保留 {len(pending)}行 / "
             f"**`max` が水準を掘り起こした行 {len(over)}行**"
             f"（＝ `settle_stats` を動かす唯一の分子・20:2x／門は 03:0x ＋ "
@@ -2474,6 +2506,14 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  **この行は「ショートにしろ」と言いません** —— 扉(b)（4,000時間）にショートの視聴は
     #  1秒も入らないので、形の配りは 1つ の数では決まりません（GOAL (4-g) 1）。
     out.append(form_yield_line(rows))
+    # **枠 1つ の値打ち**（2026-09-19 02:3x に足した・`slot_value` の註）——
+    #  すぐ上の行は **1本あたり再生の中央**で、枠の配り（`cli.LONG_SLOTS`）はその数で決まっています。
+    #  **再生は どちらの扉の通貨でもありません**（扉(a) はショートの再生・扉(b) は時間と登録・
+    #  収益は円）。そして**中央**は「ふつうの1本」で、円も時間も**合計**です。
+    #  この 2つ を直すと、同じ台帳で **357倍 → 18.7倍**、円/枠 は **long ¥31.1 対 short ¥20.4** ＝
+    #  **向きが逆**になります。**決めと覆る条件は `slot_value` の註と METHOD §5 ＝ ここへ数を写さないこと。**
+    #  **この行も「どちらにしろ」とは言いません**（判断はサブ・09/06 14:0x）。
+    out.append(slot_value_line(rows))
     # **いまの出し方の 円/月**（2026-09-18 09:4x に足した・GOAL (4-w)）——
     #  すぐ上の 3行 は全部 **再生**の単位です。**目標の単位は「円」**（「月収20万」）で、
     #  `studio/` には円を読む口が 1つ もありませんでした ＝ 在るのは「**要る**再生」側だけ
@@ -8113,7 +8153,14 @@ def form_yield(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
         amid = (None if not ages else
                 float(ages[len(ages) // 2]) if len(ages) % 2 else
                 (ages[len(ages) // 2 - 1] + ages[len(ages) // 2]) / 2.0)
+        # **平均も返す**（2026-09-19 02:2x・optimizer・Opus・1周1体）。
+        # **中央は「ふつうの1本」を答え、平均は「n本 出したときの合計」を答えます。**
+        # 収益も扉(b) の時間も**合計**なので、掛け算に入れてよいのは平均のほうです
+        # （`slot_value` / `yen_now` の註）。**中央は残します** —— どちらが効いているかは
+        # 2つ を並べないと読めません（この形の分布では 2つ は 15倍 ずれます）。
         out[form] = {"n": len(vids), "n_measured": len(views), "median": mid,
+                     "mean": (sum(views) / len(views)) if views else None,
+                     "sum": sum(views), "max": (max(views) if views else None),
                      "views": views, "ages": ages, "age_median": amid}
     return out
 
@@ -8259,15 +8306,28 @@ def yen_now(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
         band = bands.get(form)
         y = fy.get(form) or {}
         per_day = _form_per_day(vids)
+        # **掛けるのは平均で、中央ではありません**（2026-09-19 02:2x・optimizer・Opus・1周1体）。
+        # **円/日 ＝ Σ(その日の各本の再生) × RPM ÷ 1000 ＝ 本/日 × *平均* × RPM ÷ 1000。**
+        # 中央を掛けてよいのは分布が左右対称のときだけで、この形の分布は対称の**逆**です。
+        # 実測（同じ回・同じ台帳）: short 中央 714 対 平均 583（中央が **1.2倍 高い**）／
+        # long 中央 2 対 平均 31.1（中央が **15.6倍 低い**）。
+        # ＝ この 1語 で、長尺の 円/日 が **15.6倍 小さく**、形どうしの倍率が **19倍** ずれていました。
+        # その数（148倍・「長尺は座らせないこと」）が 固定2 の答えと枠の配りを決めていました。
+        # **覆る条件**: (1) `n_measured` が `FORM_MIN_N` 未満の側は、平均のほうが 1本 の外れに
+        #   引きずられます ＝ そのときは倍率を読まず、`slot_value_line` の「n」の札で止めること。
+        # (2) 分布が対称になったら（平均と中央の差が どちらの形も 20% 以内 が 3周 続いたら）、
+        #   どちらでも同じ ＝ この註は要りません。
+        # (3) 中央は消しません（下の `median` の欄）。「ふつうの1本」を問う行はそちらを読むこと。
         mid = y.get("median")
+        avg = y.get("mean")
         ypv: dict[str, float] = {}
         ypd: dict[str, float] = {}
-        if band and mid is not None:
+        if band and avg is not None:
             for lv, rpm in zip(YEN_LEVELS, band):
-                ypv[lv] = mid * rpm / 1000.0
+                ypv[lv] = avg * rpm / 1000.0
                 ypd[lv] = ypv[lv] * per_day
                 yen_day[lv] += ypd[lv]
-        forms[form] = {"per_day": per_day, "median": mid,
+        forms[form] = {"per_day": per_day, "median": mid, "mean": avg,
                        "n_measured": y.get("n_measured", 0), "n": y.get("n", len(vids)),
                        "rpm": dict(zip(YEN_LEVELS, band)) if band else None,
                        "yen_per_video": ypv, "yen_per_day": ypd}
@@ -8313,10 +8373,17 @@ def yen_now_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
     s, l = d["forms"].get("short"), d["forms"].get("long")
     if (s and l and s["yen_per_video"] and l["yen_per_video"]
             and s["n_measured"] >= FORM_MIN_N and l["n_measured"] >= FORM_MIN_N):
-        r = s["yen_per_video"]["中"] / max(l["yen_per_video"]["中"], 1e-9)
-        out += (f"。**円/本 は ショートが長尺の {r:,.0f}倍**"
-                f"（RPM は長尺が {_yen_band_ratio(d):,.0f}倍 高いのに ＝ 配りの差が RPM の差を食っています）"
-                f" —— **ただし ショートの円は扉(b) を 1秒も進めません**（GOAL (4-g) 1）")
+        sy, ly = s["yen_per_video"]["中"], l["yen_per_video"]["中"]
+        # **向きを字で決め打ちしないこと**（2026-09-19 02:2x）。中央 → 平均 に直した回に、
+        # ここは「ショートが長尺の N倍」と**向きを固定**して書いてあり、平均では逆になります。
+        if ly > sy:
+            out += (f"。**円/本 は 長尺がショートの {ly / max(sy, 1e-9):,.1f}倍**"
+                    f"（RPM が {_yen_band_ratio(d):,.0f}倍 高い側が、配りの差を食い返しています）"
+                    f" —— **そのうえ ショートの円は扉(b) を 1秒も進めません**（GOAL (4-g) 1）")
+        else:
+            out += (f"。**円/本 は ショートが長尺の {sy / max(ly, 1e-9):,.1f}倍**"
+                    f"（RPM は長尺が {_yen_band_ratio(d):,.0f}倍 高いのに ＝ 配りの差が RPM の差を食っています）"
+                    f" —— **ただし ショートの円は扉(b) を 1秒も進めません**（GOAL (4-g) 1）")
     return out
 
 
@@ -8345,6 +8412,148 @@ def yen_now_short(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
             + f"（{parts}・帯の中段）。**実収入は ¥0**（収益化前）＝ この数は"
             f"**門が いま開いたら**の側 —— 固定2 はこの行で答えること"
             f"（GOAL (4-w)・derivation は `trend`・**API 0単位**）")
+
+
+# --- 枠 1つ の値打ち（扉の通貨で） ------------------------------------------
+# **2026-09-19 02:3x・optimizer・Opus・1周1体。この口が無かったことが、この回の答えの半分です。**
+#
+# 枠の配り（`cli.LONG_SLOTS` / `SHORT_SLOTS`）は 09/17 19:xx から
+# **`form_yield` の「1本あたり再生の中央」**で決まっています —— short 714 対 long 2 ＝ 357倍、
+# だから「長尺は座らせないこと」。**その比べ方は、2か所 で問いとずれています。**
+#
+#  (1) **中央で比べている。** 収益も扉(b) の時間も **n本 の合計**なので、掛けてよいのは平均です。
+#      同じ台帳の平均は short 583 対 long 31.1 ＝ **18.8倍**（357倍 ではなく）。
+#      ＝ **中央を使うだけで、差が 19倍 ふくらんでいました**（`yen_now` の註）。
+#  (2) **再生で比べている。** 再生はどちらの扉の通貨でもありません。
+#      扉(a) の通貨は**ショートの再生**、扉(b) の通貨は**時間と登録**、収益の通貨は**円**です。
+#      **ショートの再生は扉(b) に 1秒も入りません**（GOAL (4-g) 1）＝
+#      扉(b) しか開いていないなら、ショートの枠の値打ちは **再生が何回でも 0** です。
+#
+# **この口は、枠 1つ あたりを 3つ の通貨で出します**（円・時間・登録）。**決めは出しません** ——
+# 出すのは数だけで、枠をどう配るかは立ったサブが決めます（オーナー 2026-09-06 14:0x）。
+#
+# **覆る条件**:
+#  (1) `form_yield` の `n_measured` が `FORM_MIN_N` 未満の形は、平均が 1本 の外れに引かれます
+#      ＝ この口は倍率を出さず「n が足りない」と印字します。**帯を広げて n を作らないこと。**
+#  (2) 扉(a) が扉(b) より近くなったら（`rev_deadline` の `door` が "a" に変わったら）、
+#      ショートの時間の欄は 0 のままでよいが、**扉の通貨そのものが変わります** ＝ この口を書き直すこと。
+#  (3) 1分あたりの視聴（`min_per_view`）は `analytics_video` の実測で、いま長尺 6本・再生 19回 しか
+#      ありません。**この数が動いたら、時間の欄は全部 動きます** —— 倍率ではなく**数の出どころ**を見ること。
+#  (4) `REV_LONG_MIN_PER_VIEW`（4.0分）は**前提**で、実測ではありません。この口は実測のほうを使い、
+#      前提のほうは「前提ならこう」として並べます（**2つ を 1つ の数に混ぜない**）。
+
+#: 1日に上げられる枠の数。**日枠（10,000単位）÷ 1本 1,650単位 の側で決まります**
+#: （`cli.SHORT_SLOTS` の 5枠 と同じ数・写しであることをここに書いておく）。
+SLOTS_PER_DAY = 5.0
+
+#: ショートの視聴が扉(b) に入る分（分/回）。**0 です**（GOAL (4-g) 1）。定数にしてあるのは、
+#: 「0 だと決めた」ことを検査から押さえられるようにするため。
+SHORT_GATE_MIN_PER_VIEW = 0.0
+
+
+def _long_min_per_view(rows: list[dict]) -> "tuple[float | None, int, int]":
+    """長尺の **1回あたり視聴（分）**の実測。返り `(分/回, 本数, 再生)`。
+
+    出どころは `sub_rate_cohorts` の「尺で分けた側」（`analytics_video` の `minutes`）で、
+    **再生の下限を当てていません**（当てると 0本 になる ＝ あちらの註）。
+    """
+    d = sub_rate_cohorts(rows)
+    lg = d.get("long") or {}
+    v, m = int(lg.get("views") or 0), float(lg.get("minutes") or 0.0)
+    return ((m / v) if v else None, int(lg.get("n") or 0), v)
+
+
+def _form_sub_rate(rows: list[dict]) -> "dict[str, tuple[float | None, int, int]]":
+    """形ごとの **登録/再生**の実測。返り `{form: (率, 本数, 再生)}`（測れない側は率 None）。
+
+    ショートは `sub_rate_cohorts` の「新しい作り」（あちらの註: **いまは 9本 ともショート**）、
+    長尺は「尺で分けた側」。**片側 0人 のときは率を 0 と書かず None**（未測と 0 を混ぜない）。
+    """
+    d = sub_rate_cohorts(rows)
+    out: "dict[str, tuple[float | None, int, int]]" = {}
+    new = d.get("new") or {}
+    out["short"] = (new.get("rate"), int(new.get("n") or 0), int(new.get("views") or 0))
+    lg = d.get("long") or {}
+    lv, ls = int(lg.get("views") or 0), int(lg.get("subs") or 0)
+    out["long"] = ((ls / lv) if (lv and ls) else None, int(lg.get("n") or 0), lv)
+    return out
+
+
+def slot_value(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
+    """**枠 1つ の値打ちを、扉の通貨で**（円・扉(b) の時間・登録）。**API 0単位**。
+
+    返り: `{form: {"mean","median","n_measured","n","yen","hours","subs",
+                   "min_per_view","sub_rate","enough_n"}},
+            "_gate": {...}}`
+    `yen` は帯の中段の 円/枠、`hours` は扉(b) へ入る 時間/枠、`subs` は 登録/枠。
+    **測れない欄は None** です（0 と書きません）。
+    """
+    from . import peers as _peers
+
+    bands = {"short": SHORT_RPM_BAND, "long": tuple(float(x) for x in _peers.RPM_BAND)}
+    fy = form_yield(rows, scripts_dir)
+    rd = rev_deadline(rows)
+    lmin, ln, lv = _long_min_per_view(rows)
+    rates = _form_sub_rate(rows)
+
+    out: dict = {}
+    for form, y in fy.items():
+        avg = y.get("mean")
+        n_meas = int(y.get("n_measured") or 0)
+        band = bands.get(form)
+        mpv = SHORT_GATE_MIN_PER_VIEW if form == "short" else lmin
+        rate = (rates.get(form) or (None, 0, 0))[0]
+        out[form] = {
+            "mean": avg, "median": y.get("median"), "max": y.get("max"),
+            "n_measured": n_meas, "n": int(y.get("n") or 0),
+            "enough_n": n_meas >= FORM_MIN_N,
+            "min_per_view": mpv, "sub_rate": rate,
+            "yen": (avg * band[1] / 1000.0) if (avg is not None and band) else None,
+            "hours": (avg * mpv / 60.0) if (avg is not None and mpv is not None) else None,
+            "subs": (avg * rate) if (avg is not None and rate is not None) else None,
+        }
+    out["_gate"] = {
+        "hours_need": REV_LONG_HOURS, "subs_need": rd.get("subs_need"),
+        "days_left": rd.get("days_left"), "door": rd.get("door"),
+        "long_min_per_view": lmin, "long_min_n": ln, "long_min_views": lv,
+        "assumed_min_per_view": REV_LONG_MIN_PER_VIEW,
+        "slots_per_day": SLOTS_PER_DAY,
+    }
+    return out
+
+
+def slot_value_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
+    """毎周 1行。**決めは書きません**（数だけ）。決めと覆る条件は `docs/METHOD.md` §5。"""
+    d = slot_value(rows, scripts_dir)
+    g = d.pop("_gate")
+    forms = {f: v for f, v in d.items() if v.get("mean") is not None}
+    if not forms:
+        return ("**枠 1つ の値打ち**（`trend.slot_value`・**API 0単位**）: "
+                "**まだ 1本 も読めていません** ＝ まず `measure` を撃つこと")
+    parts = []
+    for form in sorted(forms, key=lambda f: -(forms[f]["yen"] or 0)):
+        v = forms[form]
+        hs = ("**0時間**（扉(b) に 1秒も入りません）" if form == "short"
+              else (f"{v['hours']:.2f}時間" if v["hours"] is not None else "時間 未測"))
+        sb = (f"{v['subs']:.2f}人" if v["subs"] is not None else "登録 未測")
+        n = "" if v["enough_n"] else f"・**n {v['n_measured']} < {FORM_MIN_N} ＝ 倍率を読まないこと**"
+        parts.append(f"{form} **¥{v['yen']:,.1f}** ／ {hs} ／ {sb}"
+                     f"（平均 {v['mean']:,.0f}回・中央 {v['median']:,.0f}回・測 {v['n_measured']}/{v['n']}本{n}）")
+    out = ("**枠 1つ の値打ち（扉の通貨で・円／扉(b) の時間／登録）**"
+           "（`trend.slot_value`・**API 0単位**・掛けるのは**平均**で中央ではありません）: "
+           + " ／ ".join(parts))
+    s, l = forms.get("short"), forms.get("long")
+    if s and l and s["enough_n"] and l["enough_n"]:
+        out += (f"。**中央で比べると {(s['median'] or 0) / max(l['median'] or 1e-9, 1e-9):,.0f}倍・"
+                f"平均で比べると {(s['mean'] or 0) / max(l['mean'] or 1e-9, 1e-9):,.1f}倍**"
+                " ＝ **この差 が枠の配りを決めていました**（`form_yield` は中央・`slot_value` は平均）")
+    lm, lmn, lmv = g["long_min_per_view"], g["long_min_n"], g["long_min_views"]
+    if lm is not None:
+        out += (f"。**扉(b) の 1回あたり視聴は 実測 {lm * 60:,.0f}秒**"
+                f"（長尺 {lmn}本・再生 {lmv}回）対 **前提 {g['assumed_min_per_view']:.0f}分**"
+                f" ＝ 実測は前提の **1/{g['assumed_min_per_view'] / max(lm, 1e-9):,.0f}**"
+                " —— **`rev_deadline` の 60,000回 は前提の側の数です**（混ぜないこと）")
+    return out
 
 
 # --- 門の外の分子（企業案件） ------------------------------------------------
