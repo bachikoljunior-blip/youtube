@@ -8346,9 +8346,19 @@ def yen_now_short(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
 #: `peers.RPM_BAND` と同じ扱い ＝ **帯はここ 1か所にしかありません**（写しを持たない）。
 SPONSOR_YEN_PER_VIEW_BAND = (0.5, 1.5, 3.0)
 
-#: 日枠（YouTube Data API 10,000単位/日）で出せるショートの本数の天井。
-#: **`studio/budget` の側の数で、ここは読むだけ**（1本 1650単位・測る側に 600 残す）。
-SPONSOR_DAILY_CAP_VIDEOS = 6.0
+def sponsor_daily_cap_videos() -> float:
+    """日枠で出せる本数の天井（**`studio/budget` の 1か所から引く ＝ 写しを持たない**）。
+
+    **2026-09-18 に踏んだ所**: この回が最初 `6.0` を直書きしました。**実物は 5本 です**
+    （`(DAY_UNITS - RESERVE) // UPLOAD_UNITS` ＝ `(10,000 - 600) // 1,650` ＝ **5**）。
+    「6本/日」は日枠から出る数ではなく、**枠の運用の目安**として文書に散っている数でした。
+    **＝ 天井の側の倍率は、この 1か所がずれると丸ごとずれます。**
+
+    **覆る条件**: `budget` の 3つ の定数のどれかが動いたら、この関数は自動で追います
+    （**追わなくなったら、それは写しを持った日です**・検査 `tests/test_studio_ungated.py`）。
+    """
+    from . import budget as _budget
+    return float(max((_budget.DAY_UNITS - _budget.RESERVE) // _budget.UPLOAD_UNITS, 0))
 
 #: 門を通る分子と、通らない分子（`CLAUDE.md` 2026-08-15 の 4つ）。
 GATED_FORMS = ("広告", "メンバーシップ", "Super Thanks")
@@ -8395,7 +8405,8 @@ def ungated_yen(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
     cap_day = views_day
     if short_median is not None:
         cur_short_per_day = _form_per_day(by.get("short") or [])
-        cap_day = views_day + short_median * max(0.0, SPONSOR_DAILY_CAP_VIDEOS - cur_short_per_day)
+        cap_n = sponsor_daily_cap_videos()
+        cap_day = views_day + short_median * max(0.0, cap_n - cur_short_per_day)
     out["cap"] = _case(cap_day)
     out.update({"band": SPONSOR_YEN_PER_VIEW_BAND, "goal": _peers.GOAL_YEN, "gated": False})
     return out
@@ -8416,7 +8427,7 @@ def ungated_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
            + f"いまの 再生/月 **{d['views_month']:,.0f}回** ＝ **要る単価 ¥{d['need_per_view']:,.2f}/回** "
              f"対 相場の帯 ¥{d['band'][0]}／**¥{d['band'][1]}**／¥{d['band'][2]} ＝ **{t:,.1f}倍**")
     if c["need_per_view"] is not None and c["views_day"] > d["views_day"]:
-        out += (f"。**日枠が戻って ショート {SPONSOR_DAILY_CAP_VIDEOS:.0f}本/日 に上げると**"
+        out += (f"。**日枠が戻って ショート {sponsor_daily_cap_videos():.0f}本/日 に上げると**"
                 f"（1本あたりは動かさない）再生/月 **{c['views_month']:,.0f}回** ＝ "
                 f"**要る単価 ¥{c['need_per_view']:,.2f}/回** ＝ **{c['times']['中']:,.1f}倍**"
                 f" —— **この差が 訊き `yt_quota_not_ours` の値打ちです**")
@@ -8445,7 +8456,7 @@ def ungated_short(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
     out = (f"**門の外の分子（企業案件）**: 要る単価 **¥{d['need_per_view']:,.2f}/回** "
            f"対 相場の中段 ¥{d['band'][1]} ＝ **{d['times']['中']:,.1f}倍**")
     if c["need_per_view"] is not None and c["views_day"] > d["views_day"]:
-        out += (f"（日枠が戻って {SPONSOR_DAILY_CAP_VIDEOS:.0f}本/日 なら "
+        out += (f"（日枠が戻って {sponsor_daily_cap_videos():.0f}本/日 なら "
                 f"**¥{c['need_per_view']:,.2f}/回 ＝ {c['times']['中']:,.1f}倍**）")
     out += ("。**上の 円/月 の倍率は 広告の側**で、目標の倍率ではありません —— "
             "稼ぎ方は 4つ 開いていて（`CLAUDE.md` 2026-08-15）、**門を通らないのは これ 1つ**。"
