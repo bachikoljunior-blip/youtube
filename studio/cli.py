@@ -3200,6 +3200,7 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
         if r.get("event") == "critique" and r.get("id") and "done" in r:
             verdict[r["id"]] = r
     ok, stale = [], []
+    form_of_id: "dict[str, str]" = {}
     try:
         dirs = sorted(d for d in common.WORK.iterdir() if d.is_dir())
     except OSError:
@@ -3212,6 +3213,7 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
             s = script.load(vid)
         except Exception:  # noqa: BLE001  台本が消えた作業場は数えない
             continue
+        form_of_id[vid] = s.form
         (ok if render.built_sig(vid) == s.build_sig(image_for(vid)) else stale).append(vid)
     if not ok and not stale:
         return ""
@@ -3232,7 +3234,45 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
             out.append(f"    出せる       {vid}")
     for vid in stale[:6]:
         out.append(f"    焼き直す     {vid}（台本が build のあとに動いた ＝ `schedule` は止めます）")
-    return "\n".join(out)
+    out.append(form_priority_line(ok, form_of_id))
+    return "\n".join(x for x in out if x)
+
+
+def day_upload_cap() -> int:
+    """**1日に上げられる本数**（日枠 ÷ 1本・測る側を先に残す）。**枠の数ではありません。**"""
+    return max((budget.DAY_UNITS - budget.RESERVE) // budget.UPLOAD_UNITS, 0)
+
+
+def form_priority_line(ok: list[str], forms: "dict[str, str]") -> str:
+    """**在庫のうち、きょうの口をどちらの形で埋めるか**（**API 0単位**・`status` の在庫の行の下）。
+
+    **2026-09-19 00:3x・optimizer・opus が足した。** 決めと覆る条件は `docs/METHOD.md` §5 の
+    同じ刻の段（**ここへ数を写さないこと**）。derivation は `docs/JOURNAL.md` 同刻。
+
+    **なぜ在るか**: `LONG_SLOTS` 1 ＋ `SHORT_SLOTS` 5 ＝ **枠 6** に対し、日枠で上げられるのは
+    **5本**（`day_upload_cap`）＝ **毎日 1枠 が必ず余る**のに、どの枠が余るかを決めていたのは
+    「その周がどの順で `schedule` を撃ったか」だけでした。実測の配りは
+    **ショート 719回/本 対 長尺 1回/本**（`trend.form_yield_line`）なので、
+    **長尺が 1本 座るたび、その日は 718回 を捨てています。**
+
+    **この行は止めません** —— 出す順を選ぶのは、立った側です（オーナー 2026-09-06 14:0x
+    「親が判断すんじゃなくて、サブが判断する」）。**数を目に入れるだけ**です。
+    """
+    cap = day_upload_cap()
+    if not ok or not cap:
+        return ""
+    short = [v for v in ok if forms.get(v, "short") == "short"]
+    long_ = [v for v in ok if forms.get(v, "short") != "short"]
+    if not long_:
+        return ""       # 長尺の在庫が無い日は、選ぶ所がありません（1字も出さない）
+    if len(short) >= cap:
+        return (f"    **形の順**: 上げられるのは **1日 {cap}本** で、ショートの在庫は **{len(short)}本** "
+                f"＝ **{cap}本 ともショートで埋まります。長尺 {len(long_)}本 は座らせないこと** "
+                f"（1本 座るたび **718回/日** を捨てます ＝ `trend.form_yield_line` の 719回 対 1回・"
+                "決めと覆る条件は `docs/METHOD.md` §5 2026-09-19 00:3x）")
+    return (f"    **形の順**: 上げられるのは **1日 {cap}本**・ショートの在庫は **{len(short)}本** "
+            f"＝ **余る {cap - len(short)}本 が長尺の口**です（ショートを先に置くこと・"
+            "`docs/METHOD.md` §5 2026-09-19 00:3x）")
 
 if __name__ == "__main__":
     sys.exit(main())
