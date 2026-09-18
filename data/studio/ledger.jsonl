@@ -6813,3 +6813,5 @@
 {"views_live": 508, "views_ledger": 473, "over": 35, "age_h": 14.1, "src": "status", "at": "2026-09-19T02:08:54+09:00", "id": "qqlUo148_cg", "event": "views_over"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-19T02:08:54+09:00", "id": "xyMsBJxaj4M", "event": "zero_probe"}
 {"cmd": "status", "at": "2026-09-19T02:27:40+09:00", "id": "-", "event": "quota_exceeded"}
+{"cmd": "status", "at": "2026-09-19T02:30:32+09:00", "id": "-", "event": "quota_exceeded"}
+{"cmd": "status", "at": "2026-09-19T02:43:14+09:00", "id": "-", "event": "quota_exceeded"}

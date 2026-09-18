@@ -1488,3 +1488,148 @@ def family_floor_line(rows: list[dict] | None = None) -> str:
         "**族の選び方は「ただで効く分」であって、扉(b) を開ける手ではありません。** "
         "**この p25 は「その語で検索の上位に出た本の下から1/4」**（上振れの側）。"
         "**判定は立ったサブとオーナー。**")
+
+
+# ---------------------------------------------------------------------------
+# **扉(b) を「期限の中で越えた口」が在るかを、corpus から数える**
+# （2026-09-19 03:xx・optimizer・Opus 5・ultracode・**API 0単位**）
+# ---------------------------------------------------------------------------
+#
+# **なぜ足したか**: 02:5x の回が `trend.gate_measured` を新設し、うちの
+# `data/studio/reporting.jsonl`（33日・249本）から扉(b) までの距離を測って
+# **「17,870日（49年）・縛るほうで 210倍」**と印字し、こう結びました ——
+# **「扉(b) は『遠い』のではなく、扉(a) と同じ側に在ります」**。
+#
+# **その同じ repo の、このファイルの冒頭（09/15 21:0x）には、反例が既に書いてありました** ——
+# 齢 **44日** の `カメ先生のもらえるお金`（同じニッチ・本 40本・全部 長尺・総再生 89万回）。
+# **2つ の口が、同じ `status` の中で、逆の答えを出していました。**
+#
+# **どちらも正しく、測っているものが違います**:
+#
+#     `trend.gate_measured`   **うちの出力**から扉(b) までの距離   ＝ 49年
+#     この口                  **扉(b) が期限の長さで越えられるか** ＝ 越えた口が在る
+#
+# **＝ 02:5x の結びは、「うちの歩幅」を「扉の位置」と読んだ**ものです。
+# この repo が繰り返し踏んでいる形（**片方の答えが、もう片方の答えと同じ字で出る** ——
+# `reach_line` の 0／未着・`form_yield` の tail 空・`shakes` の `still`／`nowindow`）の **6例目**で、
+# 今度は **「測って遠い」と「その形では遠い」** が同じ字で出ていました。
+#
+# **数えたもの**（`data/niche_channels.jsonl` の 218チャンネル・**API 0単位**）:
+# **齢が期限（85日）より短い口は 218 のうち 4つ しかありません。** その 4つ の内訳が、
+# この口の全部です —— 1つ が両方の扉を越え、1つ が届きかけ、2つ は うちと同じ所に居ます。
+# **＝ これは「越えられる」の存在証明であって、「越えられる確率 1/4」ではありません**（n=4）。
+#
+# **決め（この口が変えるのは読み方 1つ だけ）**:
+# **「期限の中に扉(b) は無い」と書くときは、この行に反例が 0本 であることを先に見ること。**
+# 反例が 1本 でも在るなら、期限ではなく**うちの 1本あたり**を名指しすること。
+# **この行は「長尺にしろ」とは言いません**（判断は立ったサブ・オーナー 09/06 14:0x）。
+#
+# **覆る条件**:
+#  (1) 反例が **0本 になったら**（corpus が古びて若い口が全部 85日 を越えたら）、
+#      この行は「反例なし」と印字します。**そのとき初めて「期限の側」を疑ってよい。**
+#      いまの corpus は 2026-09-16 の写しで、**日が経つと若い口は自動で落ちます**
+#      ＝ **0本 は「越えられない」ではなく「測れていない」**（`shakes` の `nowindow` と同じ札）。
+#      **corpus を取り直すのは `channels.list` 5単位。**
+#  (2) 扉(b) の判定は **総再生 × 1回あたりの分** で、**分のほうは corpus に在りません**
+#      ＝ この口が出すのは「**4,000時間 に要る 分/回**」だけです。
+#      **`GATE_PROOF_MAX_MIN_PER_VIEW`（4.0分）より小さい口だけを「越えた」と数えます** ——
+#      `REV_LONG_MIN_PER_VIEW` と同じ前提の数で、**実測ではありません**。
+#      カメ先生は **0.27分/回** で足りる ＝ **この前提を 15倍 甘くしても結論は動きません**
+#      （その口の 89万回 は 1% の維持率でも 4,000時間 を越えます）。
+#      **届きかけの口（2.41分/回）は前提に効きます** ＝ そちらは「越えた」に数えません。
+#  (3) 登録の扉は **いまの登録者数**で見ています（`subs >= REV_GOAL_SUBS`）。
+#      **収益化が実際に通ったかは、外から見えません** ＝ この口が言えるのは
+#      「**門の条件を満たす所まで来た**」までで、「**収益化された**」ではありません。
+#  (4) **1つ の口は分布ではありません。** 期限の中で越えた口が 1/4 だからといって、
+#      うちが 1/4 で越えるという意味には**なりません**（相関ですらない ＝ ただの存在証明）。
+
+#: 反例を探す窓（日）。既定は `trend.REV_DEADLINE_DAYS` ではなく、**渡された期限**を使います。
+GATE_PROOF_DEADLINE_D = 85
+#: 扉(b) を「越えた」と数えるときの、1回あたりの視聴の上限（分）。**前提**（覆る条件 (2)）。
+GATE_PROOF_MAX_MIN_PER_VIEW = 4.0
+#: 登録の扉（`trend.REV_GOAL_SUBS` と同じ数。**写しを持たないため、ここでは 1,000 を直に書きます**）。
+GATE_PROOF_SUBS = 1_000
+
+
+def gate_proof(deadline_days: int = GATE_PROOF_DEADLINE_D,
+               now: "dt.datetime | None" = None) -> dict:
+    """**扉(b) を「期限の長さ」で越えた口が在るか**（**API 0単位**・上の註）。
+
+    返り: `{"at","n_corpus","deadline_days","young":[...],"passed":[...],
+             "min_days": 越えた口のうち いちばん若い齢, "counter": 反例の本数}`
+    `young` の各行: `id,title,age_days,subs,views,videos,views_per_day,subs_per_day,
+    videos_per_day,need_min_per_view,subs_ok,hours_ok,both`
+    **台帳が無ければ `young` は空**（**黙って「越えられない」と返してはいけません** ＝ 覆る条件 (1)）。
+    """
+    chs = niche_channels()
+    now = now or now_jst()
+    out: list[dict] = []
+    for c in chs.values():
+        s = (c.get("created") or "").replace("Z", "+00:00")
+        try:
+            born = dt.datetime.fromisoformat(s)
+        except ValueError:
+            continue
+        if born.tzinfo is None:
+            born = born.replace(tzinfo=dt.timezone.utc)
+        age = (now - born).total_seconds() / 86400.0
+        if age <= 0 or age > deadline_days:
+            continue
+        views = int(c.get("views") or 0)
+        subs = int(c.get("subs") or 0)
+        need = (DOOR_B_HOURS * 60.0 / views) if views else None
+        subs_ok = subs >= GATE_PROOF_SUBS
+        hours_ok = need is not None and need <= GATE_PROOF_MAX_MIN_PER_VIEW
+        out.append({
+            "id": c.get("id"), "title": c.get("title", ""), "age_days": age,
+            "subs": subs, "views": views, "videos": int(c.get("videos") or 0),
+            "views_per_day": views / age, "subs_per_day": subs / age,
+            "videos_per_day": (int(c.get("videos") or 0)) / age,
+            "need_min_per_view": need, "subs_ok": subs_ok, "hours_ok": hours_ok,
+            "both": bool(subs_ok and hours_ok),
+        })
+    out.sort(key=lambda r: -r["subs"])
+    passed = [r for r in out if r["both"]]
+    return {"at": now.isoformat(timespec="seconds"), "n_corpus": len(chs),
+            "deadline_days": deadline_days, "young": out, "passed": passed,
+            "counter": len(passed),
+            "min_days": (min(r["age_days"] for r in passed) if passed else None)}
+
+
+def gate_proof_line(deadline_days: int = GATE_PROOF_DEADLINE_D,
+                    now: "dt.datetime | None" = None) -> str:
+    """毎周 1行。**`trend.gate_measured_line` の真下に必ず並べます**（上の註 ＝ 6例目の罠）。"""
+    g = gate_proof(deadline_days, now)
+    head = ("**その距離を「扉の位置」と読まないための控え —— 期限の長さで扉を越えた口が在るか**"
+            f"（`peers.gate_proof`・**API 0単位**・台帳 `niche_channels` {g['n_corpus']}チャンネル）: ")
+    if not g["n_corpus"]:
+        return (head + "**台帳が在りません** ＝ **反例は「0本」ではなく「測っていない」**です"
+                "（`channels.list` **5単位** で取り直すこと・覆る条件 (1)）。")
+    if not g["young"]:
+        return (head + f"**齢 {g['deadline_days']}日 未満の口が corpus に 1つ もありません** ＝ "
+                "**反例なし ではなく 窓が空**です（corpus は 2026-09-16 の写し・覆る条件 (1)）。")
+    out = [head + f"**齢 < {g['deadline_days']}日 の口は {len(g['young'])}本**"
+                  f"（218 のうち）。**そのうち 両方の扉を越えている口 {g['counter']}本**"
+           + (f"・いちばん若いので **{g['min_days']:.0f}日**" if g["min_days"] else "") + ":"]
+    for r in g["young"]:
+        need = (f"{r['need_min_per_view']:6.2f}分/回"
+                if r["need_min_per_view"] is not None else "   —   ")
+        mark = "**両扉 ○**" if r["both"] else ("登録のみ○" if r["subs_ok"] else
+                                              ("時間のみ○" if r["hours_ok"] else "  −  "))
+        out.append(f"  齢{r['age_days']:5.0f}日 登録{r['subs']:>7,} 総再生{r['views']:>10,} "
+                   f"本{r['videos']:>4}（{r['videos_per_day']:.2f}本/日） "
+                   f"再生{r['views_per_day']:>8,.0f}/日 登録{r['subs_per_day']:>6.1f}/日 "
+                   f"4,000時間に要る {need} {mark}  {r['title'][:22]}")
+    if g["counter"]:
+        out.append(
+            f"  ＝ **「期限の中に扉(b) は無い」は、この口の数では引けません**（反例 {g['counter']}本）。"
+            "**すぐ上の行（`gate_measured`）が測っているのは扉の位置ではなく、うちの歩幅**です。"
+            f"**名指しすべきは期限ではなく、うちの 1本あたり**（うちの長尺 **71回/本**・"
+            "**0.19分/回** ＝ 7日 たった本で 6〜32回）。"
+            "**この行は「長尺にしろ」とは言いません**（判断は立ったサブ）。"
+            "**n は小さく、越えた口が在ることだけが言えます**（覆る条件 (4)）。")
+    else:
+        out.append("  ＝ **反例は 0本 です。** ただし窓に入る口が "
+                   f"{len(g['young'])}本 しかないので、**「越えられない」ではなく「まだ出ていない」**"
+                   "の側から先に疑うこと（覆る条件 (1)・(4)）。")
+    return "\n".join(out)
