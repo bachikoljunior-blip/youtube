@@ -3401,19 +3401,30 @@ def _form_gap_phrase() -> str:
                 and s["mean"] is not None and l["mean"] is not None):
             sv = trend.slot_value(rows)
             sy, ly = (sv.get("short") or {}).get("yen"), (sv.get("long") or {}).get("yen")
+            sp, lp = (sv.get("short") or {}).get("perf_yen"), (sv.get("long") or {}).get("perf_yen")
             yen = ""
             if sy is not None and ly is not None:
                 yen = (f"・**円/枠 では long ¥{ly:,.1f} 対 short ¥{sy:,.1f}**"
                        f"（RPM が {'長尺' if ly > sy else 'ショート'}側で効く ＝ **向きが再生と逆**）"
                        if ly > sy else
                        f"・円/枠 は short ¥{sy:,.1f} 対 long ¥{ly:,.1f}")
+            # **その 円/枠 は門（YPP）の内側の通貨です** —— 門は期限の 591日 後に開きます。
+            # **期限の中で読める通貨（成果報酬）は向きが逆**なので、同じ行に並べて出します
+            # （2026-09-19 06:xx・METHOD §5。片方だけ出すと、次の周は門の内側で枠を配ります）。
+            if sp is not None and lp is not None:
+                yen += (f"・**ただし その 円/枠 は門の内側の通貨です**（門は期限の外）＝ "
+                        f"**門の外（成果報酬）の 円/枠 は short ¥{sp:,.0f} 対 long ¥{lp:,.0f}"
+                        f"（{sp / max(lp, 1e-9):,.1f}倍・向きが逆）**"
+                        "。**絶対値は帯の中・比は帯の外**（`trend.slot_value` の `perf_yen` の註）")
             return (f"再生の差は **中央 {s['median']:,.0f}回 対 {l['median']:,.0f}回**"
                     f"（{s['median'] / max(l['median'], 1e-9):,.0f}倍）／"
                     f"**平均 {s['mean']:,.0f}回 対 {l['mean']:,.0f}回**"
                     f"（{s['mean'] / max(l['mean'], 1e-9):,.1f}倍）"
                     f"（齢 {trend.LPV_MIN_AGE_H:.0f}〜{trend.FORM_AGE_MAX_H:.0f}h の帯）{yen}"
                     "。**ショートの枠は扉(b) を 1秒も進めません**（GOAL (4-g) 1）"
-                    " ＝ **配りは `trend.slot_value_line` の 3つ の通貨で決めること**"
+                    " ＝ **配りは `trend.slot_value_line` の 4つ の通貨で決めること**"
+                    "（**うち 3つ は門の内側 ＝ 期限の外・門の外は 1つ**・"
+                    "METHOD §5 2026-09-19 06:xx）"
                     "（**この句を「N回/日 を捨てる」に戻さないこと** ＝ METHOD §5 2026-09-19 02:3x）")
     except Exception:       # noqa: BLE001 —— この行のために周を止めない
         pass

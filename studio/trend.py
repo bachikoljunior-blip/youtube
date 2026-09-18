@@ -8606,10 +8606,22 @@ def slot_value(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
     いまは `mean`（1本あたり再生）が、門の外の通貨の**分かっている側**そのものです。
     **決めと覆る条件は `gate_measured` の註と METHOD §5。**
 
-    返り: `{form: {"mean","median","n_measured","n","yen","hours","subs",
+    **【2026-09-19 06:xx】その「持ちません」を、持てる所まで詰めました（`perf_yen`）。**
+    上の註は「押された数が 1度も取れていない」を理由に、門の外の通貨を**欄にしませんでした**。
+    ところが **`slot_value_line` は `yen`（門の内側）で並べ替えて印字しており**、
+    long を先に出していました（実測 long ¥31.1 対 short ¥20.4）。
+    ＝ **期限の外で開く扉の通貨が、きょうの枠の順を決めていました。**
+    **押された数が無くても、形どうしの比は引けます** —— 帯（幅 200倍）は
+    short にも long にも**同じ数**が掛かるので、**比では約分されて消えます**。
+    残るのは `mean` の比（実測 **18.7倍** short 優勢）だけで、これは帯のどの段で読んでも同じです。
+    ＝ **絶対値は帯の中・順は帯の外**。`perf_yen` はその「順が読める側」の欄で、
+    `slot_value_line` はこの欄で並べます。
+
+    返り: `{form: {"mean","median","n_measured","n","yen","hours","subs","perf_yen",
                    "min_per_view","sub_rate","enough_n"}},
             "_gate": {...}}`
-    `yen` は帯の中段の 円/枠、`hours` は扉(b) へ入る 時間/枠、`subs` は 登録/枠。
+    `yen` は帯の中段の 円/枠、`hours` は扉(b) へ入る 時間/枠、`subs` は 登録/枠、
+    `perf_yen` は**門を通らない側**の 円/枠（成果報酬・帯の中段）。
     **測れない欄は None** です（0 と書きません）。
     """
     from . import peers as _peers
@@ -8635,6 +8647,13 @@ def slot_value(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
             "yen": (avg * band[1] / 1000.0) if (avg is not None and band) else None,
             "hours": (avg * mpv / 60.0) if (avg is not None and mpv is not None) else None,
             "subs": (avg * rate) if (avg is not None and rate is not None) else None,
+            # **門を通らない側の 円/枠**（成果報酬）＝ 平均再生 × 成約率 × 単価。
+            # 帯は `perf_rate_band()` と `PERF_YEN_PER_ACTION_BAND` の**中段**（写しを持たない）。
+            # **この欄の絶対値は帯の中です**（幅 200倍）。**形どうしの比には帯が残りません**
+            # —— 両方に同じ帯を掛けるので約分され、比は `mean` の比そのものです。
+            # ＝ **絶対値は読めないが、どちらの形に枠を配るかは読める**欄。
+            "perf_yen": (avg * perf_rate_band()[1] * PERF_YEN_PER_ACTION_BAND[1]
+                         if avg is not None else None),
         }
     out["_gate"] = {
         "hours_need": REV_LONG_HOURS, "subs_need": rd.get("subs_need"),
@@ -8655,18 +8674,30 @@ def slot_value_line(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
         return ("**枠 1つ の値打ち**（`trend.slot_value`・**API 0単位**）: "
                 "**まだ 1本 も読めていません** ＝ まず `measure` を撃つこと")
     parts = []
-    for form in sorted(forms, key=lambda f: -(forms[f]["yen"] or 0)):
+    # **並べるのは `perf_yen`（門を通らない通貨）です** —— `yen` で並べていた頃は
+    # long が先に出ており、それは **期限の 591日 後に開く扉の通貨**でした（上の註）。
+    for form in sorted(forms, key=lambda f: -(forms[f].get("perf_yen") or 0)):
         v = forms[form]
         hs = ("**0時間**（扉(b) に 1秒も入りません）" if form == "short"
               else (f"{v['hours']:.2f}時間" if v["hours"] is not None else "時間 未測"))
         sb = (f"{v['subs']:.2f}人" if v["subs"] is not None else "登録 未測")
         n = "" if v["enough_n"] else f"・**n {v['n_measured']} < {FORM_MIN_N} ＝ 倍率を読まないこと**"
-        parts.append(f"{form} **¥{v['yen']:,.1f}** ／ {hs} ／ {sb}"
+        pf = (f"**¥{v['perf_yen']:,.0f}**" if v.get("perf_yen") is not None else "未測")
+        parts.append(f"{form} 門の外 {pf} ｜ 門の内 ¥{v['yen']:,.1f} ／ {hs} ／ {sb}"
                      f"（平均 {v['mean']:,.0f}回・中央 {v['median']:,.0f}回・測 {v['n_measured']}/{v['n']}本{n}）")
-    out = ("**枠 1つ の値打ち（扉の通貨で・円／扉(b) の時間／登録）**"
+    out = ("**枠 1つ の値打ち（門の外の円 ｜ 門の内の 円／扉(b) の時間／登録）**"
            "（`trend.slot_value`・**API 0単位**・掛けるのは**平均**で中央ではありません・"
-           "**この 3つ は どれも門（YPP）の通貨で、門までの実測の距離は次の行**）: "
+           "**並びは門の外の円です** —— 門の内の 3つ は**期限の外で開く扉の通貨**で、"
+           "門までの実測の距離は次の行）: "
            + " ／ ".join(parts))
+    s0, l0 = forms.get("short"), forms.get("long")
+    if (s0 and l0 and s0.get("perf_yen") is not None and l0.get("perf_yen") is not None
+            and (l0["yen"] or 0) > (s0["yen"] or 0)):
+        out += ("。**2つ の通貨は向きが逆です** ＝ 門の内では long が先・門の外では short が "
+                f"**{(s0['perf_yen'] or 0) / max(l0['perf_yen'] or 1e-9, 1e-9):,.1f}倍** 先。"
+                "**門の外の絶対値は帯の中です**（幅 200倍・`perf_rate_band`）が、"
+                "**比には帯が残りません**（両方に同じ帯が掛かって約分されます）"
+                " ＝ **絶対値は読めないが、どちらへ枠を配るかは読めます**")
     s, l = forms.get("short"), forms.get("long")
     if s and l and s["enough_n"] and l["enough_n"]:
         out += (f"。**中央で比べると {(s['median'] or 0) / max(l['median'] or 1e-9, 1e-9):,.0f}倍・"
