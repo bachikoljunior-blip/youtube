@@ -99,7 +99,26 @@ IMPORTS_STUDIO = re.compile(r"^[ \t]*(?:from|import)[ \t]+studio\b", re.M)
 #:
 #: ＝ **親を 6時間×2回 待たせた欠陥の見張りが、`pytest -m live` から落ちていました。**
 #: `quota` を足すと 3件 が明るくなります（本文への言及では引かない ＝ import だけ、は変えない）。
-PARENT_MODULES = ("next_round", "next_round_owner", "spawn_prompt", "quota", "method_growth", "output_growth")
+#: **【2026-09-19 01:xx・optimizer・opus】`for_owner` と `owner_ask` を足しました（4回目の「規則Bは忘れられる」）。**
+#: **穴の見つかり方が、前の 3回 と違います** —— 検査を数えて見つけたのではなく、
+#: **`scripts/for_owner.py` の実際の欠陥が、`-m live` を撃っても捕まらない場所に在った**ことで出ました。
+#: この回に踏んだ実物: `HEAD_RE` が `——`（ダッシュ 2つ）の見出しを弾き、**オーナーへの窓が 1つ
+#: 丸ごと黙って消えていました**（`--list` にも出ず、親も出さない ＝ 09/18 23:xx の回が書いた
+#: 「これが通るまで動画が1本も作れません」の窓）。実測（この回に `--collect-only` を撃った）:
+#:
+#:     tests/test_for_owner_head_dash.py    **deselected**   ← この回に足した見張り
+#:     tests/test_owner_ask.py              **deselected**   ← 前から在った 9件
+#:
+#: ＝ **オーナーに何を出すかを毎時 決めている道具に、documented な門（`-m live`）の中の見張りが
+#: 1件 も在りませんでした。** `for_owner.py` は親が毎時 撃つ手続きそのもの（`docs/trigger_parent.md`
+#: 第1節）なので、**`next_round` と同じ「親の手続き」の側**です。`owner_ask` も同じ族
+#: （オーナーの手が要る問いが何周 待っているかを数える口）。
+#: **本文への言及では引かない、は変えていません** —— どちらも import で引きます。
+#: **覆る条件**: 親が毎時 撃つ `scripts/*.py` が増えたら、ここに足すこと
+#: （**名簿である以上 5回目 が在ります** —— 5回目 が出たら、名簿をやめて
+#: 「`docs/trigger_parent.md` が名指ししている script は全部 live」へ替えること）。
+PARENT_MODULES = ("next_round", "next_round_owner", "spawn_prompt", "quota", "method_growth",
+                  "output_growth", "for_owner", "owner_ask")
 IMPORTS_PARENT = re.compile(
     r"^[ \t]*(?:from|import)[ \t]+scripts[ \t.].*?\b(?:%s)\b" % "|".join(PARENT_MODULES),
     re.M)
