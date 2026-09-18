@@ -117,3 +117,34 @@ def test_門の外は2つになった() -> None:
     """
     assert set(trend.UNGATED_FORMS) == {"企業案件", "成果報酬"}
     assert set(trend.GATED_FORMS) & set(trend.UNGATED_FORMS) == set()
+
+
+def test_中段だけを印字しない() -> None:
+    """**2026-09-18 23:xx に足した見張り**（`PERF_CLICK_BAND` の下の段）。
+
+    15:4x から 3週間、`perf_short` が出していたのは **中段 1つ だけ**で、
+    METHOD §5 と JOURNAL はその 1つ を「門の外でただ 1つ 1 を切る道」として
+    周の手の選び方そのものを載せていました。**帯は 3つ とも `**未測**` です。**
+    実測の幅は 200倍（低 18.5倍／中 0.77倍／高 0.093倍・5本/日 の側）で、
+    **1 を切るのは 2つ だけ** ——切らない側は `PERF_CLICK_BAND` の註が
+    「ショート中心の口は低い側に出ます」と名指しした当の側。
+
+    **覆る条件**: `PERF_CLICK_BAND` が実測に置き換わって幅が **10倍 未満**に落ちたら、
+    中段 1つ の印字に戻してよい（このとき この検査ごと畳む）。
+    """
+    for text in (trend.perf_short(_rows()), trend.perf_line(_rows())):
+        assert "未測" in text, "帯が未測であることを字で言っていない"
+        assert "幅" in text, "帯の幅を印字していない"
+        # 低・高 の倍率が両方 出ていること（中段だけの印字に戻っていないこと）
+        assert "低" in text and "高" in text
+
+
+def test_幅の印字は帯から引く() -> None:
+    """印字の幅は `perf_need_rate` の `times` そのもの（**写しを持たない**）。
+
+    **覆る条件**: `times` の向き（要る率 ÷ 相場）が変わったら、この検査も一緒に直すこと。
+    """
+    d = trend.perf_need_rate(_rows())
+    t = d["cap"]["times"] if d["cap"].get("times") else d["times"]
+    # 帯は昇順 ＝ 低い相場ほど倍率は大きい
+    assert t["低"] > t["中"] > t["高"]
