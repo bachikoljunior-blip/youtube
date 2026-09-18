@@ -879,8 +879,13 @@ def cmd_status(a):
     if lsl:
         # **2行 返る**（長尺の枠・ショートの枠。2026-09-17 19:xx）—— 字下げは行ごとに当てること。
         print("\n".join("  " + x for x in lsl.splitlines()))
-    print("直近 公開 10本:")
     lrows = ledger_rows()
+    # **コメント欄の側の置き忘れ**（`cta_gap_line` の註・**API 0単位**）——
+    # 枠・在庫と同じ塊に置く（離すと片方だけ見て終わる）。
+    cgl = cta_gap_line(lrows, yt.published(), now_jst())
+    if cgl:
+        print(cgl)
+    print("直近 公開 10本:")
     for v in yt.published()[:10]:
         age = (now_jst() - yt.when(v)).total_seconds() / 3600
         # 2026-09-10 12:4x: **台帳より高い読みを捨てない**（`over_ledger` の註。追加 0単位）。
@@ -2844,6 +2849,87 @@ def cmd_asp(a):
     return 0
 
 
+def cmd_cta(a):
+    """**公開ずみの本のコメント欄に、成果報酬の塊を1つ置く**（`commentThreads.insert` **50単位/本**）。
+
+    2026-09-18 22:xx・optimizer・Opus 5・ultracode。**なぜ在るか**は `studio/asp.py` の
+    「コメント欄の側」の註 —— 20:3x の回が塊を置いた説明欄は、**配りの 93.9% を占める
+    Shorts のフィードでは、題を叩いて開いた人にしか出ません**。コメントは件数つきのボタンで 1タップ。
+    ＝ **分子（門の外の唯一の腕）を、いちばん開かれない面だけで回していました。**
+
+    **相手は公開ずみの本だけです**（private／予約中はコメント欄が無い ＝ `schedule` の口には置けない）。
+    既定は**再生の多い順**（`yt.published()` 約32単位 ＝ 塊 0.6本ぶん）。
+    **もう置いた本は台帳 `cta_comment` で外します（API 0単位）** ＝ 2度 置きません。
+
+    `--check` は置いた塊が**まだ生きているか**を数えます（`comments.list` に ID をまとめて渡して **1単位**）。
+    消えていたら `studio/asp.py` の覆る条件 (2) ＝ YouTube 側がリンクを落としています。
+
+    **この環境の分類器に止められたら迂回しないこと**（METHOD §11 15:0x の `reply` と同じ口）——
+    `--dry-run` の字を `docs/FOR_OWNER.md` に置いて、オーナーが Studio で貼れる形にします。
+    """
+    rows = ledger_rows()
+    placed = {r.get("video_id"): r for r in rows if r.get("event") == "cta_comment" and r.get("video_id")}
+    if a.check:
+        ids = [r.get("comment_id") for r in placed.values() if r.get("comment_id")]
+        if not ids:
+            print("台帳に `cta_comment` が 0行。まだ 1本 も置いていません")
+            return 0
+        alive = yt.comments_alive(ids)          # 1単位（ID をまとめて 1回）
+        gone = [c for c in ids if c not in alive]
+        print(f"置いた {len(ids)}件 ・ 生きている {len(alive)}件 ・ **消えた {len(gone)}件**")
+        for c in gone:
+            vid = next((v for v, r in placed.items() if r.get("comment_id") == c), "?")
+            print(f"  !! {vid} {c} が消えています ＝ `studio/asp.py` の覆る条件 (2)")
+        return 0
+    b = asp.comment_block()
+    if not b:
+        print("成果報酬の案件が 0本（data/studio/asp_links.json）。置く物が無い")
+        return 1
+    if a.ids:
+        ids = [x.strip() for x in a.ids.split(",") if x.strip()]
+    else:
+        live = sorted(yt.published(), key=lambda v: -int(v.get("views") or 0))
+        ids = [v["id"] for v in live if v["id"] not in placed]
+        print(f"公開ずみ {len(live)}本 ・ もう置いた {len(placed)}本 ・ 相手 {len(ids)}本（再生の多い順）")
+    ids = [v for v in ids if v not in placed]
+    if not ids:
+        print("相手が 0本（公開ずみの本には全部 置いてあります）")
+        return 0
+    since = budget.window_start().isoformat(timespec="seconds")
+    est = budget.spent(rows)["total"]
+    real = meter.spent(since)["total"]
+    used = max(est, real)
+    room = budget.DAY_UNITS - used - budget.RESERVE
+    cap = max(0, room // 50)
+    n = min(len(ids), a.max, a.max if a.anyway else cap)
+    print(f"日枠の残り {budget.DAY_UNITS - used}単位（実測 {real}・推計 {est}）・ 測る側に {budget.RESERVE} 残すと "
+          f"撃てるのは {cap}本 ・ この回は {n}本（1本 50単位）")
+    if n <= 0:
+        print("枠が足りません（--anyway で蓋を外せますが、測る側を食います）")
+        return 0
+    ids = ids[:n]
+    if a.dry_run:
+        print("--dry-run（**0単位**）。置く塊:\n" + b)
+        for v in ids:
+            print(f"  https://youtu.be/{v}")
+        return 0
+    done = 0
+    for vid in ids:
+        try:
+            cid = yt.post_comment(vid, b)
+        except Exception as e:  # noqa: BLE001
+            print(f"  {vid} 置けません: {str(e)[:140]}")
+            ledger("cta_comment_failed", vid, video_id=vid, units=50, why=str(e)[:200])
+            continue
+        ledger("cta_comment", vid, video_id=vid, comment_id=cid, units=50, chars=len(b))
+        done += 1
+        print(f"  {vid} 置きました（{cid}）")
+    print(f"撃った {done}本 ＝ {done * 50}単位")
+    if done:
+        print("**ピン留めは API に口がありません** —— オーナーが Studio で 1タップ（`docs/FOR_OWNER.md`）")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -2902,6 +2988,15 @@ def main(argv=None):
     asp_p.add_argument("--max", type=int, default=5, help="この回に撃つ本数の蓋（既定 5 ＝ 250単位）")
     asp_p.add_argument("--anyway", action="store_true", help="測る側の 600単位 を割り込んでも撃つ")
     asp_p.add_argument("--dry-run", action="store_true", help="入れる塊と相手だけ（**0単位**）")
+    # **成果報酬のリンクを、公開ずみの本の「コメント欄」へ**（`cmd_cta` の註・`studio/asp.py`）。
+    # 説明欄は Shorts のフィードで開かれない面（配りの 93.9%）＝ こちらが 1タップの側。
+    cta_p = sub.add_parser("cta")
+    cta_p.add_argument("--ids", default="", help="video_id をコンマ区切りで名指し（既定は公開ずみを再生の多い順）")
+    cta_p.add_argument("--max", type=int, default=5, help="この回に撃つ本数の蓋（既定 5 ＝ 250単位）")
+    cta_p.add_argument("--anyway", action="store_true", help="測る側の 600単位 を割り込んでも撃つ")
+    cta_p.add_argument("--dry-run", action="store_true", help="置く塊と相手だけ（**0単位**）")
+    cta_p.add_argument("--check", action="store_true",
+                       help="置いた塊がまだ生きているか（`comments.list` に ID をまとめて **1単位**）")
     a = ap.parse_args(argv)
     # **道で呼ばれた `id` を、ここで 1度だけ id へ戻す**（2026-09-12 02:1x・hourly・Opus）。
     # `script.path_for` は 09/06 から道を通しますが、この下の 20か所 は `a.id` を id として使います
@@ -2961,6 +3056,37 @@ def main(argv=None):
         ledger("token_rejected", "-", cmd=a.cmd, how="main")
         print(yt.token_rejected_words(e))
         return 2
+
+
+# ---- コメント欄の成果報酬の塊が、まだ置かれていない本（**API 0単位**・台帳だけ） ----
+# **2026-09-18 22:xx・optimizer・Opus 5・ultracode。なぜ `status` に置くか**:
+# `CLAUDE.md` の 09/02 15:3x「**選ばれない手は、撃たれません**」。`cli cta` は
+# **その回が思い出したときだけ**撃つ手なので、思い出させる行が要ります。
+# **声が「コメント欄の無料相談から」と言っている本で置き忘れると、言った先に物がありません**
+# （`script.CTA_RE` の註）。**齢 48h で分けます** —— 齢の表では再生の 93〜100% が 48h までに付くので、
+# **そこを過ぎた本に置いても、これから来る分はわずか**（置いてよいが、急ぐのは若い側）。
+# **覆る条件**: `trend.hold` の 48h の割合の中位が 80% を切ったら、この分け目を伸ばすこと。
+CTA_FRESH_H = 48.0
+
+
+def cta_gap_line(rows: list[dict], pubs: list[dict], now: dt.datetime) -> str:
+    """まだ `cli cta` を撃っていない公開ずみの本（**齢 48h までを先に出す**）。**API 0単位**。"""
+    placed = {r.get("video_id") for r in rows if r.get("event") == "cta_comment"}
+    missing = [v for v in pubs if v["id"] not in placed]
+    if not missing:
+        return ""
+    fresh = [v for v in missing
+             if (now - yt.when(v)).total_seconds() / 3600 <= CTA_FRESH_H]
+    head = (f"  **コメント欄の無料相談がまだ無い本**: {len(missing)}本 "
+            f"（うち齢 {CTA_FRESH_H:.0f}h 以内 **{len(fresh)}本** ＝ これから配られる側・"
+            f"1本 50単位・`python -m studio.cli cta`）")
+    if not fresh:
+        return head + "\n      若い本は 0本 ＝ **急ぎません**（古い本に置いても、これから来る分はわずか）"
+    lines = [head]
+    for v in sorted(fresh, key=yt.when, reverse=True)[:5]:
+        age = (now - yt.when(v)).total_seconds() / 3600
+        lines.append(f"      {yt.when(v):%m/%d %H:%M} {v['id']} 齢 {age:4.1f}h {v['views']:>5}回 {v['title'][:26]}")
+    return "\n".join(lines)
 
 
 # ---- 出せる在庫（焼いてあって、まだ上げていない本）。**2026-09-18 18:xx・optimizer・Opus・API 0単位** ----

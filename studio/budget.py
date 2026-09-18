@@ -54,6 +54,8 @@ UNITS_BY_EVENT = {
     "meta_update": 50,
     "meta_repaired": 50,
     "replied": 50,
+    # コメント欄の成果報酬の塊（`studio/asp.comment_block`・`cli cta`・`commentThreads.insert`）。
+    "cta_comment": 50,
 }
 
 

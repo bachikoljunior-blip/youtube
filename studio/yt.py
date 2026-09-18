@@ -692,6 +692,42 @@ def reply(comment_id: str, text: str) -> str:
     return r.get("id", "")
 
 
+def post_comment(video_id: str, text: str) -> str:
+    """**自分の本に、最上位のコメントを1つ置く**（`commentThreads.insert`・**50単位**）。
+
+    2026-09-18 22:xx JST（optimizer・Opus 5・ultracode）に足した。理由は `studio/asp.py` の
+    「コメント欄の側」の註（配りの **93.9% が Shorts のフィード** ＝ 説明欄はいちばん開かれない面）。
+
+    `reply()` との違いは**向き**だけです（あちらは `parentId` ＝ 人の問いへの返信、
+    こちらは `videoId` ＝ 自分の本の最上位）。**背景から呼ぶ口は作りません** ——
+    `cli cta` が 1本ずつ撃ち、台帳に `cta_comment` を残します。
+
+    **公開ずみの本にしか撃てません**（private／予約中はコメント欄が無い ＝ 403/404 が返る）。
+    """
+    r = svc().commentThreads().insert(part="snippet", body={"snippet": {
+        "videoId": video_id,
+        "topLevelComment": {"snippet": {"textOriginal": text[:9000]}}}}).execute()
+    return r.get("id", "")
+
+
+def comments_alive(comment_ids: list[str]) -> set[str]:
+    """渡した ID のうち、**まだ生きているコメント**の ID（`comments.list`・**1単位**）。
+
+    2026-09-18 22:xx（optimizer・Opus 5・ultracode）。`cli cta --check` の口。
+    `comments.list(id=…)` は ID を**コンマ区切りで 50件 まとめて**受けるので、
+    50本 でも 1単位 です（`id` で引く読みは 1単位）。
+    **消えた ID は返りに入りません** —— YouTube が落としたか、こちらが消した側。
+    `studio/asp.py` の覆る条件 (2) を数える唯一の分子です。
+    """
+    ids = [c for c in comment_ids if c]
+    out: set[str] = set()
+    for i in range(0, len(ids), 50):
+        chunk = ids[i:i + 50]
+        r = svc().comments().list(part="id", id=",".join(chunk)).execute()
+        out |= {it["id"] for it in r.get("items", [])}
+    return out
+
+
 # 伸びている本の再生は、**同じ瞬間に 2つの値が返る**（2026-09-09 19:1x・optimizer・Opus が実測）。
 SETTLE_READS = 3
 
