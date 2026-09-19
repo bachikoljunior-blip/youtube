@@ -87,7 +87,7 @@ def test_cost_line_no_longer_carries_the_hint():
     """値段の行に札を混ぜないこと（入れ子の括弧で見出しが読めなくなる）。"""
     line = rebuild_cost(["a", "b", "c"], {"a": "long", "b": "long", "c": "long"})
     assert "longform_chain.sh" not in line
-    assert line.endswith("**約59分**")
+    assert line.endswith(f"**約{3 * BUILD_SECONDS['long'] // 60}分**")
 
 
 def test_rebuild_seconds_is_the_one_place_the_number_lives():
