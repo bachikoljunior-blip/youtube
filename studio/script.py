@@ -838,6 +838,43 @@ class Script(BaseModel):
             return None
         return hit, tot, "・".join(miss[:4])
 
+    def text_only_segments(self) -> tuple[int, int, str] | None:
+        """(図の無い「数のコマ」, コマの合計, 例) —— 無ければ None。**API 0単位・焼かない**。
+
+        **「数のコマ」＝ 図が無く、板（`board`）に数が 2つ 以上 出ているコマ。**
+        画面がその数を**字だけ**で出しているので、オーナー 2026-09-19 12:3x `9155fe09`
+        「**画面がある意味が文字だけになってんのどうにかしろよ**」がそのまま当たります。
+
+        **この数え方にした理由**（2026-09-19 15:2x・optimizer・Opus 5・ultracode。在庫 42本 を数えた）:
+        図の在るコマは **307/1312（23%）**しかなく、**図の無いコマ 1005** の中身は
+
+            数が 2つ 以上（式ではない）  559（59%）  ← **ここが「数のコマ」**
+            数が 1つ                215（23%）
+            数が無い                164（17%）   ← 図が要らないコマ（前置き・しくみの言葉）
+            式（＋/− と ＝）             5（1%）
+
+        ＝ **「図が無い」を全部 赤くしても意味がありません**（4割 は数を持っていない）。
+        **数が 2つ 以上 並んでいるのに絵が無いコマ**だけを名指しします。
+
+        **止めません**（`problems()` へ入れない）—— 見出しや問いかけのコマは、数が在っても
+        絵が要らないことがあります。**読んで決めるのは書き手**。
+
+        **覆る条件**:
+         (1) この数が 0 に近づいた本の維持率が、字のままの本を上回らなければ、
+             絵の数ではなく**絵の中身**が効いていない ＝ `viz.py` 冒頭の覆る条件 (1) を先に見ること。
+         (2) 名指しが多すぎて読めない（1本 50コマ 以上）なら、門を「数が 3つ 以上」へ上げること。
+         (3) `board` を使わない書き方へ移ったら、この数え方は板を見なくなります（作り直し）。
+        """
+        hits = []
+        for i, g in enumerate(self.segments, 1):
+            if g.viz or not g.board:
+                continue
+            if sum(1 for x in g.board if re.search(r'[0-9０-９]', str(x))) >= 2:
+                hits.append(i)
+        if not hits:
+            return None
+        return len(hits), len(self.segments), "・".join(f"コマ{i}" for i in hits[:6])
+
     def warnings(self) -> list[str]:
         """止めない。書き手（Fable）が読んで決める材料（オーナー 09/06「点って言ってるとこ」「漢字の読み変なのいっぱい」）。"""
         out = []
@@ -887,6 +924,14 @@ class Script(BaseModel):
                 f"（**合わせる先が無い歩は、もう動きません** —— 前のコマで出ている歩と、"
                 f"声が 1歩 も指さないコマの図は、頭から出たまま止まります。"
                 f"2026-09-19 14:3x に向きを変えた・`studio/narration.cue_windows` の `carry`）")
+        # **画面が字だけのコマ**（オーナー 2026-09-19 12:3x `9155fe09`・`text_only_segments` の註）。
+        to = self.text_only_segments()
+        if to:
+            n_hit, n_all, ex = to
+            out.append(
+                f"**図の無い「数のコマ」が {n_hit}/{n_all}**（板に数が 2つ 以上 出ているのに絵が無い）: {ex}。"
+                f"**止めません** —— 見出しや問いかけのコマは、数が在っても絵が要らないことがあります。"
+                f"**直すなら `viz` を 1つ 置くこと**（棒・引き算・表・折れ線・**数直線**の 5つ・`studio/viz.py` 冒頭）")
         from .tts import uses_custom_pronunciations
         if self.yomi and not uses_custom_pronunciations(self.voice):
             dead = [w for w in self.yomi if w not in (self.kana_in_voice or [])]
