@@ -43,12 +43,22 @@ def test_在庫の10本の出口が同じ():
 
 
 def test_塊の2行目で押せる面を言う():
-    for b in (asp.block(), asp.comment_block()):
+    """**説明欄は `PROFILE_NOTE`・コメント欄は `COMMENT_NOTE`**（字が 2つ に分かれています）。
+
+    **【2026-09-19 12:xx に直しました】** —— 09:3x の周が `comment_block()` の 2行目 を
+    `COMMENT_NOTE`（「…もっと見る」を開くと、押せるリンクがあります ＝ リンク欄が無い日にも当たる字）へ
+    替えたとき、この検査は **両方 に `PROFILE_NOTE` を当てたまま**で、赤いまま 3周 残っていました
+    （`PROFILE_NOTE` は上がっている 10本 の説明欄の字で、替えると `drift_fields` が毎周 鳴るので
+      わざと別の字にしてある ＝ `studio/asp.py` の註）。**同じ字に戻さないこと。**
+    """
+    for b, note in ((asp.block(), asp.PROFILE_NOTE), (asp.comment_block(), asp.COMMENT_NOTE)):
         assert b, "案件が 0本（data/studio/asp_links.json）"
         lines = b.split("\n")
         assert lines[0].startswith("【PR】")
-        assert lines[1] == asp.PROFILE_NOTE, lines[:2]
-        assert "押せません" in asp.PROFILE_NOTE and "アイコン" in asp.PROFILE_NOTE
+        assert lines[1] == note, lines[:2]
+        assert "押せません" in note and "アイコン" in note
+    # **2つ の字は別物**（片方に寄せると、上の drift の型に戻ります）
+    assert asp.PROFILE_NOTE != asp.COMMENT_NOTE
 
 
 REAL = (

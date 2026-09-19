@@ -76,8 +76,11 @@ def test_在庫は要る周から引かれる(monkeypatch, tmp_path):
     a = trend.slot_saturation([], tmp_path, now)               # 在庫 7本
     b = trend.slot_saturation(_rows(0), tmp_path, now)
     assert a["inventory"] == 7
-    # 枠 10日 × 5 ＝ 50本。在庫 7本 を引いて 43本 × 1.0周/本 ＝ 43周。
-    assert round(a["laps_needed"]) == 43
+    # 枠 10日 × `SLOTS_PER_DAY` 本。在庫 7本 を引いて 1.0周/本。
+    # **【2026-09-19 12:xx】50／43 を字で持つのをやめました** —— 同じ日に `SLOTS_PER_DAY` が
+    # 5 → 6 に動き（`budget.UPLOAD_UNITS_SHORT` の註）、この検査が古い 5 を守って赤くなりました。
+    want = round(10 * trend.SLOTS_PER_DAY - 7)
+    assert round(a["laps_needed"]) == want
     assert a["laps_needed"] == b["laps_needed"]
 
 
