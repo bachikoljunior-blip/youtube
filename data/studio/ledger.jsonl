@@ -7549,3 +7549,6 @@
 {"views_live": 1185, "views_ledger": 1165, "over": 20, "age_h": 43.4, "src": "status", "at": "2026-09-20T02:21:34+09:00", "id": "tQPfODv61vg", "event": "views_over"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-20T02:21:34+09:00", "id": "BzWoZR1Y4ZI", "event": "zero_probe"}
 {"seconds": 90.9, "image": true, "chars": 448, "scenes": [14.3, 10.0, 8.5, 6.5, 11.2, 11.4, 7.4, 7.7, 6.9, 7.0], "sig": "4:6752ca56807f", "at": "2026-09-20T02:43:59+09:00", "id": "2026-09-23-kakyu-3sai-shita-short", "event": "built"}
+{"seconds": 91.4, "image": true, "chars": 448, "scenes": [14.6, 10.0, 8.5, 6.5, 11.2, 11.6, 7.4, 7.7, 6.9, 7.0], "sig": "4:522f4a1cb13a", "at": "2026-09-20T02:45:49+09:00", "id": "2026-09-23-kakyu-4sai-shita-short", "event": "built"}
+{"seconds": 90.8, "image": true, "chars": 448, "scenes": [14.4, 10.0, 8.5, 6.5, 11.1, 11.2, 7.4, 7.7, 6.9, 7.0], "sig": "4:91cb9064317d", "at": "2026-09-20T02:47:40+09:00", "id": "2026-09-23-kakyu-5sai-shita-short", "event": "built"}
+{"seconds": 91.6, "image": true, "chars": 448, "scenes": [14.6, 10.0, 8.5, 6.5, 11.3, 11.7, 7.4, 7.7, 6.9, 7.0], "sig": "4:d2d7b7f95820", "at": "2026-09-20T02:49:31+09:00", "id": "2026-09-23-kakyu-6sai-shita-short", "event": "built"}
