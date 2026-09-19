@@ -7301,3 +7301,5 @@
 {"seconds": 90.8, "image": true, "chars": 446, "scenes": [14.2, 10.0, 8.5, 6.5, 11.2, 11.4, 7.4, 7.7, 6.9, 7.0], "sig": "3:69c9ade1d5b8", "at": "2026-09-19T21:58:00+09:00", "id": "2026-09-23-kakyu-1sai-shita-short", "event": "built"}
 {"seconds": 90.5, "image": true, "chars": 446, "scenes": [14.2, 10.0, 8.5, 6.5, 11.1, 11.3, 7.4, 7.7, 6.9, 7.0], "sig": "3:526f740de8ff", "at": "2026-09-19T21:59:56+09:00", "id": "2026-09-23-kakyu-2sai-shita-short", "event": "built"}
 {"seconds": 90.9, "image": true, "chars": 448, "scenes": [14.3, 10.0, 8.5, 6.5, 11.2, 11.4, 7.4, 7.7, 6.9, 7.0], "sig": "3:6752ca56807f", "at": "2026-09-19T22:01:53+09:00", "id": "2026-09-23-kakyu-3sai-shita-short", "event": "built"}
+{"seconds": 91.4, "image": true, "chars": 448, "scenes": [14.6, 10.0, 8.5, 6.5, 11.2, 11.6, 7.4, 7.7, 6.9, 7.0], "sig": "3:522f4a1cb13a", "at": "2026-09-19T22:03:44+09:00", "id": "2026-09-23-kakyu-4sai-shita-short", "event": "built"}
+{"seconds": 90.8, "image": true, "chars": 448, "scenes": [14.4, 10.0, 8.5, 6.5, 11.1, 11.2, 7.4, 7.7, 6.9, 7.0], "sig": "3:91cb9064317d", "at": "2026-09-19T22:05:51+09:00", "id": "2026-09-23-kakyu-5sai-shita-short", "event": "built"}
