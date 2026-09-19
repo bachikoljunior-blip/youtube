@@ -279,6 +279,70 @@ def has_block(desc: str | None) -> bool:
     return MARK in d or HOST in d
 
 
+def block_is_current(desc: str | None) -> bool:
+    """**いま出している案件の URL が、全部 入っているか。**
+
+    **`has_block` とは別の問いです** —— あちらは「何か塊が在るか」しか見ません。
+    **ふだんは 2つ の答えが同じ**なので、1つ で足りていました。
+    **案件を差し替えた日だけ、答えが割れます。**
+
+    **なぜ足したか（2026-09-20 03:xx・optimizer・Opus 5・ultracode・API 0単位）**:
+    上の「案件の扉」の註のとおり、`hoken_total_professional`（分子の 9割）は
+    **無職・年収300万円未満 を落とす** ＝ うちの相手（65歳以上 62%）には
+    **構造的に成果が出ません**。直す手は差し替えで、**オーナーの窓
+    【09/20 09:00〜10:00】が お墓・終活 の 2案件 への提携申請**です。
+
+    **その差し替えが通った日に、こうなるはずでした**:
+
+        `cli asp --published N`（**入れ直しの 50単位 ＝ 1本 出す 1,650単位 の 1/33**）は
+        `has_block` で見送りを決めています。**古い案件の塊を持つ本は、そこで
+        「もう入っています」に見えます** ＝ **差し替えても、既に塊が入った本は
+        永久に古い案件のまま**で、しかも**印字は正常**（静かに落ちる形）。
+
+    **＝ 窓が通った日の値打ちが、いちばん配られている本の側で消えます。**
+    **`verify_meta` の側は自分で直ります**（`drift_fields` が
+    `compose(s.description)` ＝ **台本の生の字に、いまの塊を足したもの**と比べるので、
+    古い塊は「説明欄 食い違い」に立つ）。**割れているのは入れ直しの口だけです。**
+
+    **案件が 1本 も無い日は True を返します**（直す先が無いので、見送りが正しい）。
+
+    **覆る条件**: `OFFERS` に **同じ URL を持つ案件が 2つ** 並んだら、この `all()` は
+    片方が消えても True のままになります（いまは 2つ とも別の URL）。
+    そのときは url ではなく `OFFERS` の id を塊の中に書いて比べること。
+    """
+    got = offers()
+    if not got:
+        return True
+    d = desc or ""
+    return all(url in d for url, _ in got)
+
+
+def strip_block(desc: str | None) -> str | None:
+    """**塊を 1つ だけ外した字**。外せる形でなければ `None`（＝ 呼ぶ側は触らないこと）。
+
+    `compose` が組む字は `塊 + "\\n\\n" + 本文`（`top=True`）か
+    `本文 + "\\n\\n" + 塊`（`top=False`）で、**塊の中に空行はありません**
+    （`block()` の実物で確かめた ＝ 見出し・註・案件2行・`DISCLOSURE` の 6行）。
+    **だから空行 1つ が境目になります。**
+
+    **外した部分に `MARK` と `HOST` の両方が無ければ `None` を返します** ——
+    **本文を切らないための門**です（`None` は「外せなかった」であって「塊が無い」ではない）。
+
+    **なぜ「1つ だけ」か**: 2つ 入っている本が在れば、それはこの file の外で
+    何かが壊れています。**黙って全部 消すと、その壊れが見えなくなります。**
+    """
+    d = (desc or "").strip()
+    if not d:
+        return None
+    head, sep, tail = d.partition("\n\n")
+    if sep and MARK in head and HOST in head:
+        return tail.strip()
+    body, sep, last = d.rpartition("\n\n")
+    if sep and MARK in last and HOST in last:
+        return body.strip()
+    return None
+
+
 #: YouTube の説明欄の上限（字）。**越えると `videos.insert` / `videos.update` が 400 で落ちます**
 #: ＝ **落ちるのは塊ではなく、その本の予約そのもの**（1,650単位 が無駄になる）。
 #: いまいちばん長い台本は 3,459字（`2026-09-18-minou-ushinau-3tsu`）＋ 塊 345字 ＝ 3,804字 で、

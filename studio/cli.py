@@ -3429,15 +3429,29 @@ def cmd_asp(a):
             print(f"  {v}")
         return 0
     got = yt.snippets(ids)                      # 1単位（50本 まで）
-    done = 0
+    done = stale_fixed = stale_stuck = 0
     for vid in ids:
         sn = got.get(vid)
         if not sn:
             print(f"  {vid} 引けません（消えた本？）")
             continue
         if asp.has_block(sn["description"]):
-            print(f"  {vid} もう入っています")
-            continue
+            # **「塊が在るか」と「いまの案件が在るか」は別の問いです**（`asp.block_is_current` の註）。
+            # 案件を差し替えた日、ここを `has_block` だけで見送ると、
+            # **既に塊が入った本は永久に古い案件のまま**になります（しかも印字は正常）。
+            if asp.block_is_current(sn["description"]):
+                print(f"  {vid} もう入っています")
+                continue
+            stripped = asp.strip_block(sn["description"])
+            if stripped is None:
+                stale_stuck += 1
+                print(f"  {vid} **古い案件の塊**が入っていますが、外せる形ではありません"
+                      f" ＝ **触りません**（`asp.strip_block` の門）  {sn['title'][:24]}")
+                continue
+            print(f"  {vid} **古い案件の塊**を外して入れ直します（{len(sn['description'])}"
+                  f" → 外して {len(stripped)}字）")
+            sn = dict(sn, description=stripped)
+            stale_fixed += 1
         back = yt.update_meta(vid, sn["title"], sn["description"], sn["tags"])
         ok = asp.has_block(back.get("description") or "")
         ledger("redescribed", vid, video_id=vid, kind="asp", units=50, ok=ok,
@@ -3445,7 +3459,11 @@ def cmd_asp(a):
         done += 1
         print(f"  {vid} {'入りました' if ok else '!! 返りに塊がありません'} "
               f"（{len(sn['description'])} → {len(back.get('description') or '')}字）  {sn['title'][:28]}")
-    print(f"撃った {done}本 ＝ {done * 50}単位")
+    print(f"撃った {done}本 ＝ {done * 50}単位"
+          + (f"（うち **古い案件からの入れ替え {stale_fixed}本**）" if stale_fixed else ""))
+    if stale_stuck:
+        print(f"  !! **古い案件の塊を外せなかった本が {stale_stuck}本**"
+              f" ＝ 手で説明欄を見ること（`asp.strip_block` が空行の境目を見つけられない形）")
     return 0
 
 
