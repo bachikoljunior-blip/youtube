@@ -990,6 +990,11 @@ def cmd_status(a):
     cgl = cta_gap_line(lrows, yt.published(), now_jst())
     if cgl:
         print(cgl)
+    # **生の読みの刻み**（`trend.live_drops` の註・2026-09-19 22:4x・**API 0単位**）——
+    # 下の 10本 の「台帳の最大より +N回」と、周と周の生の差を読む側が、
+    # **どれより小さい差を読んではいけないか**を、同じ塊で先に言う。
+    # **門ではありません**（何も止めません）。前の周が 50分 の +0 を判定に使ったので置きました。
+    print(trend.live_drops_line(lrows))
     print("直近 公開 10本:")
     for v in yt.published()[:10]:
         age = (now_jst() - yt.when(v)).total_seconds() / 3600

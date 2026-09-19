@@ -4291,6 +4291,111 @@ def over_lag_line(rows: list[dict]) -> str:
     return body
 
 
+#: **生の読み（`views_live`）どうしを比べてよい最小の差**を、台帳から数えるための窓。
+#: 下の `live_drops` の註 —— **この数は定数ではなく、台帳が毎周 数え直します。**
+LIVE_DROP_NEAR_MIN = 10.0
+
+
+def live_drops(rows: list[dict]) -> dict:
+    """**生の読み（`views_live`）の刻み**を台帳から数える（**API 0単位**・`views_over` の行だけ）。
+
+    **なぜ在るか**（2026-09-19 22:4x JST・optimizer・Opus 5・ultracode・1周 1体。撃って確かめた）:
+    前の周が、同じ 4本 を **50分 あけて 2回** 生で読み、その差で判定を1つ 立てました
+    （JOURNAL 09/19 21:xx §6「**+0 は増えていません**」＝ `oNiKmRKi4N4` の配りが止まっている側）。
+    **その差は、この物差しの刻みより小さいものでした。**
+
+    実測（この周・**API 0単位**・公開ページを続けて読んだ）:
+
+        13:36:08  o_c9fMHlIq4=1035  oNiKmRKi4N4=132  SSL2S726aTg=149  keyaVImD7xo=629
+        13:36:54  （同じ）          132              149              629
+        13:37:40  1035              132              **192**          **634**
+        13:38:25  1035              **179**          192              634
+        13:41:01  **1043**          179              192              634
+
+    ＝ **2分17秒 のあいだに `oNiKmRKi4N4` は 132 → 179（+47）**、`SSL2S726aTg` は 149 → 192（+43）。
+    しかも **17秒 のあいだに 8回 続けて読むと、8回 とも同じ値**（13:41:01〜13:41:18・差 0）＝
+    **速い連読では見えません**（`yt.settle_stats` の「複製が遅れている」形とは別物で、
+    あちらの 3回読み を ここへ持ってきても `n_values: 1` と出るだけ ＝ **偽の落ち着き**）。
+
+    **そして 22:30 → 22:34 では、生の読みが 下がっています**（`o_c9fMHlIq4` 1043 → 1035・
+    `oNiKmRKi4N4` 139 → 132）。**本物の再生は減りません** ＝ 差は本ではなく物差しの側。
+
+    **数え方**: `views_over`（`cmd_status` が毎周 書く）の同じ本の連続する 2行 を組にし、
+    `views_live` が **減った**組を数える。真の再生は減らないので、**減りの大きさ ＝ この物差しの刻みの下限**。
+
+    返り: `pairs`/`drops`/`worst`（いちばん大きい減り・負）/`worst_where`/
+    `near`（`LIVE_DROP_NEAR_MIN` 分 以内の組の中でいちばん大きい減り）/`near_where`/`span_h`。
+
+    **これは門ではありません**（`status` も `schedule` も止めません）。印字するだけです ——
+    **門を 2つ 置くと、買えない数を要求する門が出る**（前の回の申し送り 4.）。
+    下流は既に守られています: 低く書いた点は次の周の包絡（`envelope`）が上書きし、
+    高い点は `recounts()` が `ENVELOPE_LAG_H` で落とします。**直す所は読み方の側だけ**です。
+
+    **覆る条件**:
+    (1) 減りが 1組 も無い台帳になったら（`views_over` が 50組 を越えて `drops` 0）、
+        物差しは落ち着いた ＝ この行は外してよい。
+    (2) 減りが **`measured`（Data API）の側**でも同じ大きさで出るなら、刻みは公開ページ固有ではない
+        ＝ `drops()`（`measured` の側・いまの最大 -5回 級）と並べて読むこと。
+    (3) 生の読みの口が `status` から変わったら（oEmbed → 公開ページ など）、**組を口ごとに分けること**
+        —— いまは `views_over` に口の名が入っていないので、**混ざったまま数えています**（過大に出る側）。
+    (4) `views_over` は **生が台帳の最大を越えた回にしか書かれません** ＝ ここで数えている組は
+        「越えた回どうし」だけです。**越えなかった回の読みは台帳に無いので、この刻みは下限**です。
+    """
+    marks = [r for r in rows
+             if r.get("event") == "views_over" and r.get("at")
+             and isinstance(r.get("views_live"), int) and r.get("id")]
+    by: dict[str, list[dict]] = {}
+    for m in marks:
+        by.setdefault(m["id"], []).append(m)
+    pairs: list[dict] = []
+    for vid, seq in by.items():
+        seq.sort(key=_at)
+        for a, b in zip(seq, seq[1:]):
+            gap = (_at(b) - _at(a)).total_seconds() / 60.0
+            pairs.append({"vid": vid, "at": _at(b), "gap_min": gap,
+                          "a": a["views_live"], "b": b["views_live"],
+                          "delta": b["views_live"] - a["views_live"]})
+    dec = [p for p in pairs if p["delta"] < 0]
+    out = {"pairs": len(pairs), "drops": len(dec), "videos": len(by),
+           "worst": 0, "worst_where": "", "near": 0, "near_where": "",
+           "span_h": ((_at(marks[-1]) - _at(marks[0])).total_seconds() / 3600.0
+                      if len(marks) > 1 else 0.0)}
+    if dec:
+        w = min(dec, key=lambda p: p["delta"])
+        out["worst"] = w["delta"]
+        out["worst_where"] = (f"{w['vid']} {w['at']:%m/%d %H:%M} "
+                              f"{w['a']}→{w['b']}（{w['gap_min']:.0f}分）")
+        nears = [p for p in dec if p["gap_min"] <= LIVE_DROP_NEAR_MIN]
+        if nears:
+            n = min(nears, key=lambda p: p["delta"])
+            out["near"] = n["delta"]
+            out["near_where"] = (f"{n['vid']} {n['at']:%m/%d %H:%M} "
+                                 f"{n['a']}→{n['b']}（{n['gap_min']:.1f}分）")
+    return out
+
+
+def live_drops_line(rows: list[dict]) -> str:
+    """`live_drops` を1行にする（`status` が毎周 印字する ＝ **次の回は覚えていなくてよい**）。"""
+    d = live_drops(rows)
+    if d["pairs"] == 0:
+        return ("**生の読みの刻み（`views_over` の連続する組）: 組が 0** —— "
+                "まだ数えられません（`live_drops` の覆る条件 (4)）。")
+    if d["drops"] == 0:
+        return (f"**生の読みの刻み: {d['pairs']}組 のうち 減った 0組**（{d['videos']}本・"
+                f"窓 {d['span_h']:.0f}時間）＝ **物差しは落ち着いています**"
+                f"（`live_drops` の覆る条件 (1)：この行は外してよい側）。")
+    return (f"**生の読み（`views_live`）の刻み ±{abs(d['worst'])}回**（{d['pairs']}組 のうち "
+            f"**減った {d['drops']}組**・{d['videos']}本・窓 {d['span_h']:.0f}時間）"
+            f"—— いちばん大きい減り {d['worst_where']}"
+            + (f"・{LIVE_DROP_NEAR_MIN:.0f}分 以内の組でも {d['near']}回"
+               f"（{d['near_where']}）" if d["near"] else "")
+            + f" ＝ **本物の再生は減らないので、この大きさは本ではなく物差しです。"
+              f"生の読みどうしの差が {abs(d['worst'])}回 を下回ったら、"
+              f"『伸びた』とも『止まった』とも読めません**"
+              f"（`trend.live_drops`・**API 0単位**・門ではありません・**下限**です：覆る条件 (4)）。"
+            )
+
+
 #: **`cli.zero_probe_target` の齢の門は、ここに 1つ だけ置く**（`cli` が読む）。
 #: 下: 台帳の中で「0回 のまま」を越えた本が 1本 も無い齢（§7「1回目が付いた齢」）。
 #: 上: `scripts/zero_start.py` の下敷きの上端（B の初点の最も遅い1本 **77.6h**）を丸めた数。
