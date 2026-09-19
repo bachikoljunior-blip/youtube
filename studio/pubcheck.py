@@ -347,3 +347,70 @@ def channel_public_line(ch: dict | None) -> str:
         where = ("説明欄" if ch.get("asp_link_desc") else "リンク欄")
         head += f"・プロフィールのリンク（成果報酬）**在**（{where}・Shorts から押せる面が開いた）"
     return head
+
+
+# ---------------------------------------------------------------------------
+# **再生の数を、日枠 0 の周でも読む口**（2026-09-19 11:xx・optimizer・Fable 5.1・ultracode・**Data API 0単位**）
+# ---------------------------------------------------------------------------
+#
+# **踏んだ形**: 09/19 01:37 の `measured` を最後に、日枠が 403 で閉じ（10,330/10,000）、16:00 まで **14時間**
+# 台帳に再生の行が 1行 も入りませんでした。その 14時間 は、ASP の 1枚（クリック 11件・オーナー 10:51）の
+# **分母**（リンクを持つ 10本 が、置いてから何回 見られたか）が要る当の窓でした。
+# `videos.list` は 1単位 ですが、**日枠が尽きた周は 1単位 も通りません**（`channel_public` の註と同じ穴）。
+#
+# **口**: チャンネルの公開ページの「ショート」の面（`/channel/<id>/shorts`）。1ページ目に **新しい順 48本** が
+# `shortsLockupViewModel` で並び、`accessibilityText` に **「<題>, <N>回視聴 - ショート動画を再生」** の字で
+# 再生の数が入っています（2026-09-19 10:5x に うちのページで確かめた・48件/48 ID）。
+# watch ページ（`/watch?v=`）は同じ経路で **429** を返したので使いません（`shorts/<id>` は 200 だが数を持たない）。
+#
+# **読み方の決まり**:
+#   - 返るのは **1ページ目の 48本** だけ。それより古い本は「読めなかった」（＝ 0 ではない）。
+#   - 丸めは無い（実測: `1,046回視聴`・`0 回視聴` ＝ カンマ区切りの整数。**「万」が出たら `_MULT` で解く**）。
+#   - 読めない周は `None`（`channel_public` と同じ ＝ **`None` を 0 と読まない**）。
+#   - **これは `refresh_stats`（1単位）の代わりではありません** —— 日枠が在る周はそちら（`cmd_measure`）。
+#     この口を使うのは `measure --public`（日枠 0 の周）だけ。台帳の行には `src: "public_page"` が付き、
+#     API 側の `n_values` は付きません（読み直しの数ではないため・`cmd_measure` の `n_values` の註）。
+#
+# **覆る条件**:
+#  (1) `accessibilityText` の字が変わって 2周 続けて `None` が返った ＝ 正規表現を撃ち直すこと
+#      （陽性対照は `tests/test_pubcheck_shorts_views.py` ＝ 実物の写しで 8本 を取ってある）。
+#  (2) 同じ本の公開ページの数と `videos.list` の数が **10% を越えて割れた**ら、この口の数を台帳へ書くのをやめ、
+#      印字だけに戻すこと（公開ページは複製の遅れを持ちうる・`yt.settle_stats` の註）。
+#  (3) この口が `/watch` と同じく 429 を返すようになったら、周ごとに 1度 に絞る（いまは `measure --public` 1回 = 1 GET）。
+_SHORTS_ITEM = re.compile(
+    r'"shortsLockupViewModel":\{"entityId":"shorts-shelf-item-([A-Za-z0-9_-]{11})",'
+    r'"accessibilityText":"((?:[^"\\]|\\.)*)"')
+_SHORTS_VIEWS = re.compile(r',\s*([\d,.]+)\s*(万|億)?\s*回視聴')
+_SHORTS_VIEWS_EN = re.compile(r',\s*([\d,.]+)([KMB]?)\s*views?')
+
+
+def shorts_views(channel_id: str, timeout: float = 25.0, fetch=None) -> dict[str, dict] | None:
+    """公開ページの「ショート」の面から **本ごとの再生**を読む（**Data API 0単位**・上の註）。
+
+    返り: `{video_id: {"views": int, "title": str}}`（1ページ目 ＝ 新しい順 48本）。
+    読めなければ **`None`**（0本 ではない）。
+    """
+    url = CHANNEL_PAGE + channel_id + "/shorts"
+    try:
+        if fetch is not None:
+            html = fetch(url)
+        else:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": UA, "Accept-Language": "ja,en;q=0.8"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                html = r.read().decode("utf-8", "replace")
+    except Exception:
+        return None
+    out: dict[str, dict] = {}
+    for vid, text in _SHORTS_ITEM.findall(html):
+        try:
+            text = json.loads('"' + text + '"')
+        except Exception:
+            pass
+        m = _SHORTS_VIEWS.search(text) or _SHORTS_VIEWS_EN.search(text)
+        if not m:
+            continue
+        views = _subs_num(m.group(1), m.group(2) or "")
+        title = text[:m.start()].rstrip(" ,")
+        out[vid] = {"views": views, "title": title}
+    return out or None

@@ -1991,7 +1991,123 @@ SETTLE_WITHIN_H = 48
 SETTLE_MAX_IDS = 50
 
 
+def publish_times(rows: list[dict]) -> dict[str, dt.datetime]:
+    """台帳から **本ごとの公開の刻** を引く（**API 0単位**）。`scheduled`／`pending` の `publish_at` を先に、
+    無ければ `measured` の `at - age_h` から戻す（`measure --public` が齢を出すため・`cmd_measure` の註）。"""
+    out: dict[str, dt.datetime] = {}
+    for r in rows:
+        ev = r.get("event")
+        vid = r.get("video_id") or r.get("id")
+        if not vid:
+            continue
+        if ev in ("scheduled", "pending") and r.get("publish_at"):
+            try:
+                out[vid] = dt.datetime.fromisoformat(r["publish_at"]).astimezone(JST)
+            except ValueError:
+                continue
+        elif ev == "measured" and vid not in out and r.get("age_h") is not None and r.get("at"):
+            try:
+                out[vid] = (dt.datetime.fromisoformat(r["at"]).astimezone(JST)
+                            - dt.timedelta(hours=float(r["age_h"])))
+            except ValueError:
+                continue
+    return out
+
+
+def measure_public(rows: list[dict], page: dict | None, now: dt.datetime | None = None,
+                   within_h: float = MEASURE_WITHIN_H) -> list[dict]:
+    """`shorts_views` の読み（公開ページ・0単位）を、台帳へ書ける `measured` の行に組む（**書かない** ＝ 検査が読める）。
+
+    **なぜ在るか**（2026-09-19 11:xx・optimizer・Fable 5.1・ultracode）: 日枠が尽きた周は `refresh_stats`（1単位）も
+    通らず、09/19 01:37 〜 16:00 の **14時間** 台帳に再生の行が入りませんでした。その窓が、ASP の 1枚（クリック 11件）の
+    **分母**（リンクを持つ本が、置いてから何回 見られたか）の当の窓でした（`pubcheck.shorts_views` の註）。
+
+    **決まり**: 公開の刻が台帳で分かる本だけ（齢が出ない本は書かない ＝ `trend` の齢の表を汚さない）。`likes`／`comments` は
+    公開ページに無いので、**その本の直前の `measured` の値を持ち回り**、`likes_carried: True` を立てる（0 と書かない ＝ `views_of` の族）。
+    行には `src: "public_page"` を付け、`n_values` は付けない（API の読み直しではない）。
+    """
+    if not page:
+        return []
+    now = now or now_jst()
+    when = publish_times(rows)
+    last: dict[str, dict] = {}
+    for r in rows:
+        if r.get("event") == "measured" and r.get("id"):
+            last[r["id"]] = r
+    out = []
+    for vid, d in page.items():
+        t = when.get(vid)
+        if t is None:
+            continue
+        age = (now - t).total_seconds() / 3600
+        if age < 0 or age > within_h:
+            continue
+        prev = last.get(vid, {})
+        row = {"id": vid, "views": int(d["views"]), "likes": int(prev.get("likes", 0)),
+               "comments": int(prev.get("comments", 0)), "age_h": round(age, 1),
+               "title": (d.get("title") or prev.get("title") or "")[:40], "src": "public_page"}
+        if prev:
+            row["likes_carried"] = True
+        else:
+            row["likes_absent"] = True
+        out.append(row)
+    return out
+
+
+def cmd_asp_report(a):
+    """**ASP の画面（オーナーが貼った 1枚）を台帳へ写す**（**API 0単位**・2026-09-19 11:xx・optimizer・Fable 5.1・ultracode）。
+
+    **なぜ在るか**: 「押されたか」を知る口は ASP の画面 1つ だけ（`docs/FOR_OWNER.md` 窓【1】）。09/19 10:51 の 1枚
+    （クリック 11件・成果 0件・09/01〜09/19）は受け取り帳（`data/inbox.jsonl`）にしか無く、`trend` が読める形では
+    どこにも無かった。**画面が来た周は、この 1コマンド で台帳へ写す** —— `trend.asp_report_line` がその行から
+    押される率を引き、`PERF_CLICK_BAND` と突き合わせる（帯の外なら「引き直せ」と印字する）。
+
+    `--views` は **分母**（リンクを持つ本が、リンクを置いてから見られた回数）。ASP の画面には無いので、
+    こちらが台帳（`measured`・`redescribed`・`cta_comment` の刻）から数えて渡す。**分からなければ渡さない**
+    （率は出ず、件数だけが残る ＝ 0 と書かない）。`--views-low`／`--views-high` は分母の幅（低 ＝ 大きい分母）。
+    """
+    row = {"clicks": int(a.clicks), "actions": int(a.actions), "approved": int(a.approved),
+           "since": a.since, "until": a.until, "source": a.source}
+    if a.views is not None:
+        row["views"] = int(a.views)
+    if a.views_low is not None:
+        row["views_low"] = int(a.views_low)
+    if a.views_high is not None:
+        row["views_high"] = int(a.views_high)
+    if a.note:
+        row["note"] = a.note
+    if a.review:
+        row["review"] = a.review
+    if a.dry_run:
+        print("（--dry-run・書かない）", json.dumps(row, ensure_ascii=False))
+    else:
+        ledger("asp_report", "-", **row)
+    print(trend.asp_report_line(ledger_rows() + ([{**row, "event": "asp_report", "id": "-",
+                                                     "at": now_jst().isoformat(timespec="seconds")}]
+                                                  if a.dry_run else [])))
+    return 0
+
+
 def cmd_measure(a):
+    if getattr(a, "public", False):
+        # **日枠 0 の周の測り**（`measure_public` の註・**Data API 0単位**）。
+        rows = ledger_rows()
+        cid = last_channel_id(rows)
+        page = pubcheck.shorts_views(cid) if cid else None
+        if page is None:
+            print("**公開ページのショートの面が読めませんでした** ＝ **「0回」ではありません**"
+                  "（`pubcheck.shorts_views` の覆る条件 (1)・channel id "
+                  + (cid or "無し（台帳に `channel` 行が無い）") + "）")
+            return 1
+        made = measure_public(rows, page)
+        for row in made:
+            ledger("measured", row["id"], **{k: v for k, v in row.items() if k != "id"})
+        skipped = len(page) - len(made)
+        print(f"記した（公開ページ・0単位）: {len(made)}本（公開から {MEASURE_WITHIN_H / 24:.0f}日 以内・刻が台帳に在る本）"
+              f"・面に在って書かなかった {skipped}本（古い／刻が台帳に無い）")
+        for row in sorted(made, key=lambda r: r["age_h"]):
+            print(f"    {row['age_h']:6.1f}h  {row['views']:>6}回  {row['title'][:34]}")
+        return 0
     # **この測りが2点組に入るかを、撃つ前に言う**（2026-09-10 02:2x・optimizer・Opus。
     # `trend.pair_gap` の註 —— この回に、前の周の測りの 7.1分 後に測って分母を動かせなかった）。
     print(trend.pair_gap_line(ledger_rows()))
@@ -3305,7 +3421,23 @@ def main(argv=None):
                     help="日枠が足りなくても上げ直す（1本 1,650単位・**あすの 1本 を食います**）")
     rs = sub.add_parser("reschedule"); rs.add_argument("id"); rs.add_argument("--at", required=True)
     rs.add_argument("--force", action="store_true"); rs.add_argument("--dry-run", action="store_true")
-    sub.add_parser("measure")
+    mp = sub.add_parser("measure")
+    mp.add_argument("--public", action="store_true",
+                    help="日枠 0 の周の測り: 公開ページの「ショート」の面から再生を読む（**Data API 0単位**・`measure_public` の註）")
+    # **ASP の画面を台帳へ写す**（`cmd_asp_report` の註・**0単位**）。
+    ar = sub.add_parser("asp-report")
+    ar.add_argument("--clicks", type=int, required=True, help="クリック数（画面の合計）")
+    ar.add_argument("--actions", type=int, default=0, help="発生成果数")
+    ar.add_argument("--approved", type=int, default=0, help="承認成果数")
+    ar.add_argument("--since", required=True, help="画面の期間の始め（YYYY-MM-DD）")
+    ar.add_argument("--until", required=True, help="画面の期間の終わり（YYYY-MM-DD・画面を撮った日）")
+    ar.add_argument("--views", type=int, default=None, help="分母（リンクを置いてから見られた回数・こちらで数える）")
+    ar.add_argument("--views-low", type=int, default=None, dest="views_low", help="分母の幅・大きい側（率が低く出る側）")
+    ar.add_argument("--views-high", type=int, default=None, dest="views_high", help="分母の幅・小さい側（率が高く出る側）")
+    ar.add_argument("--source", default="owner_screen", help="どこから来た数か（既定 owner_screen）")
+    ar.add_argument("--review", default="", help="画面上部の審査の字（例: 審査中）")
+    ar.add_argument("--note", default="", help="受け取り帳の id など")
+    ar.add_argument("--dry-run", action="store_true", help="書かずに行と読みを印字（0単位）")
     # **透かし（登録ボタンの重ね）**（2026-09-16 15:3x・`yt.set_watermark` の註）。
     # **1回 50単位 で、公開ずみの長尺にも登録の口が 1つ 増える** ＝ いま在る腕でいちばん安い。
     # **詰まっている手を、日枠が戻った周に安い順で一気に撃つ**（`cmd_catchup` の註）。

@@ -2581,6 +2581,8 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     #  成果報酬は **台本と説明欄**（うちが毎日 作っている物）＝ **腕が届くのはこちらだけ**。
     #  **決めと覆る条件は `perf_need_rate` の註 ＝ ここへ数を写さないこと。**
     out.append(perf_line(rows))
+    # **押されたか（ASP の画面）**（2026-09-19 11:xx・`asp_report` の註）—— 上の行の帯の「押す側」の出どころ。
+    out.append(asp_report_line(rows))
     # **同じ日の散らばり**（2026-09-18 05:xx に足した・`same_day_spread` の註）——
     #  すぐ上の行は「形ごとの 1本あたり」で、**同じ形の中で本数を増やした効き**を訊けません。
     #  実測 09/16: 同じ日・同じ形・同じ族で 10:00 **1,191回** 対 12:00 **1回**。
@@ -9775,8 +9777,16 @@ def ungated_short(rows: list[dict], scripts_dir: "Path | None" = None) -> str:
 #: 成果報酬 1件 の単価の帯（**円/件**・低/中/高）。**未測**（うちは 1件も受けていない）。
 PERF_YEN_PER_ACTION_BAND = (3_000.0, 10_000.0, 20_000.0)
 
-#: 再生 → 説明欄のリンクを押す（低/中/高）。**未測**。ショート中心の口は低い側に出ます。
-PERF_CLICK_BAND = (0.0005, 0.003, 0.010)
+#: 再生 → リンクを押す（低/中/高）。**2026-09-19 11:xx に実測へ置き換えた**（前は未測の (0.0005, 0.003, 0.010)）。
+#: 実測: ASP の画面 **クリック 11件**（09/01〜09/19・オーナー 10:51・受け取り帳 `0ce171f4`・台帳 `asp_report`）。
+#: 分母は「リンクを持つ 10本 が、置いてから見られた回数」で、日枠 0 のため 09/19 01:37〜10:56 の台帳に行が無く、
+#: **幅で置く**（`docs/JOURNAL.md` 2026-09-19 11:xx の表）:
+#:   低 11 ÷ 4,919回（10本 の生涯の再生 全部 ＝ 置く前の分も分母に入れた側） ＝ 0.0022
+#:   中 11 ÷ 約2,100回（09/18 の 5本 の 22:11 以降 約1,400 ＋ 09/19 の 2本 709）  ＝ 0.0052
+#:   高 11 ÷ 約1,400回（09/18 の 5本 の分だけ・09/19 の本の分を除く側）      ＝ 0.0079
+#: **注意**: 押せる面が Shorts では無い期間（説明欄・コメント欄だけ・チャンネルのリンク欄は 10:5x から）の数。
+#: オーナーの確かめ押しが混じっていれば率は下がる（次の 1枚 が引き直す ＝ `asp_report_line` の覆る条件）。
+PERF_CLICK_BAND = (0.0022, 0.0052, 0.0079)
 
 #: 押した人 → 成果（低/中/高）。**未測**。無料相談・口座開設の族の目安。
 PERF_CONVERT_BAND = (0.02, 0.08, 0.20)
@@ -9803,10 +9813,21 @@ PERF_CONVERT_BAND = (0.02, 0.08, 0.20)
 # **押された数を 1度 取ること**（`docs/FOR_OWNER.md` の ASP の窓）。
 # クリックが 1度 入れば `PERF_CLICK_BAND` は 3つ とも実測に置き換わり、幅は 10倍（`PERF_CONVERT_BAND` だけ）に落ちます。
 #
+# **【2026-09-19 11:xx】(1) が引かれました** —— ASP の 1枚（クリック 11件）で `PERF_CLICK_BAND` を実測に置き換えた
+# （上の定義の註・台帳 `asp_report`・`asp_report_line`）。**幅は 10倍 ではなく約 36倍 に落ちました** ——
+# 押す側の実測そのものが分母の幅（3.6倍・日枠 0 で 09/19 01:37〜10:56 の台帳に行が無い）を持つため。
+# 数（5本/日 の側・`perf_short`・09/19 11:2x の台帳）: 低 **3.7倍**／中 **0.39倍**／高 **0.10倍** ＝ **1 を切るのは 3つ のうち 2つ** のまま、
+# 切らない 1つ は「分母を大きく取り・成果 2%」の側。**成果の側（`PERF_CONVERT_BAND`）は依然 未測**（11件 では
+# 成果 0件 は 8% でも期待 0.9件 ＝ 読めない・40件 まで待つ）。
+#
 # **覆る条件**:
 #  (1) `PERF_CLICK_BAND` が実測に置き換わったら、この段の「200倍」を数え直すこと（幅は 10倍 になるはず）。
+#      → **引いた**（上）。次は **2枚目 の ASP の画面**（チャンネルのリンク欄・説明欄が在る期間の数）で
+#      `asp_report_line` が「帯の外」と印字したら、定義を 2枚目 の数で引き直すこと。
 #  (2) 幅が **10倍 未満**まで落ちたら、中段 1つ の印字に戻してよい（読む側の行が 1行 減る）。
 #  (3) 低の側が 1 を切ったら（＝ どう読んでも届く）、この行ごと畳んでよい。
+#  (4) 成果が **1件** 出たら `PERF_CONVERT_BAND` を実測へ（クリック数を分母に・`asp_report` の `actions`／`clicks`）。
+#  (5) ASP の審査が「否認」で返ったら（`asp_report` の `review`）、この道は畳む（`perf_need_rate` 覆る条件 (2)）。
 # ---------------------------------------------------------------------------
 
 
@@ -9871,10 +9892,11 @@ def perf_line(rows: list, scripts_dir=None) -> str:
                 f" 再生/月 **{c['views_month']:,.0f}回** ＝ "
                 f"**{c['need_rate']*100:,.4f}%/回 ＝ {c['times']['中']:,.1f}倍**")
         t = c["times"]
-    out += (f"。**帯は 3つ とも 未測・幅 {t['低']/t['高']:,.0f}倍**（低 {t['低']:,.1f}倍／"
+    out += (f"。**押す側は実測（`PERF_CLICK_BAND` ＝ ASP の 1枚・クリック 11件・分母は幅）・成果と単価の側は未測・"
+            f"幅 {t['低']/t['高']:,.0f}倍**（低 {t['低']:,.1f}倍／"
             f"中 {t['中']:,.2f}倍／高 {t['高']:,.3f}倍）＝ **1 を切るのは 2つ だけ**で、"
-            "切らない側は `PERF_CLICK_BAND` の註が「ショート中心の口は低い側に出ます」と"
-            "名指しした側です。**次に要るのは CTA の磨きではなく、押された数を 1度 取ること**")
+            "切らない側は「分母を大きく取り・成果 2%」の側です。**次に要るのは 2枚目 の ASP の画面**"
+            "（押せる面が在る期間の分母・`asp_report_line`）と、成果 1件（`PERF_CONVERT_BAND` を実測へ）")
     out += ("。**すぐ上の行（企業案件）と、距離の形が違います** —— "
             "あちらは **相手の yes**（うちに腕が無い）、こちらは **台本と説明欄**"
             "（うちが毎日 作っている物）。**この行は『成果が出る』とは言いません** —— "
@@ -9900,16 +9922,101 @@ def perf_short(rows: list, scripts_dir=None) -> str:
         out += (f"（日枠が戻って {sponsor_daily_cap_videos():.0f}本/日 なら "
                 f"**{c['need_rate']*100:,.4f}%/回 ＝ {c['times']['中']:,.1f}倍**）")
         t = c["times"]
-    out += (f"。**ただし帯は 3つ とも 未測で、幅は {t['低']/t['高']:,.0f}倍 あります** ＝ "
+    out += (f"。**押す側は実測になりました**（ASP の 1枚・クリック 11件・09/19 10:51・`PERF_CLICK_BAND`）。"
+            f"**成果と単価の側は未測のまま、幅は {t['低']/t['高']:,.0f}倍** ＝ "
             f"低 **{t['低']:,.1f}倍**／中 **{t['中']:,.2f}倍**／高 **{t['高']:,.3f}倍**。"
-            "**1 を切るのは 3つ のうち 2つ だけ**で、切らない側は "
-            "`PERF_CLICK_BAND` の註が「ショート中心の口は低い側に出ます」と名指しした当の側です "
-            "＝ **この道が 1 を切るかどうかは、まだ測っていません**。"
-            "**幅が在るうちは CTA の字・置き場所を磨く周に値打ちが出ません**（幅の中の 1.2倍 は読めない）—— "
-            "**値打ちが在るのは幅を潰す手 1つ**（押された数を 1度 取る・`docs/FOR_OWNER.md` の ASP の窓）。"
+            "**1 を切るのは 3つ のうち 2つ だけ**で、切らない側は「分母を大きく取り・成果 2%」の側です "
+            "＝ **この道が 1 を切るかどうかは、成果の側（`PERF_CONVERT_BAND`）がまだ測れていません**"
+            "（11件 では 8% でも期待 0.9件 ＝ 成果 0件 は「出ない」と読めない・40件 まで待つ）。"
+            "**幅を潰す手は 2つ**: 2枚目 の ASP の画面（押せる面が在る期間の分母・`asp-report`）と、本を出し続けてクリックを 40件 まで積むこと。"
             "**門の外は 2つ で、腕が届くのはこちら**（あちらは相手の yes・こちらは台本と説明欄）。"
             "**成果が出るとは言っていません**（derivation は `trend.perf_need_rate`・**API 0単位**）")
+    out += asp_report_short(rows)
     return out
+
+
+#: 成果の側を読めると数える最小のクリック数（8% なら期待 3.2件 ＝ 0件 の確率 3.6%）。
+ASP_CLICKS_TO_READ_CONVERT = 40
+
+
+def asp_report(rows: list) -> dict | None:
+    """台帳のいちばん新しい `asp_report` 行（`cli asp-report`）から、押される率と成果の率を引く（**API 0単位**）。
+
+    返り: `{"clicks", "actions", "approved", "since", "until", "at", "review",
+             "views", "views_low", "views_high",
+             "click_rate": 中（views が無ければ None）, "click_low", "click_high",
+             "in_band": 中の率が `PERF_CLICK_BAND` の低〜高 の内か（None ＝ 分母なし）,
+             "convert_rate": actions/clicks（clicks が `ASP_CLICKS_TO_READ_CONVERT` 未満なら None）}`
+    無ければ `None`。**0件 の行と、行が無いのは別**（`None` を 0 と読まない）。
+    """
+    rep = None
+    for r in rows:
+        if r.get("event") == "asp_report":
+            rep = r
+    if not rep:
+        return None
+    clicks = int(rep.get("clicks", 0))
+    actions = int(rep.get("actions", 0))
+    views = rep.get("views")
+    lo_den = rep.get("views_low") or views
+    hi_den = rep.get("views_high") or views
+    out = {"clicks": clicks, "actions": actions, "approved": int(rep.get("approved", 0)),
+           "since": rep.get("since"), "until": rep.get("until"), "at": rep.get("at"),
+           "review": rep.get("review") or "", "views": views,
+           "views_low": lo_den, "views_high": hi_den,
+           "click_rate": (clicks / views) if views else None,
+           "click_low": (clicks / lo_den) if lo_den else None,
+           "click_high": (clicks / hi_den) if hi_den else None,
+           "convert_rate": (actions / clicks) if clicks >= ASP_CLICKS_TO_READ_CONVERT else None}
+    if out["click_rate"] is None:
+        out["in_band"] = None
+    else:
+        out["in_band"] = PERF_CLICK_BAND[0] <= out["click_rate"] <= PERF_CLICK_BAND[2]
+    return out
+
+
+def asp_report_line(rows: list) -> str:
+    """`asp_report` の 1行（`trend`・`asp-report` の印字）。**帯の外なら「引き直せ」と言う**（覆る条件 (1)）。"""
+    d = asp_report(rows)
+    head = "**ASP の画面（押されたか・`asp_report`・API 0単位）**: "
+    if d is None:
+        return head + "**まだ 1枚 も台帳に無い** ＝ 押される率は未測（画面が来た周に `cli asp-report` で写すこと）"
+    out = (head + f"クリック **{d['clicks']}件**・発生 **{d['actions']}件**・承認 {d['approved']}件"
+           f"（{d['since']}〜{d['until']}・写した刻 {str(d['at'])[:16]}）")
+    if d["review"]:
+        out += f"・画面上部「{d['review']}」 ＝ **否認なら成果は受け取れない**（`perf_need_rate` 覆る条件 (2)）"
+    if d["click_rate"] is None:
+        out += "。**分母（リンクを置いてから見られた回数）が無い** ＝ 率は出しません（件数だけ）"
+    else:
+        b = PERF_CLICK_BAND
+        out += (f"。押される率 **{d['click_rate']*100:.2f}%**"
+                + (f"（幅 {d['click_low']*100:.2f}〜{d['click_high']*100:.2f}%・分母 {d['views_low']:,}〜{d['views_high']:,}回）"
+                   if d["views_low"] != d["views_high"] else f"（分母 {d['views']:,}回）")
+                + f" 対 `PERF_CLICK_BAND` {b[0]*100:.2f}／{b[1]*100:.2f}／{b[2]*100:.2f}% ＝ "
+                + ("**帯の内**" if d["in_band"] else "**帯の外 ＝ `PERF_CLICK_BAND` をこの数で引き直すこと**（覆る条件 (1)）"))
+    if d["convert_rate"] is None:
+        out += (f"。成果の側は **まだ読めない**（クリック {d['clicks']}件 ＜ {ASP_CLICKS_TO_READ_CONVERT}件・"
+                f"8% でも期待 {d['clicks']*0.08:.1f}件）＝ 0件 を「出ない」と読まないこと")
+    else:
+        out += (f"。成果の率 **{d['convert_rate']*100:.1f}%**（{d['actions']}/{d['clicks']}）"
+                f" 対 `PERF_CONVERT_BAND` {PERF_CONVERT_BAND[0]*100:.0f}／{PERF_CONVERT_BAND[1]*100:.0f}／{PERF_CONVERT_BAND[2]*100:.0f}%"
+                + ("" if d["actions"] else " ＝ **案件を疑う側**（`asp.py` 覆る条件 (2)）"))
+    return out
+
+
+def asp_report_short(rows: list) -> str:
+    """`status` の `perf_short` の尾に付く短い形。行が無ければ空。"""
+    d = asp_report(rows)
+    if d is None:
+        return ""
+    s = f"。**ASP の画面（最新）**: クリック {d['clicks']}件・発生 {d['actions']}件（{d['since']}〜{d['until']}）"
+    if d["click_rate"] is not None:
+        s += f"・押される率 {d['click_rate']*100:.2f}%" + ("" if d["in_band"] else "（**帯の外 ＝ 引き直し**）")
+    if d["convert_rate"] is None:
+        s += f"・成果の側は {ASP_CLICKS_TO_READ_CONVERT}件 まで読まない"
+    if d["review"]:
+        s += f"・「{d['review']}」"
+    return s
 
 
 #: **題を変えた前後を比べるとき、後ろの窓がこれより短ければ判定を出しません**（時間）。
