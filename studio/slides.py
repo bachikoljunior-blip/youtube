@@ -64,6 +64,23 @@ LONG = Geom(1920, 1080, 1080 - 60, ((28, 54), (32, 48), (36, 44)), 300, 660, 400
 GEOMS = {"short": SHORT, "long": LONG}
 
 
+def sub_on_screen(sub: str, has_viz: bool) -> str:
+    """図が在るコマの小さい字（`sub`）。**図が在れば描きません**（2026-09-19 13:0x）。
+
+    オーナー `9155fe09`「**画面がある意味が文字だけになってんのどうにかしろよ**」——
+    実測すると、図の在るコマは同じ数を **3回** 字で書いていました:
+    `show`（手取り 1861万1300円）・`sub`（税金は合わせて138万8700円 退職金2000万円から引いて
+    手取りは1861万1300円）・字幕（`say`）。**`sub` は `say` の言い換えで、新しい情報を 0 持ちます。**
+    落とすと、その 200px が**図**に回ります（`viz_box` は `show` の下から取るので、自動で広がる）。
+
+    **板（`board`）のコマは今までどおり**（板は積み上がりで、`sub` とは別の物）。
+    **覆る条件**: (1) 図の在るコマの維持率（25%・50%）が、落とす前の本より下がったら戻すこと
+    —— そのときに落ちているのは「字の数」ではなく「読む所が 1つ 減ったこと」です。
+    (2) オーナーが `sub` について言葉を出したら、その言葉が正本。
+    """
+    return "" if has_viz else sub
+
+
 def geom_of(form: str) -> Geom:
     """形の名から幾何へ。知らない名は縦（`script.form_of` と同じ向き）。"""
     return GEOMS.get(form or "short", SHORT)
@@ -259,6 +276,48 @@ def draw_text_block(d: ImageDraw.ImageDraw, lines: list[str], fnt, top: int, fil
     return y
 
 
+# 字幕の色（**声がいまどこを言っているか**・2026-09-19 12:5x。オーナー `9155fe09`）。
+# 板の「いまの行」が黄色なので、**同じ言葉づかい**にする（画面の中で色の意味を 1つにする）。
+SAID = (200, 200, 200)       # もう言った
+NOW = (255, 225, 120)        # いま言っている
+YET = (125, 125, 125)        # まだ言っていない
+
+
+def draw_said_block(d: ImageDraw.ImageDraw, lines: list[str], fnt, top: int, say: str,
+                    lit: tuple[int, int], stroke_w: int = 0, gap: float = 1.35, width: int = W) -> int:
+    """字幕を **3色** で描く（もう言った／いま言っている／まだ）。`lit` は `say` の中の字の範囲。
+
+    **`wrap` は字を 1つも落とさない**ので、行を `say` の中で順に探せば字の位置が取れます
+    （`_hang` が句読点を前の行へ送っても、順は変わりません）。見失った行は
+    **今までどおり白 1色**で描きます ＝ **止まりません**。
+    """
+    y = top
+    off = 0
+    a, b = lit
+    for ln in lines:
+        i = say.find(ln, off)
+        if i < 0:
+            i, off2 = off, off + len(ln)
+        else:
+            off2 = i + len(ln)
+        parts = []
+        for k, ch in enumerate(ln):
+            g = i + k
+            c = NOW if a <= g < b else (SAID if g < a else YET)
+            if parts and parts[-1][1] == c:
+                parts[-1][0] += ch
+            else:
+                parts.append([ch, c])
+        w = d.textbbox((0, 0), ln, font=fnt)[2]
+        x = (width - w) // 2
+        for txt, c in parts:
+            d.text((x, y), txt, font=fnt, fill=c, stroke_width=stroke_w, stroke_fill=(0, 0, 0))
+            x += d.textlength(txt, font=fnt)
+        off = off2
+        y += int(fnt.size * gap)
+    return y
+
+
 # 札（tag）の色。声の言い回し（「たとえば」＝前提・「決まりでは」＝事実・「計算すると」）と同じ札を画面にも出す
 # （オーナー 12:3x「言い回しで、事実なのか前提なのかとか分かるようにした方が良い」・受け取り帳 `552fadf1`）
 TAG_COLORS = {"前提": (70, 130, 220), "しくみ": (0, 150, 160), "決まり": (60, 160, 90), "計算": (220, 150, 40),
@@ -385,14 +444,15 @@ def brand_strip(d: ImageDraw.ImageDraw, g: Geom, name: str | None = None) -> tup
 def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out: Path,
           progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = (),
           form: str = "short", viz: Image.Image | None = None, fast: bool = False,
-          brand: bool = True) -> Path:
+          brand: bool = True, lit: tuple[int, int] | None = None) -> Path:
     """1コマ 1枚。`viz` は動く図の 1枚（`studio/viz.draw` の RGBA）—— 在れば板の所に置き、板は描かない。
 
     `fast` は**動く途中の絵**にだけ使う（2026-09-17 21:xx に実測して足した）: `optimize=True` の PNG は
     写真の背景で **1枚 4秒** かかり（板だけの静止画も同じ ＝ 200コマ の長尺の焼きが 13分 の当のもの）、
     22枚 の動く絵で 1コマ 100秒 になりました。途中の絵は圧縮を最小にして 0.2秒 に落とし、
     **ffmpeg が読んだあと `render.build` が消します**（1枚 4MB × 数百枚 を残さない）。最後の 1枚 は今までどおり。"""
-    im = compose(show, sub, say, i, n, image, progress, tag, board, form, viz, brand=brand).convert("RGB")
+    im = compose(show, sub, say, i, n, image, progress, tag, board, form, viz, brand=brand,
+                 lit=lit).convert("RGB")
     if fast:
         im.save(out, "PNG", compress_level=1)
     else:
@@ -401,26 +461,49 @@ def slide(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out
 
 
 def slide_frames(show: str, sub: str, say: str, i: int, n: int, image: Path | None, out_dir: Path,
-                 seconds: float, viz_spec: dict, progress: bool = True, tag: str = "",
-                 board: list[str] | tuple[str, ...] = (), form: str = "short") -> list[tuple[Path, float]]:
-    """**動く図のコマ**（オーナー 2026-09-17 20:4x `d699098f`・`studio/viz.py` 冒頭）。
-    (PNG, その絵を出す秒) の列 —— 合計はコマの秒数。最後の 1枚 が `slide-{i:02d}.png`（sheet と同じ名）。"""
+                 seconds: float, viz_spec: dict | None, progress: bool = True, tag: str = "",
+                 board: list[str] | tuple[str, ...] = (), form: str = "short",
+                 plan: list[tuple[float, float, int, int]] | None = None) -> list[tuple[Path, float]]:
+    """**声に合わせて動くコマ**（オーナー 2026-09-19 12:3x `9155fe09`）。
+    (PNG, その絵を出す秒) の列 —— 合計はコマの秒数。最後の 1枚 が `slide-{i:02d}.png`（sheet と同じ名）。
+
+    `plan` は `narration.frame_plan` の刻み（秒・図の進み・光る字の範囲）。渡さなければ
+    **今までの形**（図を頭で 0.6〜1.8秒 動かし、字幕は白 1色）に落ちます ＝ 陰性対照。
+    `viz_spec` が None なら図は描かず、**字幕の光りだけ**が動きます（図の無いコマ）。
+    """
     from . import viz as V
     g = geom_of(form)
-    _, _, w, h = viz_box(g, _show_bottom(show, sub, tag, True, g))
-    fr = V.frames(viz_spec, seconds, (w, h))
+    _, _, w, h = viz_box(g, _show_bottom(show, sub_on_screen(sub, bool(viz_spec)), tag, True, g))
+    if plan is None:
+        if not viz_spec:
+            p = slide(show, sub, say, i, n, image, out_dir / f"slide-{i:02d}.png",
+                      progress, tag, board, form)
+            return [(p, seconds)]
+        fr = V.frames(viz_spec, seconds, (w, h))
+        plan = [(t, 0.0, 0, 0) for _ov, t in fr]
+        ovs = [ov for ov, _t in fr]
+        lits = [None] * len(fr)
+    else:
+        ovs = ([ov for ov, _t in V.frames_cued(viz_spec, seconds, (w, h), plan)]
+               if viz_spec else [None] * len(plan))
+        lits = [(a, b) for _d, _p, a, b in plan]
     out = []
-    for k, (ov, t) in enumerate(fr):
-        last = k == len(fr) - 1
+    for k, ((dt, _pr, _a, _b), ov, lit) in enumerate(zip(plan, ovs, lits)):
+        last = k == len(plan) - 1
         p = out_dir / (f"slide-{i:02d}.png" if last else f"slide-{i:02d}-{k:02d}.png")
-        slide(show, sub, say, i, n, image, p, progress, tag, board, form, viz=ov, fast=not last)
-        out.append((p, t))
+        slide(show, sub, say, i, n, image, p, progress, tag, board, form, viz=ov,
+              fast=not last, lit=lit)
+        out.append((p, dt))
     return out
 
 
 def is_transient_frame(p: Path) -> bool:
-    """動く途中の絵の名（`slide-03-07.png`）か。最後の 1枚（`slide-03.png`）は違う。"""
-    return bool(re.fullmatch(r"slide-\d{2}-\d{2}\.png", p.name))
+    """動く途中の絵の名（`slide-03-07.png`）か。最後の 1枚（`slide-03.png`）は違う。
+
+    **後ろは 2〜4桁**（2026-09-19 12:5x）—— 声に合わせた刻みは 1コマ 100枚 を越えることが在り、
+    2桁 で見ていると `slide-03-100.png` が**消され残って**ディスクに積みます（1枚 4MB）。
+    """
+    return bool(re.fullmatch(r"slide-\d{2}-\d{2,4}\.png", p.name))
 
 
 def _show_bottom(show: str, sub: str, tag: str, with_board: bool, g: Geom) -> int:
@@ -444,7 +527,10 @@ def _show_bottom(show: str, sub: str, tag: str, with_board: bool, g: Geom) -> in
 
 def compose(show: str, sub: str, say: str, i: int, n: int, image: Path | None,
             progress: bool = True, tag: str = "", board: list[str] | tuple[str, ...] = (),
-            form: str = "short", viz: Image.Image | None = None, brand: bool = True) -> Image.Image:
+            form: str = "short", viz: Image.Image | None = None, brand: bool = True,
+            lit: tuple[int, int] | None = None) -> Image.Image:
+    """`lit` は **声がいま言っている字の範囲**（`say` の中・`studio/narration.py`）。
+    None なら字幕は今までどおり白 1色 ＝ **公開ずみの本の絵は 1画素も動きません**（陰性対照）。"""
     g = geom_of(form)
     W, H = g.w, g.h
     SUB_BOTTOM = g.sub_bottom
@@ -462,6 +548,7 @@ def compose(show: str, sub: str, say: str, i: int, n: int, image: Path | None,
     if viz is not None:
         board_like = True
         board = []
+        sub = sub_on_screen(sub, True)      # 図が在れば `sub` は描かない（同じ註）
     else:
         board_like = bool(board)
     show_bottom = 0
@@ -533,7 +620,10 @@ def compose(show: str, sub: str, say: str, i: int, n: int, image: Path | None,
         box_h = lh * len(lines) + 50
         top = SUB_BOTTOM - box_h
         d.rounded_rectangle([50, top, W - 50, SUB_BOTTOM], radius=24, fill=(0, 0, 0, 165))
-        draw_text_block(d, lines, fnt, top + 25, (255, 255, 255), gap=1.35, width=W)
+        if lit is None:
+            draw_text_block(d, lines, fnt, top + 25, (255, 255, 255), gap=1.35, width=W)
+        else:
+            draw_said_block(d, lines, fnt, top + 25, say, lit, gap=1.35, width=W)
     return im
 
 

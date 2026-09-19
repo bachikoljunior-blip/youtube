@@ -406,3 +406,90 @@ def frames(spec: dict, seconds: float, size: tuple[int, int]) -> list[tuple[Imag
         im, t = out[-1]
         out[-1] = (im, t + hold)
     return out
+
+
+# ---------------------------------------------------------------- 声に合わせる（2026-09-19 12:4x）
+# オーナー `9155fe09`「ナレーションとアニメーションの表現をリンクさせたりしないとわかりやすくなんない
+# でしょ？画面がある意味が文字だけになってんのどうにかしろよ」——
+# **冒頭の覆る条件 (3)「オーナーが画面の動きに言葉を出したら、その言葉が正本」を、この言葉が引きました。**
+#
+# 上の `anim_seconds`（コマの頭 0.6〜1.8秒）は **「声が言い終わるより先に絵が出来ている」** 形でした。
+# ここから下は、**歩ごとに、その数を声が言う瞬間へ**合わせます（刻みは `studio/narration.py`）。
+# `anim_seconds` と `frames` は**残します** —— 声が無い所（`say` が空・数が 1つも出ない図）の逃げ道で、
+# `frames_cued` に窓を渡さなければ今までと同じ絵が出ます（陰性対照）。
+
+
+def steps(spec: dict) -> int:
+    """図の**歩の数**。`_slot` / `_draw_table` が進み 0〜1 を割っている数と**同じ式**（写しを持たない）。"""
+    kind = spec.get("kind")
+    if kind == "bars":
+        return len(spec.get("items") or []) + (1 if spec.get("total") else 0)
+    if kind == "waterfall":
+        return 2 + len(spec.get("steps") or [])
+    if kind == "table":
+        return len(spec.get("rows") or [])
+    return 1
+
+
+def _keys_of(item: dict, unit: str) -> list[str]:
+    """1歩 の**声の中の手がかり**（先に当たったものを採る）。値の字 → `text` → 札の順。"""
+    out = []
+    if "value" in item:
+        out.append(fmt_num(float(item["value"]), unit))
+    if item.get("text"):
+        out.append(str(item["text"]))
+    if item.get("label"):
+        out.append(str(item["label"]))
+    return [s for s in out if s]
+
+
+def step_keys(spec: dict) -> list[list[str]]:
+    """歩ごとの手がかりの列（`narration.cue_windows` に渡す）。長さは `steps(spec)` と同じ。
+
+    **声は数を言います** —— 「枠は800万円です」。図の歩が持っているのも同じ数なので、
+    **数そのものが、声と絵をつなぐ鍵**です（新しい注釈を台本に足さなくて済む ＝
+    公開ずみ・在庫ずみの台本が 1字も要りません）。
+    """
+    unit = spec.get("unit", "円")
+    kind = spec.get("kind")
+    if kind == "bars":
+        out = [_keys_of(it, unit) for it in (spec.get("items") or [])]
+        if spec.get("total"):
+            out.append(_keys_of(spec["total"], unit))
+        return out
+    if kind == "waterfall":
+        return ([_keys_of(spec["start"], unit)]
+                + [_keys_of(s, unit) for s in (spec.get("steps") or [])]
+                + [_keys_of(spec["end"], unit)])
+    if kind == "table":
+        out = []
+        for r in (spec.get("rows") or []):
+            cells = [str(c) for c in r if str(c).strip()]
+            nums = [c for c in cells if _HAS_DIGIT.search(c)]
+            out.append((nums[::-1] or cells[::-1]))   # 数のあるマスを右から（行の答えは右端）
+        return out
+    return [[]] * steps(spec)
+
+
+_HAS_DIGIT = re.compile(r"[0-9０-９]")
+
+
+def frames_cued(spec: dict, seconds: float, size: tuple[int, int],
+                plan: list[tuple[float, float, int, int]]) -> list[tuple[Image.Image, float]]:
+    """`narration.frame_plan` の刻みで描く。(絵, その絵を出す秒) —— **合計はコマの秒数**。
+
+    同じ進みが続く刻は **同じ絵を使い回します**（描き直さない ＝ 焼きの時間が増えない）。
+    """
+    cache: dict[int, Image.Image] = {}
+    out = []
+    for dt, pr, _a, _b in plan:
+        # **切り捨て**（丸めではない）。丸めると 2/3 が 0.667 になり、**まだ動いていない歩**が
+        # `_slot` で 0.001 だけ進んで見えます —— 実測 2026-09-19 13:0x: 退職金の本のコマ7 で
+        # 「手取り」の棒が、声がまだ税金の話をしている間に **5万5800円** と出ていました
+        # （18,611,300 × 0.003）。**歩の境目は、越えないほうへ倒すこと。**
+        k = int(max(0.0, min(1.0, pr)) * 10000)
+        im = cache.get(k)
+        if im is None:
+            im = cache[k] = draw(spec, size, k / 10000.0)
+        out.append((im, dt))
+    return out

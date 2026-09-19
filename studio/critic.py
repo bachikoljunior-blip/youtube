@@ -182,10 +182,16 @@ def critique_screen(s: Script) -> str:
     """critique に渡す画面と声の写し。**札（tag）と まん中の板（board）も渡す**（2026-09-10 13:2x・hourly・Fable）——
     §14 の 10:0x は「声の中だけで閉じている数列」を critique が拾わなかった実測。板に数列が出れば、critic はそれを読める。
     検査 `tests/test_studio_slides_board.py`。"""
+    from .slides import sub_on_screen
     out = ""
     for i, seg in enumerate(s.segments, 1):
         head = f"コマ{i}" + (f" [札: {seg.tag}]" if seg.tag else "")
-        out += f"{head} 画面「{seg.show}」{('/' + seg.sub) if seg.sub else ''}\n"
+        # **画面に出ている字だけを渡す**（2026-09-19 13:1x）—— 図の在るコマの `sub` は
+        # 2026-09-19 13:0x から**描いていません**（`slides.sub_on_screen`）。
+        # ここに渡し続けると、critic は**画面に無い字**を読んで「画面に出ている」と判じます
+        # ＝ この repo でいちばん多い壊れ方（言っている所と、している所が別）の、この行ぶん。
+        shown = sub_on_screen(seg.sub, bool(seg.viz))
+        out += f"{head} 画面「{seg.show}」{('/' + shown) if shown else ''}\n"
         if seg.viz:
             # **動く図**（2026-09-17 21:xx・`studio/viz.py`）。図が在るコマは板の代わりに図が画面に出る
             from .viz import describe

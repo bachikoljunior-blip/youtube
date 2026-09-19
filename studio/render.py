@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import narration, viz as _viz
 from .common import probe_duration, run, workdir
 from .script import Script, part_images
 from .slides import contact_sheet, is_transient_frame, slide, slide_frames
@@ -31,16 +32,24 @@ def build(s: Script, image: Path | None = None, parts: dict[str, Path] | None = 
     entries: list[tuple[Path, float]] = []
     for i, (seg, nm, t) in enumerate(zip(s.segments, names, durs), 1):
         bg = parts.get(nm) or image
-        if seg.viz:
-            fr = slide_frames(seg.show, seg.sub, seg.say, i, n, bg, d, t, seg.viz,
-                              tag=seg.tag, board=seg.board, form=s.form)
-            entries += fr
-            pngs.append(fr[-1][0])
-        else:
+        # **声の時計**（`studio/narration.py`・オーナー 2026-09-19 12:3x `9155fe09`
+        # 「ナレーションとアニメーションの表現をリンクさせたりしないとわかりやすくなんないでしょ？」）。
+        # 図の 1歩 は**その数を声が言う瞬間**に動き、字幕は**いま言っている句**が光る。
+        tl = narration.timeline(seg.say, t, s.yomi)
+        wins = (narration.cue_windows(seg.say, t, _viz.step_keys(seg.viz), s.yomi)
+                if seg.viz else [])
+        plan = narration.frame_plan(t, tl, wins, _viz.steps(seg.viz) if seg.viz else 0)
+        if len(plan) <= 1 and not seg.viz:
+            # 句が 1つ しか無いコマ（光りが動かない）は、今までどおり 1枚。焼きを増やさない
             p = slide(seg.show, seg.sub, seg.say, i, n, bg, d / f"slide-{i:02d}.png",
                       tag=seg.tag, board=seg.board, form=s.form)
             entries.append((p, t))
             pngs.append(p)
+            continue
+        fr = slide_frames(seg.show, seg.sub, seg.say, i, n, bg, d, t, seg.viz or None,
+                          tag=seg.tag, board=seg.board, form=s.form, plan=plan)
+        entries += fr
+        pngs.append(fr[-1][0])
     lst = d / "slides.txt"
     lines = []
     for p, t in entries:
@@ -65,7 +74,8 @@ def build(s: Script, image: Path | None = None, parts: dict[str, Path] | None = 
     (d / "build.sig").write_text(sig, encoding="utf-8")
     return {"mp4": mp4, "wavs": wavs, "durations": durs, "total": probe_duration(mp4),
             "sheet": sheet, "slides": pngs, "sig": sig,
-            "frames": len(entries), "viz": sum(1 for g in s.segments if g.viz)}
+            "frames": len(entries), "viz": sum(1 for g in s.segments if g.viz),
+            "cued": sum(1 for g in s.segments if g.viz)}
 
 
 def built_sig(vid: str) -> str | None:
