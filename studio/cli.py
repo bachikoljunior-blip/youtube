@@ -32,7 +32,7 @@ from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
-from . import analytics, asp, budget, critic, demand, hear, meter, peers, pubcheck, render, reporting, script, stall, trend, yt
+from . import analytics, asp, budget, critic, demand, hear, meter, peers, pubcheck, render, reporting, script, sponsor, stall, trend, yt
 from . import common
 from .common import JST, ROOT, ledger, ledger_rows, now_jst, today_jst, workdir
 
@@ -918,6 +918,19 @@ def cmd_status(a):
     ul = trend.ungated_short(ledger_rows())
     if ul:
         print("  " + ul)
+    # **その 1行 の下に「歩く手」を置く**（2026-09-20 04:xx・optimizer・Opus 5・ultracode・**API 0単位**）——
+    # すぐ上の行は 2026-09-18 から **「企業案件は相手の yes ＝ こちらに腕が無い」**と書き、
+    # **その道を歩く手を 1つ も置きませんでした**（下の `cmd_asp` の 15:4x の註が、その字です）。
+    # ところが **門の外で相場の中に入るのは、測った範囲でこの道だけ**です
+    # （6本/日 で **0.89倍**・成果報酬は 0.3倍 だが扉とクリック 105倍 が要る・広告は期限の 485日 後）。
+    # **媒体資料・相手の一覧・文面は、台帳だけで作れます**（API 0単位）＝ 腕は在りました。
+    # 決めと覆る条件は `studio/sponsor.py` の註（**ここへ決めを書かないこと**）。
+    try:
+        sl = sponsor.short(ledger_rows())
+        if sl:
+            print("  " + sl)
+    except Exception as e:      # 台帳の形が違う回でも `status` を止めない
+        print(f"  **企業案件を歩く手**: 読めませんでした（{e.__class__.__name__}: {e}）")
     # **門の外の分子、その2（成果報酬）**（2026-09-18 15:4x・optimizer・Opus）——
     # すぐ上の行は門の外を **企業案件 1つ** と数え、**その道を歩く手を 1つ も置けませんでした**
     # （相手の yes が要るので、うちの側に腕がありません）。**こちらは相手の yes が要りません** ——
@@ -3357,6 +3370,34 @@ def cmd_catchup(a):
     return 0
 
 
+def cmd_sponsor(a):
+    """**企業案件の 媒体資料・相手の一覧・文面を出す**（**API 0単位**・台帳だけ）。
+
+    2026-09-20 04:xx・optimizer・Opus 5・ultracode。**なぜ在るか**: `cmd_status` の
+    `ungated_short` の下の註（＝ この repo が 2日 「腕が無い」と書き続けた所）。
+    **決めと覆る条件は `studio/sponsor.py` の註 ＝ ここへ写さないこと。**
+
+    既定は媒体資料 1枚。`--letter` で文面（`--to N` で `TARGETS` の N番目 に宛てる）、
+    `--targets` で相手の一覧。**`--all` はオーナーの窓へそのまま貼れる形**（一覧 ＋ 文面）。
+    """
+    rows = ledger_rows()
+    if a.targets or a.all:
+        print("# 声を掛ける相手（**口を読んだ順**・`studio/sponsor.py` `TARGETS`）\n")
+        for i, t in enumerate(sponsor.TARGETS):
+            mark = "**口を読んだ**" if t["checked"] else "**未確認 ＝ 出す前に 1度 開くこと**"
+            print(f"{i}. {t['name']}（{t['cat']}）— {mark}")
+            print(f"   宛先: {t['route']}")
+            print(f"   なぜ: {t['why']}")
+            print(f"   出どころ: {t['src']}\n")
+    if a.letter or a.all:
+        tgt = None
+        if a.to is not None and 0 <= a.to < len(sponsor.TARGETS):
+            tgt = sponsor.TARGETS[a.to]
+        print(sponsor.letter(rows, tgt))
+    if not (a.targets or a.letter or a.all):
+        print(sponsor.sheet(rows))
+
+
 def cmd_asp(a):
     """**上がっている本の説明欄に、成果報酬の塊を入れ直す**（`videos.update` 50単位/本）。
 
@@ -3622,6 +3663,12 @@ def main(argv=None):
     rp.add_argument("--dry-run", action="store_true")
     # **成果報酬のリンクを、もう上がっている本の説明欄へ**（`cmd_asp` の註・`studio/asp.py`）。
     # 既定の相手は「まだ公開していない予約」＝ **これから配られる側**（台帳から引く・0単位）。
+    # **企業案件を歩く手**（`cmd_sponsor` の註・`studio/sponsor.py`）。**API 0単位**。
+    sp_p = sub.add_parser("sponsor")
+    sp_p.add_argument("--letter", action="store_true", help="貼るだけの文面（既定は媒体資料 1枚）")
+    sp_p.add_argument("--targets", action="store_true", help="声を掛ける相手の一覧")
+    sp_p.add_argument("--to", type=int, default=None, metavar="N", help="`TARGETS` の N番目 に宛てる")
+    sp_p.add_argument("--all", action="store_true", help="一覧 ＋ 文面（オーナーの窓へ貼る形）")
     asp_p = sub.add_parser("asp")
     asp_p.add_argument("--ids", default="", help="video_id をコンマ区切りで名指し（既定は未公開の予約 全部）")
     asp_p.add_argument("--published", type=int, default=0, metavar="N",

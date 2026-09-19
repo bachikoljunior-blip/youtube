@@ -7582,3 +7582,17 @@
 {"seconds": 69.3, "image": true, "chars": 387, "scenes": [8.1, 8.5, 7.5, 5.5, 8.2, 5.6, 5.9, 7.4, 5.7, 7.0], "sig": "4:b907fb88d931", "at": "2026-09-20T03:12:12+09:00", "id": "2026-09-24-maisouryou-kazoku-short", "event": "built"}
 {"seconds": 72.8, "image": true, "chars": 406, "scenes": [7.6, 8.0, 7.7, 8.0, 8.2, 7.7, 5.9, 7.0, 5.7, 7.0], "sig": "4:c387bb68070b", "at": "2026-09-20T03:13:30+09:00", "id": "2026-09-24-maisouryou-taishoku-3kagetsu-short", "event": "built"}
 {"seconds": 71.2, "image": true, "chars": 395, "scenes": [8.9, 8.1, 6.4, 7.3, 8.2, 6.5, 5.9, 7.2, 5.7, 7.0], "sig": "4:1783f65586f2", "at": "2026-09-20T03:14:54+09:00", "id": "2026-09-24-maisouhi-jippi-short", "event": "built"}
+{"subs": 43, "views": 96951, "videos": 293, "title": "カワウソの年金計算室", "at": "2026-09-20T03:49:23+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-19T22:00:00Z", "meta_drift": [], "at": "2026-09-20T03:49:24+09:00", "id": "MNT83q6wQCg", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T01:00:00Z", "meta_drift": [], "at": "2026-09-20T03:49:24+09:00", "id": "1OpfbzDeabE", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T03:00:00Z", "meta_drift": [], "at": "2026-09-20T03:49:25+09:00", "id": "MLL4JQmxjvw", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T06:00:00Z", "meta_drift": [], "at": "2026-09-20T03:49:25+09:00", "id": "npqWaTf9JlY", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T09:00:00Z", "meta_drift": [], "at": "2026-09-20T03:49:25+09:00", "id": "Se7er7lwcJc", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T12:00:00Z", "meta_drift": [], "at": "2026-09-20T03:49:25+09:00", "id": "TOQq91UQW7g", "event": "ready_checked"}
+{"views_live": 273, "views_ledger": 0, "over": 273, "age_h": 17.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "oNiKmRKi4N4", "event": "views_over"}
+{"views_live": 1049, "views_ledger": 709, "over": 340, "age_h": 20.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "o_c9fMHlIq4", "event": "views_over"}
+{"views_live": 1051, "views_ledger": 1046, "over": 5, "age_h": 33.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "ktbvrdAeavA", "event": "views_over"}
+{"views_live": 957, "views_ledger": 802, "over": 155, "age_h": 36.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "49Wa5jNNzOk", "event": "views_over"}
+{"views_live": 995, "views_ledger": 847, "over": 148, "age_h": 39.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "qqlUo148_cg", "event": "views_over"}
+{"views_live": 1130, "views_ledger": 1076, "over": 54, "age_h": 41.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "2u22TXSLyno", "event": "views_over"}
+{"views_live": 1188, "views_ledger": 1165, "over": 23, "age_h": 44.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "tQPfODv61vg", "event": "views_over"}
