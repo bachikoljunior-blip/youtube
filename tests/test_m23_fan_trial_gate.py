@@ -49,6 +49,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import eta  # noqa: E402
 
+from src import house_rule  # noqa: E402  ← 規則の数は写さず、ここから引く（2026-09-20）
+
 
 def test_the_number_matches_means_md():
     """**写しがずれたら赤くすること。** 出どころは `docs/MEANS.md` M23。"""
@@ -177,9 +179,23 @@ def test_the_two_notes_compose_instead_of_competing():
 
     **覆る条件**: 公開本数が規則に収まれば `rule_sustain_lines()` は消え、
     この但し書きも一緒に消えます（下の2件目がそれを見ています）。
+
+    **【2026-09-20 03:xx・optimizer】`views_per_day` の生の数（2,724）が死んでいました。**
+    `rule_sustain_lines()` の門は `views > per_video_now × PUBLISH_PER_DAY × 1.2` で、
+    **`PUBLISH_PER_DAY` は 2026-09-05 に 1 → 10 になっています**
+    （`src/house_rule.PUBLISH_PER_DAY` の註）。**＝ 942 × 10 × 1.2 ＝ 11,304 で、
+    2,724 はその下** ＝ この検査は**あちらが消えた側**を見に行っていました
+    （落ちていたのは 1件目 の `assert` で、**中身の「順に掛かる」ではありません**）。
+
+    **規則の数を、検査に写さないこと** —— 写した瞬間、規則が動いた日に
+    **検査のほうが古くなります**（この repo でいちばん多い壊れ方の、検査の側）。
+    **いまは規則から引いて、註が言う 2.89倍 だけを持ちます。**
     """
-    a_now = {"subs_per_day": 0.8638, "views_per_day": 2724.0,
-             "per_video_now": 942.0}
+    per_video = 942.0
+    # **2.89 は docstring の「規則の下では 1/2.89」そのもの**（この数だけが この検査の持ち物）。
+    a_now = {"subs_per_day": 0.8638,
+             "views_per_day": per_video * float(house_rule.PUBLISH_PER_DAY) * 2.89,
+             "per_video_now": per_video}
     assert eta.rule_sustain_lines(a_now), "前提が崩れています（あちらが出ていない）"
     note = eta.observed_gate_note(977, a_now)
     assert "順に掛かります" in note, (
