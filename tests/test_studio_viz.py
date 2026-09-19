@@ -191,3 +191,62 @@ def test_繰り上げの連作は山場に折れ線を持つ():
         assert viz.check(res["viz"]) == []
         # 交わる齢の字が、声の中にそのまま在る（＝ `cue_windows` が当てられる）
         assert res["viz"]["cross"]["at"] in res["say"]
+
+
+# ------------------------------------------------- 表の中の長さ（2026-09-19 14:5x・「画面が文字だけ」の側）
+
+def test_同じ単位の数が縦に並ぶ列には棒が引ける():
+    head = ["辞めたときの年齢", "上限 1日"]
+    rows = [["60〜64歳", "7830円"], ["45〜59歳", "9110円"], ["30〜44歳", "8270円"], ["30歳未満", "7450円"]]
+    got = viz.table_bar_column(head, rows)
+    assert got is not None
+    j, nums = got
+    assert j == 1 and nums == [7830, 9110, 8270, 7450]
+
+
+def test_棒を引かない4つ():
+    """**どれも「引くと嘘になる」所**（`table_bar_column` の註の 1〜4）。"""
+    # 3. 単位の無い**番号**（この回に踏んで外した: 「1 家族／2 自分／3 退職金」に棒が引かれていた）
+    assert viz.table_bar_column(["見るところ", "中身"],
+                                [["1 家族", "養っているか"], ["2 自分", "障害者・寡婦"],
+                                 ["3 退職金", "家族の見込み"]]) is None
+    # 3. 単位が混ざる計算の並び
+    assert viz.table_bar_column([], [["先に受け取る分", "684万円"], ["65歳からの差", "毎月 3万6000円"],
+                                     ["追いつかれるまで", "190か月"]]) is None
+    # 4. ほとんど揃っている（棒が全部 同じ長さの飾りになる）
+    assert viz.table_bar_column(["歳", "その歳"],
+                                [["60歳", "190か月"], ["61歳", "202か月"]]) is None
+    # 1. 行が 1行（比べる相手がいない）
+    assert viz.table_bar_column(["枠", "額"], [["20年まで", "40万円"]]) is None
+    # 2. 読めないマスが混ざる
+    assert viz.table_bar_column(["線", "65歳以上"], [["所得税", "214万円"], ["住民税", "—"]]) is None
+
+
+def test_値の大きい行のほうが_マスの中の塗りが長い():
+    # 3行。**いちばん下の行は黄色く光る**（橙の棒）ので、青で比べるのは上の 2行。
+    spec = {"kind": "table", "head": ["年齢", "上限 1日"],
+            "rows": [["45〜59歳", "9110円"], ["30歳未満", "7450円"], ["60〜64歳", "7830円"]]}
+    im = viz.draw(spec, (900, 400), 1.0)
+    assert viz.table_bar_column(spec["head"], spec["rows"])[0] == 1
+    blue = []
+    for y in range(im.height):
+        for x in range(im.width):
+            p = im.getpixel((x, y))
+            if p[3] > 60 and p[2] > p[0] + 20:
+                blue.append((x, y))
+    assert blue, "青の棒が 1画素 も無い ＝ 引かれていない"
+    ys = sorted({y for _x, y in blue})
+    mid = (ys[0] + ys[-1]) // 2
+    top_w = len({x for x, y in blue if y <= mid})
+    bot_w = len({x for x, y in blue if y > mid})
+    assert top_w > bot_w, "9110円 の行の棒が、7450円 の行より長い"
+
+
+def test_陰性対照_文の表は1画素も変わらない():
+    """数が無い表は、**この変更の前と同じ絵**（`table_bar_column` が None）。"""
+    spec = {"kind": "table", "head": ["この紙", "人"],
+            "rows": [["出さなくていい人", "いる"], ["出さないと損する人", "いる"]]}
+    assert viz.table_bar_column(spec["head"], spec["rows"]) is None
+    im = viz.draw(spec, (900, 400), 1.0)
+    px = [p for p in im.getdata() if p[3] > 60 and p[2] > p[0] + 20]
+    assert not px, "青の棒が出ている ＝ 文の表に長さを引いている"

@@ -376,6 +376,84 @@ def _draw_waterfall(d, spec, W, H, p, unit, pad):
                stroke_width=2, stroke_fill=(0, 0, 0))
 
 
+_Z = str.maketrans("０１２３４５６７８９", "0123456789")
+_NUM_TOK = re.compile(r"(?:\d+億)?(?:\d+万)?\d+|(?:\d+億)(?:\d+万)?|\d+万")
+_CELL_UNITS = ("円", "歳", "か月", "ヶ月", "カ月", "年", "日", "%", "％", "倍", "人", "回", "分")
+#: 棒を引くのに要る「いちばん小さい値 ÷ いちばん大きい値」の上限。
+#: これより揃っていると棒は全部 同じ長さに見え、**字より分かりにくい飾り**になります
+#: （実物: 「80歳10か月・81歳10か月…84歳10か月」＝ 0.95）。
+TABLE_BAR_SPREAD = 0.85
+
+
+def cell_value(c: str) -> tuple[float, str] | None:
+    """表の 1マス の (値, 単位)。**数が 1つ でなければ None**（「30年2か月」「7割」は読まない）。
+
+    「2万100円」→ (20100, "円")・「50日分」→ (50, "日")・「1年以上」→ (1, "年")。
+    """
+    t = str(c).translate(_Z)
+    ms = _NUM_TOK.findall(t)
+    if len(ms) != 1:
+        return None
+    m = _NUM_TOK.search(t)
+    tok = m.group()
+    v = 0.0
+    g = re.match(r"(\d+)億", tok)
+    if g:
+        v += int(g.group(1)) * 10 ** 8
+        tok = tok[g.end():]
+    g = re.match(r"(\d+)万", tok)
+    if g:
+        v += int(g.group(1)) * 10 ** 4
+        tok = tok[g.end():]
+    if tok:
+        if not tok.isdigit():
+            return None
+        v += int(tok)
+    rest = t[m.end():]
+    u = next((x for x in _CELL_UNITS if rest.startswith(x)), "")
+    return (v, u)
+
+
+def table_bar_column(head: list, rows: list) -> tuple[int, list[float]] | None:
+    """表の中で**棒を引いてよい列**と、その値。引けなければ None。**API 0単位**。
+
+    オーナー 2026-09-19 12:3x `9155fe09`「**画面がある意味が文字だけになってんのどうにかしろよ**」。
+    この回（14:5x・optimizer・Opus 5・ultracode）に在庫 42本 の表 173 を数えたら:
+
+        棒が引ける         **26**（15%）—— 同じ単位の数が縦に並んでいる表
+        引けない          147     —— 「出さなくていい人／いる」のような**文の表**・
+                                  単位が混ざる計算の並び（「684万円／毎月3万6000円／190か月」）
+
+    **引けない 147 は、棒では直りません**（数が無い・比べる軸が無い）。
+    そちらは「その図がこのコマに要るか」＝ 台本の側です。**ここで無理に引かないこと** ——
+    下の 4つ の門は、どれも「引くと嘘になる」所を外しています:
+
+      1. 行が 2行 未満／列が 2列 未満   … 比べる相手がいない
+      2. その列に**読めないマス**が 1つ でも在る … 並びが欠ける
+      3. 単位が 2つ 以上、または**単位が無い** … 「1 家族／2 自分／3 退職金」の
+         **番号**に棒を引いた（実測・この回に踏んで外した）
+      4. いちばん小さい ÷ いちばん大きい > `TABLE_BAR_SPREAD` … 全部 同じ長さの飾り
+
+    列は**右から**探します（行の答えは右端 ＝ `step_keys` と同じ向き）。
+    """
+    rows = [[str(c) for c in r] for r in (rows or [])]
+    ncol = len(head) if head else (len(rows[0]) if rows else 0)
+    if len(rows) < 2 or ncol < 2:
+        return None
+    for j in range(ncol - 1, -1, -1):
+        vals = [cell_value(r[j]) if j < len(r) else None for r in rows]
+        if any(v is None for v in vals):
+            continue
+        us = {u for _, u in vals}
+        if len(us) != 1 or not next(iter(us)):
+            continue
+        nums = [v for v, _ in vals]
+        if max(nums) <= 0 or min(nums) / max(nums) > TABLE_BAR_SPREAD:
+            continue
+        return j, nums
+    return None
+
+
 def _draw_table(d, spec, W, H, p, unit, pad):
     # 箱が低い（縦で show が 4行 のコマ ＝ 約 300px）ときは題を描かない —— 題＋見出し＋4行 を 300px に入れると
     # 字が 24px まで落ちる（実物: 09/18 ショートのコマ8・sheet）。題は show が同じ字を持っている。
@@ -399,6 +477,9 @@ def _draw_table(d, spec, W, H, p, unit, pad):
     f = _font(FONT_BOLD, fsz)
     y = top
     shown = int(math.floor(p * len(rows) + 1e-9)) if p < 1 else len(rows)
+    # **数が縦に並ぶ列には、そのマスの中に長さを引く**（オーナー 09/19 12:3x「画面が文字だけ」）。
+    # 引ける表は 173 中 26 で、残りは数の無い文の表 ＝ **棒では直りません**（`table_bar_column` の註）。
+    bar = table_bar_column(head, rows)
     if head:
         d.rectangle([pad, y, W - pad, y + row_h], fill=(255, 255, 255, 40))
         for j, c in enumerate(head):
@@ -411,6 +492,15 @@ def _draw_table(d, spec, W, H, p, unit, pad):
         if last:
             d.rectangle([pad, y, W - pad, y + row_h], fill=(255, 225, 120, 45))
         d.line([(pad, y + row_h), (W - pad, y + row_h)], fill=(255, 255, 255, 60), width=2)
+        if bar:
+            j, nums = bar
+            mx = max(nums)
+            wv = int((col_x[j + 1] - col_x[j] - 12) * (nums[k] / mx))
+            bh2 = max(10, int(row_h * 0.60))
+            # **字の下**に置く（字は上から重ねる ＝ 読めることは 1ミリも落とさない）。
+            d.rounded_rectangle([col_x[j] + 4, y + (row_h - bh2) // 2,
+                                 col_x[j] + 4 + max(wv, 8), y + (row_h + bh2) // 2],
+                                radius=6, fill=(220, 150, 40, 140) if last else (70, 130, 220, 95))
         for j, c in enumerate(r):
             d.text((col_x[j] + 10, y + (row_h - fsz) // 2 - 4), c, font=f,
                    fill=YELLOW if last else WHITE, stroke_width=2, stroke_fill=(0, 0, 0))
