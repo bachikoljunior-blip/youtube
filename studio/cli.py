@@ -824,6 +824,15 @@ def zero_unit_lines(rows: "list[dict]", with_shippable: bool = True) -> "list[st
             s = f"**{fn.__name__}**: 読めませんでした（{e.__class__.__name__}: {e}）"
         if s:
             out.append("  " + s)
+    # **`watched_short` の すぐ後ろに置くこと**（2026-09-20 01:5x）——
+    # あちらの 5.9倍 は **8秒 の古い窓**の数で、この行はその同じ関係を**いまの作り（≈90秒）**で
+    # 数えたものです（実測 **-0.15**）。**離すと、次に来た側が古いほうだけ読みます。**
+    try:
+        s = trend.watch_vs_reach_line(rows)
+    except Exception as e:      # noqa: BLE001  台帳の形が違う回でも `status` を止めない
+        s = f"**watch_vs_reach_line**: 読めませんでした（{e.__class__.__name__}: {e}）"
+    if s:
+        out.append("  " + s)
     # **出せる在庫**（`shippable_line` の註・**API 0単位**）。
     # 通る周では「枠」の行と隣り合わせにしたいので**そちらでは呼ばない** —— ここでは
     # 枠の行（`long_slot_line` は `yt.all_videos()` が要る ＝ この周には出せません）が無いぶん、
@@ -943,6 +952,17 @@ def cmd_status(a):
             print("  " + hl)
     except Exception as e:      # 報告の台帳が無い回でも `status` を止めない
         print(f"  **見られた割合**: 読めませんでした（{e.__class__.__name__}: {e}）")
+    # **そのすぐ後ろ**（2026-09-20 01:5x・optimizer・Opus 5）—— 上の 5.9倍 は自分で
+    # 「**8秒 の古い作り。いまの ≈90秒 は この窓に入っていません**」と書きながら、
+    # **決めの理由としては使われ続けてきました**（METHOD §5 2026-09-19 13:0x）。
+    # いまの作りで同じ関係を数えると **順位相関 -0.15**（ショート 11本・尺の中央 90秒・齢48h以上）。
+    # 決めと覆る条件は `trend.watch_vs_reach` の註（**どの API も 0単位**）。
+    try:
+        wl = trend.watch_vs_reach_line(ledger_rows())
+        if wl:
+            print("  " + wl)
+    except Exception as e:      # 台帳の形が違う回でも `status` を止めない
+        print(f"  **割合と再生の相関**: 読めませんでした（{e.__class__.__name__}: {e}）")
     print(f"いま {now_jst():%m/%d %H:%M} JST")
     print("きょうの枠:")
     lineup_today = yt.today_lineup(vids)

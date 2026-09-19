@@ -10520,3 +10520,182 @@ def rename_effect_line(rows: list[dict], now: dt.datetime | None = None) -> str:
             f" **門に届きました**（{d['after_h']:.1f}h・+{d['subs_after']}人）＝ "
             f"**この数を `peers.title_identity` の升の中央と、門が要る 登録/日 に当てること**"
             f"（数は `title_identity_line` が持つ ＝ ここへ写さない）。**判定は立ったサブ。**")
+
+
+# ---------------------------------------------------------------------------
+# **【2026-09-20 01:5x】いまの作り（≈90秒）で「見られた割合」が配りを決めているか**
+# （optimizer・Opus 5・ultracode・1周 1体・**どの API も 0単位**）
+# ---------------------------------------------------------------------------
+#
+# **なぜ在るか**: `reporting.watched_short` が毎周 印字している
+# **「割合 26% の本は平均 114回、62% の本は平均 669回（5.9倍）」**は、
+# 自分で「**窓 20260811〜20260912 ＝ 8秒 の古い作り。いまの ≈90秒 は この窓に入っていません**」と
+# 書いています。**それでも、その 5.9倍 は決めの理由として使われてきました**
+# （METHOD §5 2026-09-19 13:0x「**5.9倍 は、この周に腕が届く数の中でいちばん大きいものです**」）。
+# **いまの作りで同じ関係が立つかは、1度も数えられていませんでした。**
+#
+# **この関数が数えるもの**: 台帳の `analytics_video`（`studio: true` ＝ こちらの作り）の
+# 平均視聴率と、`measured` の**確定した再生**（その本で見たいちばん大きい数）の **順位相関**。
+# **長さで揃えます** —— `avg_seconds ÷ (avg_percent/100)` が本の尺で、
+# ショート（180秒 未満）と長尺を同じ袋に入れると、**相関は尺の相関になります**
+# （長尺は 1〜227回 ＝ 尺だけで分かれる）。
+#
+# **覆る条件**:
+#  (1) n が `WVR_MIN_N` に届かない回は、符号を読まないこと（印字が札を出します）。
+#  (2) **齢の門 `WVR_MIN_AGE_H`（48h）**より若い本は入れません —— 伸びている途中の本は
+#      「再生が少ない本」の側に並びます（`late_gain` の註と同じ穴）。
+#  (3) **族（題材）の効きは割っていません** —— 実測で 同じ刻・同じ作りでも族で 100倍 割れます
+#      （METHOD §5 2026-09-19 21:xx）。**この相関が 0 でも「割合は効かない」ではなく
+#      「割合より大きいものが他に在る」までしか言えません。**
+#  (4) `avg_percent` が 100 を越える行（再視聴）は**落としません**（`watched` の (3) と同じ）。
+#  (5) 相関が **+0.5 を越える回が 3周 続いたら**、この段は `reporting.watched` の 5.9倍 と
+#      同じことを言っています ＝ 畳んでよい。
+
+#: 順位相関を読んでよい最小の本数（`FORM_MIN_N` と別 ＝ こちらは相関で、あちらは中央）。
+WVR_MIN_N = 8
+#: 齢の門（時間）。これより若い本は「確定した再生」を持ちません。
+WVR_MIN_AGE_H = 48.0
+#: ショートと長尺の境目（秒）。YouTube の Shorts の上限。
+WVR_SHORT_MAX_SEC = 180.0
+
+
+def _spearman(xs: list[float], ys: list[float]) -> float:
+    """順位相関（同順位は平均順位）。n < 2 は 0.0。"""
+    n = len(xs)
+    if n < 2:
+        return 0.0
+
+    def rank(vs: list[float]) -> list[float]:
+        order = sorted(range(n), key=lambda i: vs[i])
+        out = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j + 1 < n and vs[order[j + 1]] == vs[order[i]]:
+                j += 1
+            avg = (i + j) / 2.0 + 1.0
+            for k in range(i, j + 1):
+                out[order[k]] = avg
+            i = j + 1
+        return out
+
+    rx, ry = rank(xs), rank(ys)
+    mx, my = sum(rx) / n, sum(ry) / n
+    num = sum((rx[i] - mx) * (ry[i] - my) for i in range(n))
+    dx = sum((rx[i] - mx) ** 2 for i in range(n)) ** 0.5
+    dy = sum((ry[i] - my) ** 2 for i in range(n)) ** 0.5
+    return (num / (dx * dy)) if dx and dy else 0.0
+
+
+def watch_vs_reach(rows: "list[dict] | None" = None,
+                   now: "dt.datetime | None" = None) -> dict:
+    """**いまの作りで「見られた割合」が再生を決めているか**（**どの API も 0単位**）。
+
+    返すもの: `short` / `long` それぞれの本の並びと、ショートだけの順位相関 3つ
+    （割合・平均秒・いいね）。**判定は立ったサブ**（§5）—— ここは数だけ返します。
+    """
+    rows = ledger_rows() if rows is None else rows
+    now = now or now_jst()
+
+    # **確定した再生**（`measured` の その本の最大）と 齢。
+    fin: dict = {}
+    age: dict = {}
+    title: dict = {}
+    for r in rows:
+        if r.get("event") != "measured" or "age_h" not in r:
+            continue
+        vid = str(r.get("id") or "")
+        if not vid:
+            continue
+        try:
+            v = float(r.get("views") or 0)
+            a = float(r["age_h"])
+        except (TypeError, ValueError):
+            continue
+        if v >= fin.get(vid, -1.0):
+            fin[vid] = v
+        if a >= age.get(vid, -1.0):
+            age[vid] = a
+            title[vid] = str(r.get("title") or "")
+
+    # **平均視聴率**（`analytics_video` の うち いちばん大きい窓の行 ＝ 分母がいちばん厚い）。
+    an: dict = {}
+    for r in rows:
+        if r.get("event") != "analytics_video" or not r.get("studio"):
+            continue
+        vid = str(r.get("id") or "")
+        if not vid:
+            continue
+        if vid not in an or float(r.get("views") or 0) > float(an[vid].get("views") or 0):
+            an[vid] = r
+
+    short: list = []
+    long_: list = []
+    for vid, a in an.items():
+        if vid not in fin or age.get(vid, 0.0) < WVR_MIN_AGE_H:
+            continue
+        try:
+            pct = float(a.get("avg_percent") or 0)
+            sec = float(a.get("avg_seconds") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pct <= 0:
+            continue
+        rec = {"id": vid, "views": fin[vid], "age_h": age[vid], "pct": pct, "sec": sec,
+               "length": sec / (pct / 100.0), "likes": float(a.get("likes") or 0),
+               "subs": float(a.get("subs_gained") or 0), "title": title.get(vid, "")}
+        (short if rec["length"] < WVR_SHORT_MAX_SEC else long_).append(rec)
+
+    short.sort(key=lambda r: -r["views"])
+    long_.sort(key=lambda r: -r["views"])
+    d: dict = {"short": short, "long": long_, "n_short": len(short), "n_long": len(long_),
+               "enough": len(short) >= WVR_MIN_N}
+    if short:
+        v = [r["views"] for r in short]
+        d["rho_pct"] = _spearman(v, [r["pct"] for r in short])
+        d["rho_sec"] = _spearman(v, [r["sec"] for r in short])
+        d["rho_likes"] = _spearman(v, [r["likes"] for r in short])
+        # **いいねは再生に機械的に乗ります**（4回 の本はいいねを 1つ も持てない）＝
+        # 1,000回 あたりに直した側も返すこと。**生の `rho_likes` だけを読まないこと。**
+        d["rho_like1k"] = _spearman(
+            v, [(r["likes"] / r["views"] * 1000.0) if r["views"] else 0.0 for r in short])
+        d["len_median"] = statistics.median([r["length"] for r in short])
+        d["pct_lo"] = min(r["pct"] for r in short)
+        d["pct_hi"] = max(r["pct"] for r in short)
+    if long_:
+        d["long_views_median"] = statistics.median([r["views"] for r in long_])
+        d["long_pct_median"] = statistics.median([r["pct"] for r in long_])
+    return d
+
+
+def watch_vs_reach_line(rows: "list[dict] | None" = None,
+                        now: "dt.datetime | None" = None) -> str:
+    """`status` が毎周 印字する 1行（**どの API も 0単位**・台帳だけ）。
+
+    **`reporting.watched_short` の すぐ後ろに置くこと** —— あちらは 8秒 の古い窓の 5.9倍 で、
+    この行はその同じ関係を**いまの作りで**数えたものです。**離すと、次に来た側が古いほうだけ読みます。**
+    """
+    d = watch_vs_reach(rows, now=now)
+    if not d["n_short"]:
+        return ("**見られた割合と再生の順位相関（いまの作り）**: 数えられる本が 0本 "
+                "（`trend.watch_vs_reach` の覆る条件 (1)(2)）")
+    head = (f"**いまの作りで「見られた割合」は配りを決めていません**"
+            f"（`trend.watch_vs_reach`・**どの API も 0単位**・ショート {d['n_short']}本"
+            f"・尺の中央 {d['len_median']:.0f}秒・齢 {WVR_MIN_AGE_H:.0f}h 以上"
+            f"・割合の幅 {d['pct_lo']:.0f}〜{d['pct_hi']:.0f}%）: "
+            f"**順位相関 割合 {d['rho_pct']:+.2f}**"
+            f"・平均秒 {d['rho_sec']:+.2f}"
+            f"・いいね {d['rho_likes']:+.2f}（**1,000回 あたりに直すと "
+            f"{d['rho_like1k']:+.2f}** ＝ 生のほうは再生に機械的に乗っています）")
+    if not d["enough"]:
+        return (head + f"　!! **n が {WVR_MIN_N}本 に届いていません ＝ 符号を読まないこと**"
+                       f"（覆る条件 (1)）")
+    body = (f"　＝ **`reporting.watched_short` の 5.9倍 は 8秒 の古い窓の数**で、"
+            f"**いまの ≈90秒 の作りでは同じ関係が立っていません。**"
+            f"　**「割合は効かない」ではありません**（覆る条件 (3)）——"
+            f"**言えるのは「割合より大きいものが他に在る」までです。**")
+    if d["n_long"]:
+        body += (f"　長尺 {d['n_long']}本 は別の袋（中央 {d['long_views_median']:.0f}回"
+                 f"・割合 {d['long_pct_median']:.0f}%）＝ **尺で分かれます**"
+                 f"（同じ袋に入れると、相関は尺の相関になります）")
+    return head + body
