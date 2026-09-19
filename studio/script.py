@@ -838,6 +838,16 @@ class Script(BaseModel):
             return None
         return hit, tot, "・".join(miss[:4])
 
+    @staticmethod
+    def _has_number(line: str) -> bool:
+        """板の 1行 が**量**を持っているか。**見出しの番号は数えません**。
+
+        実測 2026-09-19 15:3x: 「1 介護保険料／2 国民健康保険料／3 住民税」の**番号**を
+        数に数えると、**15コマ** が「絵が要るのに無い」に化けました
+        （`viz.table_bar_column` がこの回に踏んだのと同じ形 —— 番号に棒を引いていた）。
+        """
+        return bool(_DIGIT.search(_LIST_INDEX.sub("", str(line))))
+
     def text_only_segments(self) -> tuple[int, int, str] | None:
         """(図の無い「数のコマ」, コマの合計, 例) —— 無ければ None。**API 0単位・焼かない**。
 
@@ -869,7 +879,7 @@ class Script(BaseModel):
         for i, g in enumerate(self.segments, 1):
             if g.viz or not g.board:
                 continue
-            if sum(1 for x in g.board if re.search(r'[0-9０-９]', str(x))) >= 2:
+            if sum(1 for x in g.board if self._has_number(x)) >= 2:
                 hits.append(i)
         if not hits:
             return None
@@ -1339,6 +1349,10 @@ def save(s: Script) -> Path:
 #  (3) `phrase_runs` の窓（`OPENER_NEAR` 2）で、直すと日本語が不自然になる本が 3本 続いたら、
 #      窓を 1（＝ 隣り合うときだけ）へ詰めること。オーナーが見たのは 1つ おき（コマ2・4）なので、
 #      **詰めるのはオーナーの言葉が覆ったときだけ**。
+#: 板の 1行 の**見出し番号**（「1 介護保険料」「＋ 3 住民税」）。量ではないので数えない。
+_LIST_INDEX = re.compile(r"^\s*[＋+]?\s*[0-9０-９]+\s+")
+_DIGIT = re.compile(r"[0-9０-９]")
+
 CLARITY_FROM = "2026-09-16"
 #: 言われた刻（09/16 12:2x JST）より前に**もう公開されていた**本。遡って赤くしない。
 PUBLISHED_BEFORE = ("2026-09-16-ninni-kanyu-108man", "2026-09-19-nenkin-15man-tedori")

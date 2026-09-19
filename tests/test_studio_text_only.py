@@ -41,3 +41,17 @@ def test_止めない_問題ではなく読む材料():
     b = _book([_seg(board=["退職金 2000万円", "− 枠 1500万円"])])
     assert not [x for x in b.problems() if "数のコマ" in x], "`problems` に入れない（焼けなくなる）"
     assert [x for x in b.warnings() if "数のコマ" in x], "`warnings` には出る"
+
+
+def test_見出しの番号は数に数えない():
+    """「1 介護保険料／2 国民健康保険料／3 住民税」は**番号**で、量ではありません。
+
+    数えると在庫の **15コマ** が「絵が要るのに無い」に化けます（2026-09-19 15:3x の実測）。
+    同じ回に `viz.table_bar_column` が踏んだのと同じ形（番号に棒を引いていた）。
+    """
+    assert Script._has_number("1 介護保険料") is False
+    assert Script._has_number("＋ 3 住民税") is False
+    assert Script._has_number("国民年金 7万→9万9400") is True
+    assert Script._has_number("引かれるお金は3つ") is True
+    b = _book([_seg(board=["引かれるお金は3つ", "1 介護保険料", "2 国民健康保険料", "3 住民税"])])
+    assert b.text_only_segments() is None, "番号の並びは名指ししない"
