@@ -7064,3 +7064,5 @@
 {"seconds": 90.8, "image": true, "chars": 440, "scenes": [13.2, 7.2, 9.1, 10.1, 8.1, 12.9, 7.9, 9.5, 5.8, 7.0], "sig": "2:e4cf71cab89e", "at": "2026-09-19T13:36:39+09:00", "id": "2026-09-21-kuriage-64sai-short", "event": "built"}
 {"subs": 40, "title": "カワウソの年金計算室", "handle": "カワウソの年金計算室", "exact": true, "src": "public_page", "at": "2026-09-19T14:12:17+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
 {"subs": 40, "title": "カワウソの年金計算室", "handle": "カワウソの年金計算室", "exact": true, "src": "public_page", "at": "2026-09-19T14:12:34+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"cmd": "status", "at": "2026-09-19T14:15:23+09:00", "id": "-", "event": "quota_exceeded"}
+{"seconds": 86.6, "image": true, "chars": 438, "scenes": [12.4, 6.9, 9.1, 10.0, 6.8, 11.7, 7.6, 9.3, 5.8, 7.0], "sig": "2:76a0bb17f465", "at": "2026-09-19T14:27:04+09:00", "id": "2026-09-21-kuriage-60sai-short", "event": "built"}
