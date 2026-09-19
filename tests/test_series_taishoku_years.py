@@ -56,7 +56,12 @@ def test_31年は端数の切り上げ():
 
 
 def test_連作の形():
-    assert len(BOOKS) == 5
+    # **本数は `cli.SHORT_SLOTS` と同じでなければなりません**（2026-09-19 15:5x に 5 を式へ替えた）。
+    # もとは 5 を字で持っており、**12:xx に枠が 5→6 になっても、この検査は緑のまま**でした
+    # ＝ 「枠は 6・作れる本は 5」を 3日 通した側（21:00 が 3日 空いた・JOURNAL 同刻）。
+    # **どちらかだけ動かしたら、ここが赤くなります。**
+    from studio.cli import SHORT_SLOTS
+    assert len(BOOKS) == len(SHORT_SLOTS), (len(BOOKS), SHORT_SLOTS)
     for d in BOOKS:
         assert d["form"] == "short"
         assert d["date"] == "2026-09-20"
@@ -82,7 +87,9 @@ def test_09_19の4本を書き換えない():
 
 def test_数はtaxの返りそのもの():
     """本文に出る手取りが、丸めた数ではないこと（`man()` の字で照合）。"""
-    for d, y in zip(BOOKS, (20, 25, 31, 35, 38)):
+    # **年数は id から読みます**（写しを持たない ＝ 本を足したときに黙ってずれない）。
+    for d in BOOKS:
+        y = int(re.search(r"2000man-(\d+)nen", d["id"]).group(1))
         t = series_taishoku.tax(SY.AMOUNT, y)
         hook = d["segments"][0]["say"]
         assert series_taishoku.man(t["net"]) in hook, (d["id"], hook)
