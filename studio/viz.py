@@ -419,6 +419,9 @@ def frames(spec: dict, seconds: float, size: tuple[int, int]) -> list[tuple[Imag
 # `frames_cued` に窓を渡さなければ今までと同じ絵が出ます（陰性対照）。
 
 
+_HAS_DIGIT = re.compile(r"[0-9０-９]")
+
+
 def steps(spec: dict) -> int:
     """図の**歩の数**。`_slot` / `_draw_table` が進み 0〜1 を割っている数と**同じ式**（写しを持たない）。"""
     kind = spec.get("kind")
@@ -469,9 +472,6 @@ def step_keys(spec: dict) -> list[list[str]]:
             out.append((nums[::-1] or cells[::-1]))   # 数のあるマスを右から（行の答えは右端）
         return out
     return [[]] * steps(spec)
-
-
-_HAS_DIGIT = re.compile(r"[0-9０-９]")
 
 
 def frames_cued(spec: dict, seconds: float, size: tuple[int, int],

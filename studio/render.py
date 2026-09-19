@@ -74,8 +74,7 @@ def build(s: Script, image: Path | None = None, parts: dict[str, Path] | None = 
     (d / "build.sig").write_text(sig, encoding="utf-8")
     return {"mp4": mp4, "wavs": wavs, "durations": durs, "total": probe_duration(mp4),
             "sheet": sheet, "slides": pngs, "sig": sig,
-            "frames": len(entries), "viz": sum(1 for g in s.segments if g.viz),
-            "cued": sum(1 for g in s.segments if g.viz)}
+            "frames": len(entries), "viz": sum(1 for g in s.segments if g.viz)}
 
 
 def built_sig(vid: str) -> str | None:
