@@ -61,7 +61,8 @@ def test_門の数は1か所():
     ここで挟むのは「刻の綴りが 1か所 から来ること」と「2つ の枠が重ならないこと」。
     """
     assert cli.LONG_SLOTS == ("19:00",)
-    assert cli.SHORT_SLOTS == ("07:00", "10:00", "12:00", "15:00", "18:00")
+    # **【2026-09-19 12:xx】6枠目（21:00）**（天井が 5 → 6 になった・`budget.UPLOAD_UNITS_SHORT` の註）。
+    assert cli.SHORT_SLOTS == ("07:00", "10:00", "12:00", "15:00", "18:00", "21:00")
     assert not set(cli.LONG_SLOTS) & set(cli.SHORT_SLOTS)    # 同じ刻に 2つ の形を置かない
     assert cli.LONG_SLOT_LEAD_H >= 1.0
     # **`day_cap` の実測（再生が付く上限 10本/日）を越えないこと**（`SHORT_SLOTS` の覆る条件 (2)）。

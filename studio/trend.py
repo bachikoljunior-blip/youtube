@@ -8569,9 +8569,19 @@ def gate_opens_clause(rows: list[dict]) -> str:
 #  (4) `REV_LONG_MIN_PER_VIEW`（4.0分）は**前提**で、実測ではありません。この口は実測のほうを使い、
 #      前提のほうは「前提ならこう」として並べます（**2つ を 1つ の数に混ぜない**）。
 
-#: 1日に上げられる枠の数。**日枠（10,000単位）÷ 1本 1,650単位 の側で決まります**
-#: （`cli.SHORT_SLOTS` の 5枠 と同じ数・写しであることをここに書いておく）。
-SLOTS_PER_DAY = 5.0
+#: 1日に上げられる枠の数。**日枠（10,000単位）÷ ショート 1本 1,600単位 の側で決まります**。
+#:
+#: **【2026-09-19 12:xx・optimizer・Opus 5・1周 1体】5.0 の直書きをやめ、`budget` から引きます。**
+#: **なぜ**: ここは「写しであることをここに書いておく」という註つきの **5.0** でした。
+#: 同じ日に天井が **6** になり（ショートにサムネを撃たない ＋ 測る側 600→400・`budget` の註）、
+#: **写しは自動では追いません** —— この repo でいちばん多い壊れ方（言っている所と、している所が別）。
+#: `sponsor_daily_cap_videos()` と同じ式です（**式は 1か所**・検査 `tests/test_studio_ungated.py`）。
+def _slots_per_day() -> float:
+    from . import budget as _b
+    return float(max((_b.DAY_UNITS - _b.RESERVE) // _b.UPLOAD_UNITS_SHORT, 0))
+
+
+SLOTS_PER_DAY = _slots_per_day()
 
 #: ショートの視聴が扉(b) に入る分（分/回）。**0 です**（GOAL (4-g) 1）。定数にしてあるのは、
 #: 「0 だと決めた」ことを検査から押さえられるようにするため。
@@ -9601,16 +9611,23 @@ SPONSOR_YEN_PER_VIEW_BAND = (0.5, 1.5, 3.0)
 def sponsor_daily_cap_videos() -> float:
     """日枠で出せる本数の天井（**`studio/budget` の 1か所から引く ＝ 写しを持たない**）。
 
-    **2026-09-18 に踏んだ所**: この回が最初 `6.0` を直書きしました。**実物は 5本 です**
+    **2026-09-18 に踏んだ所**: この回が最初 `6.0` を直書きしました。**実物は 5本 でした**
     （`(DAY_UNITS - RESERVE) // UPLOAD_UNITS` ＝ `(10,000 - 600) // 1,650` ＝ **5**）。
     「6本/日」は日枠から出る数ではなく、**枠の運用の目安**として文書に散っている数でした。
     **＝ 天井の側の倍率は、この 1か所がずれると丸ごとずれます。**
 
-    **覆る条件**: `budget` の 3つ の定数のどれかが動いたら、この関数は自動で追います
+    **【2026-09-19 12:xx・optimizer・Opus 5・1周 1体】いまは 6 です。**
+    直書きに戻ったのではありません —— **値段のほうが動きました**:
+    ショートは `thumbnails.set`（50）を撃たなくなり（`cli.cmd_schedule`）、
+    測る側の取り分は 公開ページが 0単位 で読むので 600 → 400 になりました（`budget` の註）。
+    `(10,000 - 400) // 1,600` ＝ **6**。**数える式は `cli.day_upload_cap` と同じ 1本**です。
+
+    **覆る条件**: `budget` の定数のどれかが動いたら、この関数は自動で追います
     （**追わなくなったら、それは写しを持った日です**・検査 `tests/test_studio_ungated.py`）。
+    **`budget` の覆る条件 (5)（6本目 が 2日 とも 403）が引かれたら、両方 5 に戻ります。**
     """
     from . import budget as _budget
-    return float(max((_budget.DAY_UNITS - _budget.RESERVE) // _budget.UPLOAD_UNITS, 0))
+    return float(max((_budget.DAY_UNITS - _budget.RESERVE) // _budget.UPLOAD_UNITS_SHORT, 0))
 
 #: 門を通る分子と、通らない分子。
 #: **2026-09-18 15:4x に 1つ 足しました（`成果報酬`）。derivation は下の `perf_need_rate` の註。**

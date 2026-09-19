@@ -28,17 +28,21 @@ from studio import budget, cli, trend
 
 
 def test_日枠の上限は枠の数ではなく日枠から出る():
-    """**枠 6 と 上げられる 5 が別の数であること**（この検査が、この行の存在理由そのもの）。"""
-    assert cli.day_upload_cap() == (budget.DAY_UNITS - budget.RESERVE) // budget.UPLOAD_UNITS
-    assert cli.day_upload_cap() == 5
-    assert len(cli.LONG_SLOTS) + len(cli.SHORT_SLOTS) == 6
-    # **枠 ＞ 上げられる本数** ＝ 毎日 1枠 が必ず余る
+    """**枠の数と 上げられる本数が別の数であること**（この検査が、この行の存在理由そのもの）。
+
+    **【2026-09-19 12:xx】数を字で持つのをやめました** —— 同じ日に天井が **5 → 6** に動き、
+    この検査が **古い 5 を守って赤くなりました**（上の 01:5x が「字で持つと、下の関数が直っても
+    検査が古い数を守る」と書いた、その型をこの検査自身が踏んだ）。守るのは**関係**です。
+    """
+    assert cli.day_upload_cap() == (budget.DAY_UNITS - budget.RESERVE) // budget.UPLOAD_UNITS_SHORT
+    # **枠 ＞ 上げられる本数** ＝ 毎日 1枠 が必ず余る（長尺 1枠 ＋ ショート全部 ＞ 日枠の本数）
     assert len(cli.LONG_SLOTS) + len(cli.SHORT_SLOTS) > cli.day_upload_cap()
 
 
 def test_ショートが上限ぶん在る日は_選ぶ日だと言い_命令しない():
-    ok = [f"s{i}" for i in range(5)] + ["L1"]
-    forms = {f"s{i}": "short" for i in range(5)} | {"L1": "long"}
+    n = cli.day_upload_cap()
+    ok = [f"s{i}" for i in range(n)] + ["L1"]
+    forms = {f"s{i}": "short" for i in range(n)} | {"L1": "long"}
     line = cli.form_priority_line(ok, forms)
     assert "どちらで埋めるかを選ぶ日です" in line
     # **命令の字に戻さないこと**（判断はサブ・オーナー 2026-09-06 14:0x）。
@@ -61,10 +65,11 @@ def test_ショートが上限ぶん在る日は_選ぶ日だと言い_命令し
 
 
 def test_ショートが足りない日は余りが長尺の口だと言う():
+    """**残りの本数を字で持たない**（天井は `budget` から動く・2026-09-19 12:xx）。"""
     ok = ["s0", "s1", "L1"]
     forms = {"s0": "short", "s1": "short", "L1": "long"}
     line = cli.form_priority_line(ok, forms)
-    assert "3本 は長尺でしか埋まりません" in line
+    assert f"{cli.day_upload_cap() - 2}本 は長尺でしか埋まりません" in line
     assert "座らせないこと" not in line
 
 
@@ -80,6 +85,6 @@ def test_在庫が空なら1字も出さない():
 
 def test_form_を持たない古い台本はショートとして数える():
     """`script.form_of` と同じ既定（**古い台本は `form` を持ちません**）。"""
-    ok = ["old0", "old1", "old2", "old3", "old4", "L1"]
+    ok = [f"old{i}" for i in range(cli.day_upload_cap())] + ["L1"]
     line = cli.form_priority_line(ok, {"L1": "long"})     # old* は forms に無い
     assert "どちらで埋めるかを選ぶ日です" in line

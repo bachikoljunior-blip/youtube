@@ -37,6 +37,16 @@ def _sched(vid: str, sid: str, at: dt.datetime, title: str = "題") -> dict:
 NOW = dt.datetime(2026, 9, 19, 12, 0, tzinfo=JST)
 
 
+def _filled_today():
+    """**きょうの枠を埋めた `scheduled` の行**（`at` が日枠の窓の中に在る ＝ 出す側が済んでいる）。
+
+    2026-09-19 12:xx の門（`cmd_catchup` の「出す側が先」）が読むのはこの `at` です。
+    """
+    at = dt.datetime(2026, 9, 19, 9, 0, tzinfo=JST).isoformat(timespec="seconds")
+    return [{"event": "scheduled", "video_id": f"F{i}", "id": f"s-f{i}", "at": at}
+            for i in range(cli.day_upload_cap())]
+
+
 def _rows():
     """3本 予約ずみ（刻は過ぎている）・古い順に A→B→C。"""
     return [_sched("A", "s-a", dt.datetime(2026, 9, 19, 7, 0, tzinfo=JST)),
@@ -142,7 +152,9 @@ def test_順は_打ち直し_コメント欄_透かし_題(monkeypatch):
     monkeypatch.setattr(cli.pubcheck, "taken_slots", lambda *a, **k: [])
     monkeypatch.setattr(cli, "next_long_slots",
                         lambda taken, now, n=3: [dt.datetime(2026, 9, 19, 19, 0, tzinfo=JST)])
-    monkeypatch.setattr(cli, "ledger_rows", _rows)
+    # **きょうの枠は埋まっている側**（2026-09-19 12:xx の門 ＝ 出す側が先）。
+    # 埋まっていない周の答えは下の `test_枠が空いている周は_コメント欄を撃たない`。
+    monkeypatch.setattr(cli, "ledger_rows", lambda: _rows() + _filled_today())
     monkeypatch.setattr(cli, "rename_pending", lambda rows: True)
     monkeypatch.setattr(cli.yt, "channel", lambda: {"subscriberCount": 39, "viewCount": 1})
     monkeypatch.setattr(cli.yt, "readiness",
@@ -185,3 +197,38 @@ def test_陽性対照_置いていなければ必ず出る():
 
 def test_陽性対照_1本も予約が無ければ0本():
     assert cli.cta_pending([{"event": "watermark_set"}], NOW) == []
+
+
+# ---- (5) 出す側が先（2026-09-19 12:xx・optimizer・Opus 5・1周 1体）----------
+#
+# 日枠は **6本/日（9,600単位）＋ 測る側 400 ＝ ちょうど 10,000**（`budget.UPLOAD_UNITS_SHORT`）。
+# コメント欄の 250〜300単位 を先に撃つと、押し出されるのは **6本目（約1,000回）**で、
+# 守られるのは **Shorts では押せない面**です（2023-08-31 から非クリック）。
+
+def test_枠が空いている周は_コメント欄を撃たない(monkeypatch, capsys):
+    """きょうの `scheduled` が `day_upload_cap()` に届いていない周は、cta を撃たない。"""
+    monkeypatch.setattr(cli, "now_jst", lambda: NOW)
+    monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "ledger_rows", lambda: _rows() + [{"event": "watermark_set"}])
+    monkeypatch.setattr(cli, "rename_pending", lambda rows: False)
+    monkeypatch.setattr(cli, "channel_desc_pending", lambda rows: False)
+    monkeypatch.setattr(cli.yt, "channel", lambda: {"subscriberCount": 40, "viewCount": 1})
+    monkeypatch.setattr(cli, "cmd_cta", lambda ns: pytest.fail("枠が空いているのに撃った"))
+    assert cli.cmd_catchup(argparse.Namespace(dry_run=False)) == 0
+    out = capsys.readouterr().out
+    assert "撃ちません" in out and "出す側が先" in out
+
+
+def test_枠が埋まっていれば_コメント欄を撃つ(monkeypatch):
+    """同じ周でも、きょうの `scheduled` が cap に届いていれば撃つ（捨てていない）。"""
+    calls = []
+    monkeypatch.setattr(cli, "now_jst", lambda: NOW)
+    monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "ledger_rows",
+                        lambda: _rows() + _filled_today() + [{"event": "watermark_set"}])
+    monkeypatch.setattr(cli, "rename_pending", lambda rows: False)
+    monkeypatch.setattr(cli, "channel_desc_pending", lambda rows: False)
+    monkeypatch.setattr(cli.yt, "channel", lambda: {"subscriberCount": 40, "viewCount": 1})
+    monkeypatch.setattr(cli, "cmd_cta", lambda ns: calls.append(ns.ids) or 0)
+    assert cli.cmd_catchup(argparse.Namespace(dry_run=False)) == 0
+    assert calls == ["B,A,C"]

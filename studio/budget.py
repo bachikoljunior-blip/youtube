@@ -27,7 +27,17 @@ GOAL (4-i) の枝（A／B／C）は **48h の再生の中位**で選ぶので、
      まずその口を `UNITS_BY_EVENT` に足すこと。**この行を信じて枠を使い切らないこと。**
  (2) Google が日枠を増やした（申請が通った）ら `DAY_UNITS` を置き換えること。
  (3) `measure`／`status`／`analytics` の実測が `RESERVE` に収まらない周が 2度 出たら、`RESERVE` を上げること
-     （いまの 600 は `status` 約 35単位 ＋ `measure` 約 20単位 ＋ `comments` 3単位 ＋ 余り）。
+     （いまの 400 は 写し 128 ＋ `refresh_stats` 約15 ＋ `channel()` 約100 ＝ 約245 ＋ 余り）。
+ (4) **`RESERVE` を上げる前に、その周が「公開ページで読めない物」を読んでいたか見ること**
+     （2026-09-19 12:xx）—— 再生・登録・出たか は `measure --public`／`pubcheck` が **0単位** で読みます。
+     403 で止まったのがその 3つ なら、直すのは `RESERVE` ではなく**呼ぶ口**です。
+ (5) **6本/日 を 2日 撃って、6本目 が 2日 とも 403 なら**（`quota_exceeded` の台帳・0単位）、
+     Google の数えはこちらの写しより多い ＝ `RESERVE` を 600 に戻し `day_upload_cap` を 5 へ戻すこと。
+     **1日 だけの 403 で戻さないこと** —— その日は `catchup` の 302単位 が先に出ていた側を先に疑う
+     （撃つ順は「出す側が先」。`cmd_catchup` の cta の門・同刻）。
+ (6) **6本目 の 24h 中央が、同じ日の 1〜5本目 の中央の 半分 未満なら**、枠が薄まった側
+     ＝ 6本目 の枠（`SHORT_SLOTS` の 21:00）を疑い、刻を動かすか 5本 に戻すこと。
+     **1日 で決めないこと**（09/18 の 5本 は 802〜1,165 で、1本 の幅が 1.45倍 ある）。
 """
 from __future__ import annotations
 
@@ -40,10 +50,40 @@ from .common import JST, now_jst
 DAY_UNITS = 10_000
 #: 枠が戻る刻（JST）。
 RESET_H = 16
-#: 測る側（`status`／`measure`／`analytics`／`comments`）のために空けておく単位（覆る条件 (3)）。
-RESERVE = 600
-#: 1本 出すのにかかる単位（`videos.insert` 1,600 ＋ `thumbnails.set` 50）。
+#: 測る側（`status`／`measure`／`analytics`／`comments`）のために空けておく単位（覆る条件 (3)・(4)）。
+#:
+#: **【2026-09-19 12:xx・optimizer・Opus 5・1周 1体】600 → 400 に下げました。**
+#: **なぜ**: この数が守っていたのは「測れない日を作らないこと」でした（この file の冒頭・
+#: 「`measure` が撃てない周は `trend` の判定に数が 1つ も入りません」）。
+#: **その前提は 2026-09-19 11:xx に消えています** —— `pubcheck.shorts_views()` ＋
+#: `cli measure --public` が、再生も登録も**公開ページから 0単位 で**読みます
+#: （同日 10:56 の実測 11本 が台帳に在る）。**＝ 日枠が 0 でも盲にはなりません。**
+#: 残りの 400 が払うのは Data API でしか読めない側だけです:
+#: 写し（`yt.all_videos` 32単位 × 寿命 6時間 ＝ 4回/日 ＝ 128）＋ `refresh_stats` 1単位/周（約15）
+#: ＋ `channel()` 約100/日 ＝ **約245**。
+#: **この 200単位 の差が 6本目 の立つ/立たない を分けます**（下の `UPLOAD_UNITS_SHORT` の註）。
+RESERVE = 400
+#: 1本 出すのにかかる単位（`videos.insert` 1,600 ＋ `thumbnails.set` 50）。**長尺の値段です。**
 UPLOAD_UNITS = 1650
+#: **ショート 1本 の値段**（`videos.insert` 1,600 **のみ** ＝ `thumbnails.set` を撃たない）。
+#:
+#: **【2026-09-19 12:xx・optimizer・Opus 5・1周 1体】足しました。**
+#: **なぜ 50 を落とせるか**: `cli.thumbnail_for` の註が 2026-09-15 から
+#: 「**`short` は 1コマ目の画面のまま**（縦のフィードでサムネは見られない・答えを変えない）」と
+#: 書いており、撃っていたのは **YouTube が既定で選ぶのとほぼ同じ絵**でした。
+#: 効く面は フィードの外（チャンネル一覧・検索）だけで、実測の配りは
+#: **SHORTS 4,919 / YT_SEARCH 160 / YT_CHANNEL 6**（`analytics_traffic` 2026-09-19 10:37）＝ **3.4%**。
+#: **5本/日 で 250単位** を、その 3.4% に払っていました。
+#:
+#: **これで 1日 6本 が立ちます**（`cli.day_upload_cap`）:
+#:
+#:     6本 × 1,600 ＝ 9,600  ＋ 測る側 400 ＝ **10,000**（ちょうど）
+#:     （前: 5本 × 1,650 ＝ 8,250 ＋ 600 ＝ 8,850・余り 1,150 ＜ 1,600 ＝ 6本目 が立たない）
+#:
+#: **外した方の負けは小さい**: 6本目 が 403 で撥ねられても **0単位**（`quotaExceeded` は課金されない・
+#: 台帳の 403 69本 が 0単位 の実測）＝ **撃ってみることの下振れは「5本 のまま」だけ**です。
+#: **覆る条件**: (5)（下）。
+UPLOAD_UNITS_SHORT = 1600
 
 #: 台帳の event → その 1行 が使った単位。**`units` を持つ行はそちらを優先する**。
 UNITS_BY_EVENT = {
@@ -85,8 +125,12 @@ def spent(rows: list[dict], now: dt.datetime | None = None) -> dict:
         if u:
             total += u
             per[ev] = per.get(ev, 0) + u
-    return {"since": lo, "total": total, "per": per,
-            "left": DAY_UNITS - total, "uploads_left": max((DAY_UNITS - total - RESERVE) // UPLOAD_UNITS, 0)}
+    left = DAY_UNITS - total
+    return {"since": lo, "total": total, "per": per, "left": left,
+            # **長尺の値段で数えた側**（安全側・`schedule --replace` の門はこちらを見る）
+            "uploads_left": max((left - RESERVE) // UPLOAD_UNITS, 0),
+            # **ショートの値段で数えた側**（`day_upload_cap` と同じ物差し・2026-09-19 12:xx）
+            "uploads_left_short": max((left - RESERVE) // UPLOAD_UNITS_SHORT, 0)}
 
 
 #: **撃って通った証拠**になる event（その行が在る ＝ その刻に Data API が通った）。
@@ -256,14 +300,18 @@ def lines(rows: list[dict], now: dt.datetime | None = None) -> list[str]:
         return out
     out = [f"**日枠**（`budget`・**0単位**・{s['since'][5:16]} JST から・戻るのは {nxt:%m/%d %H:%M} JST）: "
            f"使った **{s['total']:,}** / {DAY_UNITS:,} ・ 残り **{s['left']:,}** "
-           f"＝ あと **{s['uploads_left']}本** 出せる（1本 {UPLOAD_UNITS}単位・測る側に {RESERVE} 残す）"]
+           f"＝ あと **{s['uploads_left_short']}本** 出せる（ショート 1本 {UPLOAD_UNITS_SHORT:,}単位・"
+           f"測る側に {RESERVE} 残す。**長尺を混ぜると 1本 {UPLOAD_UNITS:,} ＝ あと "
+           f"{s['uploads_left']}本**）"]
     if s["per"]:
         out.append("    " + " ／ ".join(f"{k} {v:,}" for k, v in
                                         sorted(s["per"].items(), key=lambda x: -x[1])[:5]))
     if s["left"] < RESERVE:
-        out.append("    !! **残りが測る側の取り分を割っています** ＝ この周は `measure`／`status`／`analytics` が"
-                   "落ちる側（403）。**測れない周は `trend` に数が 1つ も入らず、GOAL (4-i) の枝の判定が止まります**"
-                   "（`studio/budget.py` の註）。判定はこの周が決めること")
+        out.append("    !! **残りが測る側の取り分を割っています** ＝ この周は Data API の読みが落ちる側（403）。"
+                   "**ただし盲にはなりません**（2026-09-19 12:xx）—— 再生・登録・出たかは "
+                   "`measure --public`／`pubcheck` が **0単位** で読みます。"
+                   "Data API でしか読めないのは 写し（`yt.all_videos`）と `refresh_stats` だけ。"
+                   "判定はこの周が決めること")
     if real:
         out.append(real)
     out.append("    ※ 上の推計は 台帳に `units` を書かない口を数えません ＝ **過小**（覆る条件 (1)）。"

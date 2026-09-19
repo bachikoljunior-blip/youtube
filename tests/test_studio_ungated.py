@@ -74,11 +74,17 @@ def test_倍率の向きは要る単価わる相場() -> None:
 def test_天井の本数は_budget_から引く_写しを持たない() -> None:
     """**2026-09-18 に踏んだ所**: 最初 `6.0` を直書きし、実物は **5本** だった。
 
-    天井の本数は `budget` の 3つ の定数から出る数で、**写しを持たないこと**。
+    天井の本数は `budget` の定数から出る数で、**写しを持たないこと**。
+
+    **【2026-09-19 12:xx】値段は ショートの側**（`UPLOAD_UNITS_SHORT` ＝ サムネを撃たない）。
+    いまの実物は **6本** だが、**この検査はその数を持ちません** —— 定数から数え直します。
+    `cli.day_upload_cap()` と同じ式であることも、ここで見ます（**門は 1か所**）。
     """
     from studio import budget
-    want = float(max((budget.DAY_UNITS - budget.RESERVE) // budget.UPLOAD_UNITS, 0))
+    from studio import cli
+    want = float(max((budget.DAY_UNITS - budget.RESERVE) // budget.UPLOAD_UNITS_SHORT, 0))
     assert trend.sponsor_daily_cap_videos() == want
+    assert float(cli.day_upload_cap()) == want
     with open(trend.__file__, encoding="utf-8") as fh:
         src = fh.read()
     assert "SPONSOR_DAILY_CAP_VIDEOS" not in src, "天井の本数を直書きに戻さないこと"

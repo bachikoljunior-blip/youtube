@@ -1491,6 +1491,20 @@ def thumbnail_for(s, vid: str) -> Path:
     return d / "slide-01.png"
 
 
+def sets_thumbnail(s) -> bool:
+    """**この本にサムネ（`thumbnails.set` 50単位）を撃つか**（2026-09-19 12:xx・optimizer・Opus 5・1周 1体）。
+
+    **長尺だけ True**。理由は `cmd_schedule` の註と `budget.UPLOAD_UNITS_SHORT`:
+    ショートに撃っていたのは `slide-01.png` ＝ **1コマ目**で、YouTube の既定の絵とほぼ同じ。
+    効く面（一覧・検索）は実測で配りの **3.4%**（`analytics_traffic` 2026-09-19 10:37）で、
+    値段は **50 × 5本/日 ＝ 250単位** ＝ **6本目 の立つ/立たない を分ける側**。
+
+    **長尺は撃ちます** —— あちらはフィードに乗らず、**一覧と検索だけが入口**なので、
+    サムネが配りそのものです（`studio/thumb.py` の冒頭）。
+    """
+    return script.form_of(s.form) is script.LONG
+
+
 def cmd_thumb(a):
     s = script.load(a.id)
     out = thumbnail_for(s, a.id)
@@ -1614,11 +1628,24 @@ def cmd_schedule(a):
             return 1
     vid = yt.upload(mp4, s.title, s.description, s.tags, at)
     print("上げた:", vid, f"公開 {at:%m/%d %H:%M} JST")
-    first = thumbnail_for(s, a.id)
-    try:
-        yt.set_thumbnail(vid, first)
-    except Exception as e:  # noqa: BLE001
-        print("サムネは付かなかった:", str(e)[:120])
+    # **ショートにはサムネを撃ちません**（2026-09-19 12:xx・optimizer・Opus 5・1周 1体）。
+    # 撃っていたのは `slide-01.png` ＝ **1コマ目**で、YouTube が既定で選ぶ絵とほぼ同じ物です
+    # （`thumbnail_for` の註が 2026-09-15 から「縦のフィードでサムネは見られない・答えを変えない」）。
+    # 効く面は フィードの外だけ（実測 YT_SEARCH 160 ＋ YT_CHANNEL 6 / SHORTS 4,919 ＝ **3.4%**・
+    # `analytics_traffic` 2026-09-19 10:37）で、値段は **50単位 × 5本/日 ＝ 250**。
+    # **その 250 と 測る側の 200 が、6本目（1,600）の立つ/立たない を分けます**
+    # （`budget.UPLOAD_UNITS_SHORT` の註・`day_upload_cap`）。
+    # **覆る条件**: 長尺は今までどおり撃ちます（一覧と検索でしか配られない ＝ サムネが配りの入口）。
+    #   ショートの `video_thumbnail_impressions_ctr`（`reporting.py`）が、撃った本と撃たない本で
+    #   **2倍 以上** 違ったら戻すこと。**フィードの外の面が 1割 を越えた日が出たときも同じ。**
+    if sets_thumbnail(s):
+        first = thumbnail_for(s, a.id)
+        try:
+            yt.set_thumbnail(vid, first)
+        except Exception as e:  # noqa: BLE001
+            print("サムネは付かなかった:", str(e)[:120])
+    else:
+        print("  サムネは撃ちません（short ＝ 1コマ目のまま・**50単位 を 6本目 へ回します**）")
     if a.replace:
         yt.make_private(a.replace)
         print("差し替え: 前の", a.replace, "を private に戻した（消していない）")
@@ -1687,7 +1714,18 @@ LONG_SLOTS = ("19:00",)
 # 5枠 は `src/day_cap.py` の実測（再生が付く上限 **10本/日**）の半分で、
 # **焼ける速さ（1周 1本・1日 約11周）から取れる数**です。**枠は上限であって床ではありません** ——
 # 埋まらない枠は空のままで、`status` はそれを欠陥として鳴らしません（覆る条件 (2)）。
-SHORT_SLOTS = ("07:00", "10:00", "12:00", "15:00", "18:00")
+#
+# **【2026-09-19 12:xx・optimizer・Opus 5・1周 1体】6枠目（21:00）を足しました。**
+#   **なぜ**: 枠が 5 だったのは `day_upload_cap()` が 5 だったからで、上限の実測（10本/日）の
+#   側ではありません。その `day_upload_cap()` が **6** になりました
+#   （`budget.UPLOAD_UNITS_SHORT` ＝ ショートにサムネを撃たない ＋ 測る側 600→400）。
+#   **上限 10本/日 まではまだ 4本 余っています**（覆る条件 (2) は引かれません）。
+#   **刻を 21:00 にした理由**: 相手は 55歳以上 が 93.7%・65歳以上 が 62.5%
+#   （`analytics_audience` 2026-09-19 10:37）で、夜の帯が空いていました（07/10/12/15/18 は昼側）。
+#   **19:00 は `LONG_SLOTS` なので避けています**（同じ刻に 2本 出さない）。
+#   **覆る条件**: `budget` の覆る条件 (6)（6本目 の 24h 中央が その日の他の本の 半分 未満なら
+#   刻を疑う）。**1日 で決めないこと** —— 09/18 の 5本 は 802〜1,165 ＝ 1本 の幅が 1.45倍 ある。
+SHORT_SLOTS = ("07:00", "10:00", "12:00", "15:00", "18:00", "21:00")
 # 予約を置ける最小の先（YouTube 側の処理は済んでいる前提 ＝ `readiness`。上げ直しではなく刻だけ動かす）。
 LONG_SLOT_LEAD_H = 2.0
 # 同じ枠に「本が在る」と見る幅（分）。
@@ -3218,7 +3256,25 @@ def cmd_catchup(a):
     # 説明欄は **全部の本からアイコン 1タップで着く面**（押せる・消えない）。「どの周に撃っても同じ答えになる手」。
     if cd:
         cmd_channel_desc(argparse.Namespace(dry_run=False, anyway=False))
-    if cta:
+    # **出す側が先**（2026-09-19 12:xx・optimizer・Opus 5・1周 1体）。
+    # **なぜ**: 日枠は 6本/日（9,600単位）＋ 測る側 400 で **ちょうど 10,000** です
+    # （`budget.UPLOAD_UNITS_SHORT` の註）。コメント欄の 250〜300単位 を**先に**撃つと、
+    # 押し出されるのは **6本目（1,600単位・約1,000回）**で、守られるのは
+    # **押せない面（Shorts のコメント欄の URL は 2023-08-31 から非クリック）**です。
+    # ＝ **順が逆でした。** きょうの枠がまだ埋まっていない周では、ここは撃ちません。
+    # **捨ててはいません** —— 枠が埋まった後の周の `catchup` が同じ塊を撃ちます
+    # （相手は 48h で消えるので、同じ日のうちなら間に合う）。
+    # **覆る条件**: ASP の 2枚目（09/22）で クリックが 1枚目 の 半分 未満なら、
+    #   消えたのは PC・TV の 11%（コメント欄は watch ページでは押せる）側 ＝ ここを戻し、
+    #   代わりに 6本目 を落とすこと（`trend.asp_report` と並べて読む。**同時に動かさないこと**）。
+    placed = sum(1 for r in rows if r.get("event") == "scheduled"
+                 and (r.get("at") or "") >= budget.window_start(now).isoformat(timespec="seconds"))
+    cap = day_upload_cap()
+    if cta and placed < cap:
+        print(f"  コメント欄の一手 {len(cta)}本（{len(cta) * 50}単位）は**撃ちません** ＝ "
+              f"きょうの枠がまだ {cap - placed}本 空いています（出す側が先・1本 "
+              f"{budget.UPLOAD_UNITS_SHORT:,}単位 ＝ 約1,000回）。**枠が埋まった周の `catchup` が撃ちます**")
+    elif cta:
         print(f"  コメント欄の一手（**新しい順**・{len(cta)}本 ＝ {len(cta) * 50}単位）")
         cmd_cta(argparse.Namespace(ids=",".join(cta), max=len(cta), anyway=False,
                                    dry_run=False, check=False))
@@ -3678,8 +3734,20 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
 
 
 def day_upload_cap() -> int:
-    """**1日に上げられる本数**（日枠 ÷ 1本・測る側を先に残す）。**枠の数ではありません。**"""
-    return max((budget.DAY_UNITS - budget.RESERVE) // budget.UPLOAD_UNITS, 0)
+    """**1日に上げられる本数**（日枠 ÷ 1本・測る側を先に残す）。**枠の数ではありません。**
+
+    **【2026-09-19 12:xx・optimizer・Opus 5・1周 1体】5 → 6 になりました。**
+    値段を**ショートの側**（`UPLOAD_UNITS_SHORT` 1,600 ＝ `thumbnails.set` を撃たない）で数え、
+    測る側の取り分を 600 → 400 に下げたため（どちらも `studio/budget.py` の註に理由と覆る条件）。
+    **在庫はショートだけで埋まります**（`form_priority_line` が毎周 印字している側）。
+
+        6 × 1,600 ＋ 400 ＝ 10,000（ちょうど）
+
+    **長尺を 1本 混ぜると 1,650 になり、6本目 は 50単位 足りません** ——
+    そのとき撥ねられるのは **6本目 だけ**で、値段は **0単位**（`quotaExceeded` は課金されない）。
+    ＝ **この関数は「6」と言い続けてよい**。止めるのは `budget` の覆る条件 (5) の 2日 の実測です。
+    """
+    return max((budget.DAY_UNITS - budget.RESERVE) // budget.UPLOAD_UNITS_SHORT, 0)
 
 
 def _form_gap_phrase() -> str:
