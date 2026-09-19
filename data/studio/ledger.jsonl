@@ -7313,3 +7313,17 @@
 {"seconds": 82.6, "image": true, "chars": 404, "scenes": [13.1, 13.3, 5.7, 9.5, 6.0, 10.4, 9.8, 7.9, 7.0], "sig": "3:09bd27c9ede8", "at": "2026-09-19T22:18:04+09:00", "id": "2026-09-22-nenkin-hikare-uchiwake-short", "event": "built"}
 {"seconds": 83.9, "image": true, "chars": 430, "scenes": [13.7, 4.9, 9.1, 10.1, 6.8, 11.9, 7.6, 7.0, 5.8, 7.0], "sig": "3:889950380ddc", "at": "2026-09-19T22:19:40+09:00", "id": "2026-09-21-kuriage-60sai-short", "event": "built"}
 {"seconds": 88.3, "image": true, "chars": 438, "scenes": [14.2, 4.9, 9.1, 10.7, 8.6, 13.1, 7.9, 7.0, 5.8, 7.0], "sig": "3:1dd16de3a3eb", "at": "2026-09-19T22:21:17+09:00", "id": "2026-09-21-kuriage-61sai-short", "event": "built"}
+{"seconds": 88.5, "image": true, "chars": 438, "scenes": [14.3, 4.9, 9.1, 10.8, 8.7, 13.1, 7.8, 7.0, 5.8, 7.0], "sig": "3:4f9c42f74993", "at": "2026-09-19T22:22:56+09:00", "id": "2026-09-21-kuriage-62sai-short", "event": "built"}
+{"seconds": 89.5, "image": true, "chars": 438, "scenes": [14.5, 4.9, 9.1, 10.9, 8.6, 13.8, 8.0, 7.0, 5.8, 7.0], "sig": "3:139742568330", "at": "2026-09-19T22:24:35+09:00", "id": "2026-09-21-kuriage-63sai-short", "event": "built"}
+{"seconds": 87.6, "image": true, "chars": 432, "scenes": [14.5, 4.9, 9.1, 10.2, 8.1, 13.0, 7.9, 7.0, 5.8, 7.0], "sig": "3:a68883dab14f", "at": "2026-09-19T22:26:12+09:00", "id": "2026-09-21-kuriage-64sai-short", "event": "built"}
+{"seconds": 92.0, "image": true, "chars": 443, "scenes": [12.6, 13.3, 12.5, 13.8, 9.6, 9.9, 5.6, 7.6, 7.0], "sig": "3:4bc9bdd673eb", "at": "2026-09-19T22:27:58+09:00", "id": "2026-09-22-nenkin-hikare-dansa-short", "event": "built"}
+{"seconds": 82.3, "image": true, "chars": 403, "scenes": [13.1, 13.3, 5.7, 9.5, 6.0, 10.4, 9.8, 7.6, 7.0], "sig": "3:707b9f86d1d4", "at": "2026-09-19T22:29:40+09:00", "id": "2026-09-22-nenkin-hikare-uchiwake-short", "event": "built"}
+{"subs": 43, "views": 96391, "videos": 293, "title": "カワウソの年金計算室", "at": "2026-09-19T22:30:34+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"views_live": 139, "views_ledger": 0, "over": 139, "age_h": 12.5, "src": "status", "at": "2026-09-19T22:30:35+09:00", "id": "oNiKmRKi4N4", "event": "views_over"}
+{"views_live": 1043, "views_ledger": 709, "over": 334, "age_h": 15.5, "src": "status", "at": "2026-09-19T22:30:35+09:00", "id": "o_c9fMHlIq4", "event": "views_over"}
+{"views_live": 1050, "views_ledger": 1046, "over": 4, "age_h": 28.5, "src": "status", "at": "2026-09-19T22:30:35+09:00", "id": "ktbvrdAeavA", "event": "views_over"}
+{"views_live": 955, "views_ledger": 802, "over": 153, "age_h": 31.5, "src": "status", "at": "2026-09-19T22:30:35+09:00", "id": "49Wa5jNNzOk", "event": "views_over"}
+{"views_live": 989, "views_ledger": 847, "over": 142, "age_h": 34.5, "src": "status", "at": "2026-09-19T22:30:35+09:00", "id": "qqlUo148_cg", "event": "views_over"}
+{"views_live": 1114, "views_ledger": 1076, "over": 38, "age_h": 36.5, "src": "status", "at": "2026-09-19T22:30:35+09:00", "id": "2u22TXSLyno", "event": "views_over"}
+{"views_live": 1170, "views_ledger": 1165, "over": 5, "age_h": 39.5, "src": "status", "at": "2026-09-19T22:30:35+09:00", "id": "tQPfODv61vg", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-19T22:30:35+09:00", "id": "BzWoZR1Y4ZI", "event": "zero_probe"}
