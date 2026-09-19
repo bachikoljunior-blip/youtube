@@ -7062,3 +7062,5 @@
 {"seconds": 91.3, "image": true, "chars": 446, "scenes": [12.9, 7.2, 9.1, 10.6, 8.6, 13.0, 7.9, 9.3, 5.8, 7.0], "sig": "2:2e05ec4ade82", "at": "2026-09-19T13:33:29+09:00", "id": "2026-09-21-kuriage-61sai-short", "event": "built"}
 {"seconds": 91.7, "image": true, "chars": 446, "scenes": [13.0, 7.1, 9.1, 10.6, 8.7, 12.9, 7.8, 9.6, 5.8, 7.0], "sig": "2:3eadd1b86020", "at": "2026-09-19T13:35:06+09:00", "id": "2026-09-21-kuriage-62sai-short", "event": "built"}
 {"seconds": 90.8, "image": true, "chars": 440, "scenes": [13.2, 7.2, 9.1, 10.1, 8.1, 12.9, 7.9, 9.5, 5.8, 7.0], "sig": "2:e4cf71cab89e", "at": "2026-09-19T13:36:39+09:00", "id": "2026-09-21-kuriage-64sai-short", "event": "built"}
+{"subs": 40, "title": "カワウソの年金計算室", "handle": "カワウソの年金計算室", "exact": true, "src": "public_page", "at": "2026-09-19T14:12:17+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"subs": 40, "title": "カワウソの年金計算室", "handle": "カワウソの年金計算室", "exact": true, "src": "public_page", "at": "2026-09-19T14:12:34+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
