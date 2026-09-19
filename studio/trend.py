@@ -10123,6 +10123,50 @@ def perf_need_rate(rows: list, scripts_dir=None) -> dict:
     return out
 
 
+def need_yen_per_click(rows: list, scripts_dir=None) -> dict:
+    """**1クリックが運ばねばならない円**（**API 0単位**・`studio/asp.py`「1クリックがいくら運ぶか」の註）。
+
+    返り: `{"clicks_month", "need_yen", "cap": {同じ 2つ}, "click_rate", "goal"}`
+
+    **なぜ在るか**: 案件を選ぶ式が、**字で分かっている単価**ではなく
+    **未測の帯**（`PERF_YEN_PER_ACTION_BAND`）を読んでいました（決めは `asp.py` の註）。
+    **押される率だけが実測**（`PERF_CLICK_BAND` の中段）なので、
+    **目標 ÷ クリック/月** までは測った数だけで引けます ——
+    **1件の単価で割るのは、案件を選ぶ側（`asp.need_convert`）**です。
+
+    **覆る条件は `asp.py` の註に 6つ**（ここへ写さない ＝ 決めは 1か所）。
+    """
+    from . import peers as _peers
+
+    goal = float(_peers.GOAL_YEN)
+    d = ungated_yen(rows, scripts_dir)          # 再生/月 は 1か所（写しを持たない）
+    rate = PERF_CLICK_BAND[1]                   # **実測の中段**（帯の中でここだけ測ってある）
+
+    def _case(v_month) -> dict:
+        if not v_month:
+            return {"clicks_month": None, "need_yen": None}
+        clicks = float(v_month) * rate
+        return {"clicks_month": clicks, "need_yen": (goal / clicks) if clicks else None}
+
+    out = _case(d.get("views_month"))
+    out["cap"] = _case((d.get("cap") or {}).get("views_month"))
+    out.update({"click_rate": rate, "goal": goal})
+    return out
+
+
+def _asp_yen_per_click(rows: list, scripts_dir=None) -> str:
+    """**¥/クリックの段は 1か所**（`perf_line` と `perf_short` の両方がここを通る）。
+
+    **6本/日 の側で引きます** —— `perf_need_rate` の `times` が 6本/日 を読むのと同じ向き
+    （案件を選ぶのは「日枠が戻ったあと」に配る本のためなので、いまの 5本/日 より先の数で選ぶ）。
+    **引けなければ いまの側**、どちらも引けなければ空。
+    """
+    from . import asp as _asp
+    d = need_yen_per_click(rows, scripts_dir)
+    need = (d.get("cap") or {}).get("need_yen") or d.get("need_yen")
+    return _asp.yen_per_click_line(need)
+
+
 def _asp_door(rows: "list[dict] | None" = None) -> str:
     """**扉の段は 1か所**（`perf_line` と `perf_short` の両方がここを通る）。
 
@@ -10168,6 +10212,7 @@ def perf_line(rows: list, scripts_dir=None) -> str:
             "出すのは「どれだけの率で出れば届くか」だけです（覆る条件 (3)）。"
             "**提携の審査は 1度も試していません**（覆る条件 (2)・訊き `asp_reading`）。")
     out += _asp_door(rows)
+    out += _asp_yen_per_click(rows, scripts_dir)
     return out
 
 
@@ -10198,6 +10243,7 @@ def perf_short(rows: list, scripts_dir=None) -> str:
             "**門の外は 2つ で、腕が届くのはこちら**（あちらは相手の yes・こちらは台本と説明欄）。"
             "**成果が出るとは言っていません**（derivation は `trend.perf_need_rate`・**API 0単位**）")
     out += _asp_door(rows)
+    out += _asp_yen_per_click(rows, scripts_dir)
     out += asp_report_short(rows)
     return out
 
