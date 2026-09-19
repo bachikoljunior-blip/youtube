@@ -10114,6 +10114,19 @@ def perf_need_rate(rows: list, scripts_dir=None) -> dict:
     return out
 
 
+def _asp_door(rows: "list[dict] | None" = None) -> str:
+    """**扉の段は 1か所**（`perf_line` と `perf_short` の両方がここを通る）。
+
+    **決め・原文・出どころ・覆る条件は `studio/asp.py`「案件の扉」の註** ＝ ここへ写さないこと。
+    相手（`p65`）は `audience_split` から引きます ＝ **測っていなければ空**（陰性の札は同じ向き）。
+    """
+    from . import asp as _asp
+    s = audience_split(rows if rows is not None else ledger_rows())
+    if not s.get("measured"):
+        return ""
+    return _asp.door_short(s.get("p65"))
+
+
 def perf_line(rows: list, scripts_dir=None) -> str:
     """毎周 1行（`trend`）。**決めと覆る条件は上の註 ＝ ここへ決めを書かないこと。**"""
     d = perf_need_rate(rows, scripts_dir)
@@ -10145,6 +10158,7 @@ def perf_line(rows: list, scripts_dir=None) -> str:
             "（うちが毎日 作っている物）。**この行は『成果が出る』とは言いません** —— "
             "出すのは「どれだけの率で出れば届くか」だけです（覆る条件 (3)）。"
             "**提携の審査は 1度も試していません**（覆る条件 (2)・訊き `asp_reading`）。")
+    out += _asp_door(rows)
     return out
 
 
@@ -10174,6 +10188,7 @@ def perf_short(rows: list, scripts_dir=None) -> str:
             "**幅を潰す手は 2つ**: 2枚目 の ASP の画面（押せる面が在る期間の分母・`asp-report`）と、本を出し続けてクリックを 40件 まで積むこと。"
             "**門の外は 2つ で、腕が届くのはこちら**（あちらは相手の yes・こちらは台本と説明欄）。"
             "**成果が出るとは言っていません**（derivation は `trend.perf_need_rate`・**API 0単位**）")
+    out += _asp_door(rows)
     out += asp_report_short(rows)
     return out
 
