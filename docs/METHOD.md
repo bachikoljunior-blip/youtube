@@ -1698,7 +1698,8 @@ derivation は `docs/JOURNAL.md` 2026-09-19 12:xx。検査は `tests/test_studio
 **5.9倍 は、この周に腕が届く数の中でいちばん大きいものです**（6本/日 の +20% より 1桁 上）。
 **「上がる」とは言っていません** —— 上がったかどうかは (0)`channel_trajectory_line` と維持率で、遅れ 4日。
 
-**覆る条件**:
+**覆る条件**（**番号は §5 の通しで、(5)〜(8) は `studio/budget.py` の側・(9)以降はこの節 ＝
+`studio/narration.py` と `studio/slides.py` の註**。**同じ模組の続きではありません**）:
  (9) **ずれは、この周に実測しました ＝ 中央 0.06秒・最悪 0.42秒・0.4秒 を越えた数 15個 中 1個（6.7%）**
      （`narration.calibrate()`・whisper の語ごとの時刻 × 実物の wav・**API 0単位**・
      `2026-09-20-taishokukin-2000man-20nen-short` の数 15個）。
