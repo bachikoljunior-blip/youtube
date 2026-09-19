@@ -503,7 +503,10 @@ _DIGITS_ANY = re.compile(r"[0-9０-９〇一二三四五六七八九十百千万
 #   2 … **声に合わせて動く画面**（2026-09-19 12:5x・`studio/narration.py`・オーナー `9155fe09`）。
 #         台本の字は 1字も変わらないのに mp4 は別物になります ＝ 冒頭の覆る条件 (2) が名指しする
 #         「道具を直した回」そのもの。上げないと、在庫 13本 が**古い絵のまま「新しい」と言われます**。
-BUILD_SIG_VERSION = 2
+#   3 … **最後の当たりより後ろの歩が、そこで止まる**（2026-09-19 22:xx・`studio/narration.cue_windows`
+#         の覆る条件 (d)(e)）。台本が 1字 も変わらない本でも mp4 は別物になります
+#         （**変わらないのは、うしろに当たらない歩が無い本だけ** ＝ 09/21 の繰上げ 5本）。
+BUILD_SIG_VERSION = 3
 
 
 def _viz_key(spec: dict) -> str:
@@ -872,6 +875,73 @@ class Script(BaseModel):
             return None
         return hit, tot, "・".join(miss[:4])
 
+    def unmoored_viz_steps(self) -> tuple[int, int, str] | None:
+        """(**錨の無い歩**, 動く歩の合計, 例) —— 無ければ None。**API 0単位・焼かない**。
+
+        `unlinked_viz_steps` は「声に当たらなかった歩」を**全部**数えますが、
+        **当たらない歩の大半は、そもそも動きません**（`narration.cue_windows`）——
+
+            コマの**頭**から最初の当たりまでの歩   `carry`      ＝ **もう画面に出ている**（幅 0）
+            声が 1歩 も指さないコマの図ぜんたい     `carry = n`  ＝ **動かない**（幅 0）
+            当たりと当たりの**あいだ**の歩                        ＝ **前後の数が錨**になる
+            **最後の当たりより後ろ**の歩                          ＝ **どこにも留まっていない**
+
+        **この 4つ目 だけが「声と無関係に動く」歩**です。ここが数えるのはそれだけ。
+
+        **なぜ分けたか**（2026-09-19 22:xx・optimizer・在庫 38本 を数えて決めた・**API 0単位**）:
+        `unlinked_viz_steps` は在庫 38本 で **594/1211（49%）が当たらない**と言い、
+        `docs/METHOD.md` §5 の覆る条件 (12-a) は **「3本 続けて 80% を越えたら仕事を終えている」**と
+        書いていました。**その 80% は、声の秒数では買えません** ——
+        ショートは **95秒・480字**（`MAX_SECONDS`／`MAX_TOTAL_CHARS`）で、1コマ 70字 の門も在ります。
+        6行 の表の 6行 を声で読み上げると、そのコマだけで 65字 使います
+        （`series_kuriage.tail_seg` の註が、まさにそれを理由に読み上げをやめていた）。
+        **＝ 門が、門の外の予算と食い合っていました。**
+        同じ 38本 を**動く歩だけ**で数え直すと **142/808（17.6%）** で、そのうち
+        **09/21 の 5本 は 0**（繰上げ連作は、naive では 59% しか当たっていないのに**欠けが無い**）。
+        **49% は直す物の数ではなく、24% はまだ多すぎる数で、本当の欠けは 17.6% でした。**
+
+        **覆る条件**:
+         (1) `narration.cue_windows` の「最後の当たりより後ろは幅 0」（覆る条件 (d)）を外したら、
+             **この数の意味も変わります** —— そのときは「あいだの歩」も錨が要ります。**門は 1か所**。
+         (2) 図が**前のコマから続いている**とき（`render.build` の `seen`）、頭の歩は呼ぶ側が
+             `carry` に数えます。ここはその区別をしません ＝ **この数は多めに出ます**（安全側）。
+         (3) `unlinked_viz_steps` は**消していません**。声が言わない数が画面に何個 在るかは、
+             台本を書く側が見る数のままです（**止める門ではない**）。
+        """
+        from . import narration as _n
+        from . import viz as _v
+        bad = tot = 0
+        miss: list[str] = []
+        for i, g in enumerate(self.segments, 1):
+            if not g.viz:
+                continue
+            keys = _v.step_keys(g.viz)
+            n = len(keys)
+            if not n:
+                continue
+            found: list[bool] = []
+            at = 0
+            for cand in keys:
+                ok = False
+                for key in cand:
+                    pos = _n.find_cue(g.say, key, at)
+                    if pos:
+                        ok = True
+                        at = pos[1]
+                        break
+                found.append(ok)
+            hits = [k for k, f in enumerate(found) if f]
+            if not hits:                      # 声が 1歩 も指さない ＝ 図ぜんたいが動かない
+                continue
+            tot += n - hits[0]
+            t = n - 1 - hits[-1]
+            if t:
+                bad += t
+                miss.append(f"コマ{i}（{t}歩）")
+        if not tot or not bad:
+            return None
+        return bad, tot, "・".join(miss[:4])
+
     @staticmethod
     def _has_number(line: str) -> bool:
         """板の 1行 が**量**を持っているか。**見出しの番号は数えません**。
@@ -957,12 +1027,27 @@ class Script(BaseModel):
         # **止めません** —— 表の「見出しの行」や、比べるためだけに置いた段は、言わなくてよい数です。
         # **覆る条件**: (1) 当たる割合を上げた本の維持率が上がらなければ、直す先は声ではなく**歩の数**
         # （言わない数を図から落とす）。(2) 割合が 3本 続けて 80% を越えたら、この行は仕事を終えています。
+        # **直す物はこちら**（2026-09-19 22:xx）—— 当たらない歩のうち、**本当に動いてしまう**のは
+        # 「最後の当たりより後ろ」だけ（`unmoored_viz_steps` の註・`narration.cue_windows` 覆る条件 (d)(e)）。
+        unmoored = self.unmoored_viz_steps()
+        if unmoored:
+            n_bad, n_move, ex = unmoored
+            out.append(
+                f"**錨の無い歩が {n_bad}/{n_move}**（最後の当たりより後ろで、声の無い所を動く）: {ex}。"
+                f"**止めません** —— 直し方は 2つ で、**安いほうは「図の最後の行を声に 1つ 言わせる」**"
+                f"（錨が 1つ 増えると、あいだの歩は前後の数に留まります）。"
+                f"もう 1つ は歩そのものを落とすこと。**動かして隠す物ではありません**"
+                f"（`studio/narration.cue_windows` の覆る条件 (d)(e)）")
         unlinked = self.unlinked_viz_steps()
         if unlinked:
             n_hit, n_all, ex = unlinked
             out.append(
-                f"**図の歩 {n_all - n_hit}/{n_all} が、声の中にその数を持っていません**"
+                f"（参考）**図の歩 {n_all - n_hit}/{n_all} が、声の中にその数を持っていません**"
                 f"（当たり {n_hit / n_all:.0%}）: {ex}。"
+                f"**この数は直す物の数ではありません** —— {n_all - n_hit}歩 のうち動くのは"
+                f"上の「錨の無い歩」だけで、残りは幅 0（頭から出ている／図ぜんたいが止まっている／"
+                f"前後の数が錨）です。**95秒・480字 の予算で 80% は買えません**"
+                f"（`Script.unmoored_viz_steps` の註）。"
                 f"**止めません** —— 見出しや比べるためだけの段は言わなくてよい数です。"
                 f"**直すなら、声にその数を言わせるか、歩そのものを落とすこと**"
                 f"（**合わせる先が無い歩は、もう動きません** —— 前のコマで出ている歩と、"

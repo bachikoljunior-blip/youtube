@@ -7289,3 +7289,15 @@
 {"understand": 3, "n_real": 1, "done": false, "sig": "2:d8fbf125433a", "family": "1:1f2554179ed3", "lang": "ja", "wheres": [{"where": "コマ5", "sev": "real"}, {"where": "コマ7", "sev": "nitpick"}, {"where": "コマ6", "sev": "nitpick"}, {"where": "コマ1", "sev": "nitpick"}, {"where": "コマ5の理由説明", "sev": "nitpick"}, {"where": "コマ2とコマ7", "sev": "nitpick"}], "at": "2026-09-19T21:23:39+09:00", "id": "2026-09-23-kakyu-6sai-shita-short", "event": "critique"}
 {"seconds": 85.3, "image": true, "chars": 417, "scenes": [13.2, 10.0, 8.5, 6.5, 9.7, 11.4, 6.9, 4.6, 7.5, 7.0], "sig": "2:a0829b15ccfb", "at": "2026-09-19T21:24:00+09:00", "id": "2026-09-23-kakyu-1sai-shita-short", "event": "built"}
 {"seconds": 88.6, "image": true, "chars": 437, "scenes": [14.2, 10.0, 8.5, 6.5, 11.2, 11.4, 7.7, 4.6, 7.5, 7.0], "sig": "2:4fde7204d187", "at": "2026-09-19T21:27:52+09:00", "id": "2026-09-23-kakyu-1sai-shita-short", "event": "built"}
+{"subs": 43, "views": 96391, "videos": 293, "title": "カワウソの年金計算室", "at": "2026-09-19T21:41:50+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"views_live": 139, "views_ledger": 0, "over": 139, "age_h": 11.7, "src": "status", "at": "2026-09-19T21:41:52+09:00", "id": "oNiKmRKi4N4", "event": "views_over"}
+{"views_live": 1035, "views_ledger": 709, "over": 326, "age_h": 14.7, "src": "status", "at": "2026-09-19T21:41:52+09:00", "id": "o_c9fMHlIq4", "event": "views_over"}
+{"views_live": 1050, "views_ledger": 1046, "over": 4, "age_h": 27.7, "src": "status", "at": "2026-09-19T21:41:52+09:00", "id": "ktbvrdAeavA", "event": "views_over"}
+{"views_live": 955, "views_ledger": 802, "over": 153, "age_h": 30.7, "src": "status", "at": "2026-09-19T21:41:52+09:00", "id": "49Wa5jNNzOk", "event": "views_over"}
+{"views_live": 989, "views_ledger": 847, "over": 142, "age_h": 33.7, "src": "status", "at": "2026-09-19T21:41:52+09:00", "id": "qqlUo148_cg", "event": "views_over"}
+{"views_live": 1114, "views_ledger": 1076, "over": 38, "age_h": 35.7, "src": "status", "at": "2026-09-19T21:41:52+09:00", "id": "2u22TXSLyno", "event": "views_over"}
+{"views_live": 1167, "views_ledger": 1165, "over": 2, "age_h": 38.7, "src": "status", "at": "2026-09-19T21:41:52+09:00", "id": "tQPfODv61vg", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-19T21:41:52+09:00", "id": "BzWoZR1Y4ZI", "event": "zero_probe"}
+{"seconds": 90.8, "image": true, "chars": 446, "scenes": [14.2, 10.0, 8.5, 6.5, 11.2, 11.4, 7.4, 7.7, 6.9, 7.0], "sig": "3:69c9ade1d5b8", "at": "2026-09-19T21:58:00+09:00", "id": "2026-09-23-kakyu-1sai-shita-short", "event": "built"}
+{"seconds": 90.5, "image": true, "chars": 446, "scenes": [14.2, 10.0, 8.5, 6.5, 11.1, 11.3, 7.4, 7.7, 6.9, 7.0], "sig": "3:526f740de8ff", "at": "2026-09-19T21:59:56+09:00", "id": "2026-09-23-kakyu-2sai-shita-short", "event": "built"}
+{"seconds": 90.9, "image": true, "chars": 448, "scenes": [14.3, 10.0, 8.5, 6.5, 11.2, 11.4, 7.4, 7.7, 6.9, 7.0], "sig": "3:6752ca56807f", "at": "2026-09-19T22:01:53+09:00", "id": "2026-09-23-kakyu-3sai-shita-short", "event": "built"}

@@ -239,3 +239,63 @@ def test_全部の歩が声に在れば黙る():
     ])
     assert s.unlinked_viz_steps() is None
     assert not any("図の歩" in w for w in s.warnings())
+
+
+# ------------------------------------------- 最後の当たりより後ろ（2026-09-19 22:xx）
+
+def test_最後の当たりより後ろの歩は_そこで出そろって止まる():
+    """`carry` の**鏡**（`N.cue_windows` の覆る条件 (d)(e)）。
+
+    実物 `2026-09-23-kakyu-1sai-shita-short` コマ8: 声は「1歳ちがうと42万3700円ちがいます」で、
+    表は 6行。**1行目 が「42万3700円」で引かれたあと、2〜6行目 が声の無い所で
+    1行 ずつ湧いて**いました ＝ どこにも留まっていない動き。
+    """
+    say = "1歳ちがうと42万3700円ちがいます。"
+    spec = {"kind": "table", "head": ["年齢差", "合計"],
+            "rows": [["1歳年下", "42万3700円"], ["2歳年下", "84万7400円"],
+                     ["3歳年下", "127万1100円"], ["4歳年下", "169万4800円"]]}
+    w = N.cue_windows(say, 6.0, V.step_keys(spec), {})
+    assert len(w) == 4
+    assert w[0][1] > w[0][0], "声が言った 1行目 は動く"
+    tail = w[1:]
+    assert all(a == b for a, b in tail), "うしろの 3行 は幅 0（そこで出そろう）"
+    assert all(abs(a - w[0][1]) < 1e-9 for a, _b in tail), "出そろうのは**最後の当たりの終わり**"
+    # コマの終わりまで**何も動きません**（前は余りを等分して湧いていた）
+    assert N.progress_at(w[0][1] + 0.01, w, 4) == 1.0
+
+
+def test_錨が_2つ_あれば_あいだの歩は前後の数に留まる():
+    """**直し方の安いほう**（`lint` の助言文）—— 表の最後の行を声に 1つ 言わせる。"""
+    say = "1歳ちがうと42万3700円、6歳なら254万2200円ちがいます。"
+    spec = {"kind": "table", "head": ["年齢差", "合計"],
+            "rows": [["1歳年下", "42万3700円"], ["2歳年下", "84万7400円"],
+                     ["3歳年下", "127万1100円"], ["6歳年下", "254万2200円"]]}
+    w = N.cue_windows(say, 6.0, V.step_keys(spec), {})
+    assert w[0][1] > w[0][0] and w[-1][1] > w[-1][0], "両端は声に当たる"
+    assert all(w[k][1] > w[k][0] for k in (1, 2)), "あいだの 2行 は前後の錨のあいだで伸びる"
+    assert w[1][0] >= w[0][1] - 1e-9 and w[2][1] <= w[3][0] + 1e-9, "順は単調"
+
+
+def test_錨の無い歩を数える_止めない_参考の数とは別():
+    from studio.script import Script, Segment
+    seg = Segment(show="1歳 ＝ 42万3700円", sub="", say="1歳ちがうと42万3700円ちがいます。",
+                  viz={"kind": "table", "head": ["年齢差", "合計"],
+                       "rows": [["1歳年下", "42万3700円"], ["2歳年下", "84万7400円"],
+                                ["3歳年下", "127万1100円"]]})
+    s = Script(id="t", date="2026-09-23", title="t", takeaway="t", description="d", segments=[seg])
+    got = s.unmoored_viz_steps()
+    assert got is not None
+    bad, moving, _ex = got
+    assert (bad, moving) == (2, 3), "最後の当たり（1行目）より後ろの 2行 だけ"
+    assert any("錨の無い歩" in w for w in s.warnings())
+    assert not any("錨の無い歩" in p for p in s.problems()), "止めません"
+
+
+def test_声が_1歩_も指さないコマは_錨の話に入らない():
+    """図ぜんたいが止まっているコマは、**直す物ではありません**（幅 0 ＝ 読める板）。"""
+    from studio.script import Script, Segment
+    seg = Segment(show="20年が境目", sub="", say="20年が境目です。",
+                  viz={"kind": "table", "rows": [["枠", "800万円"], ["税金", "138万8700円"]]})
+    s = Script(id="t", date="2026-09-23", title="t", takeaway="t", description="d", segments=[seg])
+    assert s.unmoored_viz_steps() is None, "動く歩が 0 のコマは数えない"
+    assert s.unlinked_viz_steps() is not None, "（参考）の側には出る"
