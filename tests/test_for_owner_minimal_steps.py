@@ -20,8 +20,16 @@
 **陽性対照つき**（落ちるまで撃つ）: 長い本文で **必ず** NG が出ること・
 いまの `docs/FOR_OWNER.md` では **1件も** 出ないことの両方を見ます。
 """
+import datetime as _dt
 import importlib.util
 from pathlib import Path
+
+#: 窓の刻（`scripts/for_owner.py` と同じ JST）。**陽性対照の作り物にだけ使います。**
+_JST = _dt.timezone(_dt.timedelta(hours=9))
+
+
+def _DT(y: int, m: int, d: int, h: int) -> "_dt.datetime":
+    return _dt.datetime(y, m, d, h, 0, tzinfo=_JST)
 
 ROOT = Path(__file__).resolve().parent.parent
 _SPEC = importlib.util.spec_from_file_location(
@@ -87,12 +95,46 @@ def test_いまの_FOR_OWNER_の窓は全部_最小手順に収まっている()
 
 
 def test_消した字は同じ窓の下に残っていて_親には出ない():
-    """**原文を捨てないこと** —— `>` の付かない塊に落としたので、`body` には出ない。"""
+    """**原文を捨てないこと** —— `>` の付かない塊に落としたので、`body` には出ない。
+
+    **【2026-09-19 23:0x】1つの窓を名指しするのをやめ、形そのものを固定しました**
+    （optimizer・Opus 5・ultracode・1周 1体）。
+
+    **なぜ**: この検査は `### 出す 2026-09-19 09:00` の窓を名指ししていました。
+    **ところが `for_owner.parse()` は「出す」節しか読みません** ——
+    オーナーが答えると窓は「**出した（記録）**」へ移り、**parse の返りから消えます**。
+    ＝ **窓が仕事を終えた瞬間に、この検査が落ちる形**でした
+    （実測: 09/19 10:51 にオーナーが「これで全部やった」と答えてから、毎周 赤）。
+
+    **＝ 検査が、守りたい決めではなく「いま在る1つの窓」を掴んでいた**という欠陥です。
+    **守りたい決めは 1つ**: **引用（`>`）の外に落とした字は、`lines` に残り、`body` には出ない。**
+    窓が開いていようが閉じていようが、この形は同じです。**だから形のほうを固定します。**
+
+    **陽性対照を先に置きます**（この file の他の検査と同じ形）——
+    **落ちるまで撃てる作り物**で、門が生きていることを先に見ます。
+
+    **覆る条件**: `Block.body` が「`>` の中だけ」をやめたら（例: 全部 出すようになったら）、
+    ここが鳴ります。そのときは **決めのほうが動いた**ので、`scripts/for_owner.py` の註を読むこと。
+    """
+    # (1) **陽性対照**: `>` の外の字は `lines` に在って `body` に無いこと
+    b = for_owner.Block(
+        "### 出す 2026-01-01 09:00〜10:00 JST",
+        _DT(2026, 1, 1, 9), _DT(2026, 1, 1, 10), "",
+        ["> 手順1: 画面をひらく", "", "**なぜ、これがいま一番大事か**: ここは親に出ない字です。"])
+    assert "なぜ、これがいま一番大事か" in "\n".join(b.lines), "元の字を消していないこと"
+    assert "なぜ、これがいま一番大事か" not in b.body, "その字は親に出ないこと"
+    assert "手順1: 画面をひらく" in b.body, "引用の中は親に出ること"
+
+    # (2) **実物**: いま在る窓ぜんぶで、`body` の行が **引用の行そのもの**だけであること。
+    #     **「外の字が body に無い」では挟めません** —— 同じ文が引用の中にも外にも
+    #     書かれている窓が実際に在り（`yt_quota_increase`）、字で挟むと偽陽性が出ます。
+    #     **挟むのは出どころのほう**: body の各行は、必ずどれかの `>` 行を剥いだ字である。
     md = (ROOT / "docs/FOR_OWNER.md").read_text(encoding="utf-8")
     blocks, _ = for_owner.parse(md)
-    live = [b for b in blocks if b.head.startswith("### 出す 2026-09-19 09:00")]
-    assert len(live) == 1
-    b = live[0]
-    raw = "\n".join(b.lines)
-    assert "なぜ、これがいま一番大事か" in raw, "元の字を消していないこと"
-    assert "なぜ、これがいま一番大事か" not in b.body, "その字は親に出ないこと"
+    assert blocks, "「出す」節に窓が 1つ もありません"
+    for blk in blocks:
+        quoted = {(ln[1:].lstrip(" ") if ln[1:2] == " " else ln[1:])
+                  for ln in blk.lines if ln.startswith(">")}
+        for ln in blk.body.splitlines():
+            if ln.strip():
+                assert ln in quoted, (blk.head, ln)
