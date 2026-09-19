@@ -302,3 +302,47 @@ def test_声が線を言う前は色で答えを出さない():
     px = list(im.getdata())
     band = sum(1 for p in px if p[3] > 60 and (p[1] > p[0] + 25 or p[0] > p[1] + 25) and p[2] < 160)
     assert band == 0
+
+
+# --------------------------------------------------------------- 表の光る行（`hi`・2026-09-19 17:xx）
+# 連作の表は 5本 とも同じ 5行 なので、既定（最後の行）のままだと **61歳 の本で 64歳 の行が光ります**。
+_ROWS5 = [[f"{a}歳", f"{250 - (65 - a) * 12}か月"] for a in (60, 61, 62, 63, 64)]
+
+
+def _row_bands(im, n: int) -> list[int]:
+    """行ごとの「黄色っぽい画素」の数（上から n 等分して数える）。"""
+    w, h = im.size
+    out = []
+    for k in range(n):
+        box = im.crop((0, int(h * k / n), w, int(h * (k + 1) / n)))
+        out.append(sum(1 for p in box.getdata()
+                       if p[3] > 30 and p[0] > 200 and p[1] > 180 and p[2] < 200))
+    return out
+
+
+def test_光る行は_hi_の行():
+    spec = {"kind": "table", "title": "", "rows": _ROWS5, "hi": 1}
+    im = viz.draw(spec, (1080, 480), 1.0)
+    bands = _row_bands(im, 5)
+    assert bands.index(max(bands)) == 1, bands
+
+
+def test_陰性対照_hi_を書かなければ最後の行():
+    spec = {"kind": "table", "title": "", "rows": _ROWS5}
+    im = viz.draw(spec, (1080, 480), 1.0)
+    bands = _row_bands(im, 5)
+    assert bands.index(max(bands)) == 4, bands
+
+
+def test_描いている間は_hi_ではなく_いま出た行が光る():
+    """**動きは殺さないこと** —— 途中の絵は「いま出た行」が光り、止まってから `hi` へ移ります。"""
+    spec = {"kind": "table", "title": "", "rows": _ROWS5, "hi": 1}
+    im = viz.draw(spec, (1080, 480), 0.65)     # 3行目 まで出ている
+    bands = _row_bands(im, 5)
+    assert bands.index(max(bands)) == 2, bands
+
+
+def test_hi_が行の外なら止める():
+    assert any("hi" in x for x in viz.check({"kind": "table", "rows": _ROWS5, "hi": 5}))
+    assert any("hi" in x for x in viz.check({"kind": "table", "rows": _ROWS5, "hi": True}))
+    assert viz.check({"kind": "table", "rows": _ROWS5, "hi": 0}) == []

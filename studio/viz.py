@@ -21,7 +21,8 @@
     {"kind": "waterfall", "title": "…", "start": {"label": "年金", "value": 1800000},
                           "steps": [{"label": "控除", "value": 1100000}, …],
                           "end": {"label": "所得", "value": 700000}}          # 1本 の棒から、引く分が赤く切れていく
-    {"kind": "table",     "title": "…", "head": ["…", "…"], "rows": [["…", "…"], …]}   # 行が 1つずつ出る（最後の行が黄色）
+    {"kind": "table",     "title": "…", "head": ["…", "…"], "rows": [["…", "…"], …], "hi": 1}  # 行が 1つずつ出る
+                          ※ 描いている間は「いま出た行」が黄色・描き終わると **`hi` の行**（既定は最後の行）
                           ※ 同じ単位の数が縦に並ぶ列には、マスの中に**長さ**が引かれます（`table_bar_column`）
     {"kind": "gauge",     "title": "…", "marks": [{"label": "住民税がかかる線", "value": 450000}],
                           "value": {"label": "この方の所得", "value": 100000},
@@ -201,6 +202,13 @@ def check(spec: dict, where: str = "") -> list[str]:
         head = spec.get("head") or []
         if not rows:
             out.append(f"{pre} rows が空")
+        # **`hi` ＝ 描き終わったあとに光る行**（2026-09-19 17:xx）。既定は最後の行。
+        # 連作の表（5本 で同じ 5行）は、**その本の歳の行**が光らないと、
+        # 見ている人は自分の行を目で探すことになります（実測: 61歳 の本で 64歳 の行が光っていた）。
+        hi = spec.get("hi")
+        if hi is not None and not (isinstance(hi, int) and not isinstance(hi, bool)
+                                   and 0 <= hi < len(rows)):
+            out.append(f"{pre} hi「{hi}」は 0〜{len(rows) - 1} の整数に")
         if len(rows) > MAX_ITEMS:
             out.append(f"{pre} rows が {len(rows)}（{MAX_ITEMS}まで）")
         ncol = len(head) if head else (len(rows[0]) if rows else 0)
@@ -524,10 +532,15 @@ def _draw_table(d, spec, W, H, p, unit, pad):
         for j, c in enumerate(head):
             d.text((col_x[j] + 10, y + (row_h - fsz) // 2 - 4), c, font=f, fill=GRAY)
         y += row_h
+    # **描いている間は「いま出た行」が光り、描き終わったら `hi` の行が光る**（`check` の `hi` の註）。
+    hi = spec.get("hi")
     for k, r in enumerate(rows):
         if k >= shown:
             break
-        last = k == shown - 1 and k == len(rows) - 1 or (k == shown - 1 and p < 1)
+        if p >= 1 and isinstance(hi, int) and not isinstance(hi, bool) and 0 <= hi < len(rows):
+            last = k == hi
+        else:
+            last = k == shown - 1 and k == len(rows) - 1 or (k == shown - 1 and p < 1)
         if last:
             d.rectangle([pad, y, W - pad, y + row_h], fill=(255, 225, 120, 45))
         d.line([(pad, y + row_h), (W - pad, y + row_h)], fill=(255, 255, 255, 60), width=2)
