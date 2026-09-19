@@ -22,6 +22,10 @@
                           "steps": [{"label": "控除", "value": 1100000}, …],
                           "end": {"label": "所得", "value": 700000}}          # 1本 の棒から、引く分が赤く切れていく
     {"kind": "table",     "title": "…", "head": ["…", "…"], "rows": [["…", "…"], …]}   # 行が 1つずつ出る（最後の行が黄色）
+                          ※ 同じ単位の数が縦に並ぶ列には、マスの中に**長さ**が引かれます（`table_bar_column`）
+    {"kind": "gauge",     "title": "…", "marks": [{"label": "住民税がかかる線", "value": 450000}],
+                          "value": {"label": "この方の所得", "value": 100000},
+                          "verdict": {"text": "住民税 0円", "value": 0}}   # 数直線に線を引き、その人の位置を置く
 
     値は **円の整数**（`fmt_num` が 7万5500円 の形にする・`unit` で変えられる）。
     `text` を書けばその字をそのまま出す（率や「0円にならない」のような字）。
@@ -49,7 +53,7 @@ from PIL import Image, ImageDraw, ImageFont
 FONT_BOLD = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 FONT_BLACK = "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc"
 
-KINDS = ("bars", "waterfall", "table", "lines")
+KINDS = ("bars", "waterfall", "table", "lines", "gauge")
 FPS = 12                 # 動く刻（1秒 12枚。ffmpeg は 30fps に伸ばす）
 MAX_ITEMS = 6            # 棒・行の数の上限（縦 480px に 7行 は入らない）
 MAX_LABEL = 14           # 札の字数（板の 1行 と同じ）
@@ -164,6 +168,34 @@ def check(spec: dict, where: str = "") -> list[str]:
                     out.append(f"{pre} cross.at「{want}」は計算では {got}")
                 else:
                     labels.append(want)
+    elif kind == "gauge":
+        marks = spec.get("marks") or []
+        if not marks:
+            out.append(f"{pre} marks が空（線が 1つ も無い ＝ この形ではありません）")
+        if len(marks) > MAX_MARKS:
+            out.append(f"{pre} marks が {len(marks)}（{MAX_MARKS}まで・覆る条件 (1)）")
+        for m in marks:
+            labels.append(str(m.get("label", "")))
+            if "value" not in m:
+                out.append(f"{pre} 印「{m.get('label')}」に value が無い")
+        # `value`（その人の位置）は**無くてよい** —— 段を先に見せるコマ（まだ誰も乗っていない）が在ります
+        # （実物 `2026-09-20-nenkin-tedori-hayamihyou` コマ67・68）。
+        val = spec.get("value") or {}
+        if val:
+            if "value" not in val:
+                out.append(f"{pre} value に value が無い（その人の位置）")
+            else:
+                labels.append(str(val.get("label", "")))
+        if not out:
+            lo, hi = _gauge_span(spec)
+            for m in list(marks) + ([val] if val else []):
+                v = float(m.get("value", 0) or 0)
+                if not (lo <= v <= hi):
+                    out.append(f"{pre} 「{m.get('label')}」{fmt_num(v, spec.get('unit', '円'))} が "
+                               f"横の {fmt_num(lo, spec.get('unit', '円'))}〜{fmt_num(hi, spec.get('unit', '円'))} の外")
+            if val and len(marks) == 1 and float(val.get("value", 0) or 0) == float(marks[0]["value"]):
+                out.append(f"{pre} その人の位置が線とぴったり同じ ＝ 超えるか超えないかが絵で言えません")
+        labels.append(str((spec.get("verdict") or {}).get("text", "")))
     elif kind == "table":
         rows = spec.get("rows") or []
         head = spec.get("head") or []
@@ -215,6 +247,13 @@ def describe(spec: dict) -> str:
         cr = str((spec.get("cross") or {}).get("at", "") or "")
         return (f"折れ線（合計が右へのびて交わる）{t}" + " ／ ".join(parts)
                 + (f" → 合計が並ぶのは {cr}" if cr else ""))
+    if kind == "gauge":
+        ms = " ／ ".join(f"{m.get('label', '')} {_text(m, unit)}" for m in (spec.get("marks") or []))
+        v = spec.get("value") or {}
+        vd = (spec.get("verdict") or {}).get("text") or ""
+        return (f"数直線（線に印・その人の位置）{t}{ms}"
+                + (f" → {v.get('label', '')} {_text(v, unit)}" if "value" in v else "")
+                + (f" ＝ {vd}" if vd else ""))
     if kind == "table":
         head = spec.get("head") or []
         rows = [" | ".join(map(str, r)) for r in spec.get("rows", [])]
@@ -644,7 +683,119 @@ def _draw_lines(d, spec, W, H, p, unit, pad):
                    anchor="ra" if right else "la", stroke_width=3, stroke_fill=(0, 0, 0))
 
 
-_DRAW = {"bars": _draw_bars, "waterfall": _draw_waterfall, "table": _draw_table, "lines": _draw_lines}
+# ---------------------------------------------------------------- 線（数直線と、超えるか）2026-09-19 15:0x
+# オーナー `9155fe09`「画面がある意味が文字だけになってんのどうにかしろよ」。
+#
+# **この局の題の芯は「線を超えるか」です**（この回に在庫 42本 の表 173 を数えた）——
+# 「所得税の線 214万円」「住民税がかかる線 所得45万円」「125万円をこえると」「20年が境目」…。
+# いまはそれが**全部 文の表**で出ていました（「214万円より少ない／引かれない」のような行）。
+# **数の大小の話なのに、画面には大小が 1つも描かれていません。**
+#
+# この形は**数直線を 1本 引き、線に印を置き、その人の位置を置きます**。
+# 声が「214万円」と言った瞬間に線が引かれ、「この方は160万円」と言った瞬間に印が乗る
+# （刻みは `narration.cue_windows`・`step_keys` の順は marks → value → verdict）。
+#
+# 覆る条件:
+#  (1) 印が 4つ 以上 要る本が 2本 出たら `MAX_MARKS` を上げること。
+#      **3 にしてある理由**: この局の「段」は実物が 3段 です
+#      （`2026-09-20-nenkin-tedori-hayamihyou` コマ68・128 の「43万円以下 7割／74万円以下 5割／
+#        100万円以下 2割／それより上 なし」）。**帯は 4本**で、色は緑→赤の間を等分します。
+#  (2) 「超えたら悪い」ではない線（超えると得をする線）が出たら、`good` で色の向きを渡すこと
+#      —— **いまは「線より下が緑」で固定**です（税・保険料の線はどれもその向き）。
+#  (3) 線が 1つ も無く、位置だけを見せたい本が出たら、それは `bars` の 1本 です。ここへ入れないこと。
+
+MAX_MARKS = 3
+
+
+def _gauge_span(spec: dict) -> tuple[float, float]:
+    """横の端。`axis.from` / `axis.to` が在ればそれ、無ければ **0 から いちばん大きい数の 1.15倍**。"""
+    ax = spec.get("axis") or {}
+    vals = [float(m.get("value", 0) or 0) for m in (spec.get("marks") or [])]
+    v = spec.get("value") or {}
+    if "value" in v:
+        vals.append(float(v["value"] or 0))
+    lo = float(ax["from"]) if "from" in ax else min([0.0] + vals)
+    hi = float(ax["to"]) if "to" in ax else (max(vals) * 1.15 if vals else 1.0)
+    return (lo, hi if hi > lo else lo + 1.0)
+
+
+def _draw_gauge(d, spec, W, H, p, unit, pad):
+    top = _title(d, spec, W, pad)
+    marks = list(spec.get("marks") or [])[:MAX_MARKS]
+    val = spec.get("value") or {}
+    verdict = spec.get("verdict") or {}
+    n = steps(spec)
+    lo, hi = _gauge_span(spec)
+    x0, x1 = pad + 24, W - pad - 24
+    avail = H - top - pad
+    ay = top + int(avail * 0.52)
+    bh = max(18, min(34, int(avail * 0.12)))
+    fsz = max(22, min(34, int(avail * 0.13)))
+    lf = _font(FONT_BOLD, fsz)
+    vf = _font(FONT_BLACK, fsz + 2)
+
+    def PX(v: float) -> float:
+        return x0 + (max(lo, min(hi, float(v))) - lo) / (hi - lo) * (x1 - x0)
+
+    # 帯（線より下が緑・上が赤。印が出るまでは灰色のまま ＝ 声が線を言う前に色で答えを出さない）
+    d.rounded_rectangle([x0, ay - bh // 2, x1, ay + bh // 2], radius=bh // 2, fill=(255, 255, 255, 40))
+    shown_marks = [m for k, m in enumerate(marks) if _slot(k, n, p) >= 1.0]
+    edges = [x0] + [PX(m.get("value", 0)) for m in shown_marks] + [x1]
+    nb = len(edges) - 1
+    if shown_marks:
+        # 色は **緑 → 赤 の間を帯の数で等分**（印が 1つ なら 緑・赤 の 2本）。
+        # 段が 3つ の本（帯 4本）でも、色の並びを手で足さずに済みます。
+        for i in range(nb):
+            f = 0.0 if nb <= 1 else i / (nb - 1)
+            c = tuple(int(GREEN[j] + (RED[j] - GREEN[j]) * f) for j in range(3))
+            d.rounded_rectangle([edges[i], ay - bh // 2, edges[i + 1], ay + bh // 2],
+                                radius=bh // 2, fill=(c[0], c[1], c[2], 150))
+    # 印（線）—— 札は帯の上・数は帯のすぐ上
+    xs_all = [PX(m.get("value", 0)) for m in marks]
+    lsz = max(20, fsz - 10)
+    for k, m in enumerate(marks):
+        if _slot(k, n, p) <= 0:
+            continue
+        x = xs_all[k]
+        d.line([(x, ay - bh // 2 - 10), (x, ay + bh // 2)], fill=WHITE, width=4)
+        num = str(m.get("text") or fmt_num(float(m.get("value", 0) or 0), unit))
+        lb = str(m.get("label", ""))
+        # 隣の印とぶつからない幅（印が 2つ のとき、札どうしが横で重なった・実物 2026-09-19 15:1x）
+        left = max([xx for xx in xs_all if xx < x] + [float(x0)])
+        right = min([xx for xx in xs_all if xx > x] + [float(x1)])
+        room = int(max(120, 2 * min(x - left, right - x)))
+        lfk = _fit(d, lb, FONT_BOLD, lsz, room, floor=18) if lb else lf
+        # 札は数の**さらに上**（重ねない —— 最初の版は 18px しか離さず、実物で重なった）
+        # **CJK は字の高さが size の 1.35倍 あります**（PIL の y は上端）——
+        # 札の下端が数の上端より上に来るまで離す（実測 2026-09-19 15:1x: 30px では 2px 重なった）
+        for txt, dy, f, col in ((lb, -bh // 2 - 18 - (fsz + 2) - int(1.5 * lfk.size), lfk, GRAY),
+                                (num, -bh // 2 - 16 - fsz, vf, WHITE)):
+            if not txt:
+                continue
+            w = d.textbbox((0, 0), txt, font=f)[2]
+            d.text((min(max(x - w / 2, pad), W - pad - w), ay + dy), txt, font=f, fill=col,
+                   stroke_width=2, stroke_fill=(0, 0, 0))
+    # その人の位置（帯の下に△と札）
+    if "value" in val and _slot(len(marks), n, p) > 0:
+        pr = _ease(_slot(len(marks), n, p))
+        x = PX(float(val["value"]) * pr) if lo <= 0 else PX(val["value"])
+        ty = ay + bh // 2 + 6
+        d.polygon([(x, ty), (x - 16, ty + 22), (x + 16, ty + 22)], fill=YELLOW)
+        txt = f"{val.get('label', '')} {_text(val, unit, pr)}".strip()
+        w = d.textbbox((0, 0), txt, font=vf)[2]
+        d.text((min(max(x - w / 2, pad), W - pad - w), ty + 26), txt, font=vf, fill=YELLOW,
+               stroke_width=3, stroke_fill=(0, 0, 0))
+    # 答え
+    if verdict.get("text") and _slot(n - 1, n, p) >= 1.0:
+        txt = str(verdict["text"])
+        f = _fit(d, txt, FONT_BLACK, fsz + 6, W - 2 * pad)
+        w = d.textbbox((0, 0), txt, font=f)[2]
+        d.text(((W - w) // 2, H - pad - f.size - 6), txt, font=f, fill=YELLOW,
+               stroke_width=4, stroke_fill=(0, 0, 0))
+
+
+_DRAW = {"bars": _draw_bars, "waterfall": _draw_waterfall, "table": _draw_table,
+         "lines": _draw_lines, "gauge": _draw_gauge}
 
 
 def draw(spec: dict, size: tuple[int, int], progress: float = 1.0) -> Image.Image:
@@ -699,6 +850,11 @@ def steps(spec: dict) -> int:
         return len(spec.get("rows") or [])
     if kind == "lines":
         return len(spec.get("series") or []) + 1      # 線 1本 ずつ → 最後に交わる所
+    if kind == "gauge":
+        # 印（線）1つ ずつ → その人の位置 → 答え
+        return (len((spec.get("marks") or [])[:MAX_MARKS])
+                + (1 if "value" in (spec.get("value") or {}) else 0)
+                + (1 if (spec.get("verdict") or {}).get("text") else 0))
     return 1
 
 
@@ -742,6 +898,15 @@ def step_keys(spec: dict) -> list[list[str]]:
             out.append([x for x in k if x])
         cr = spec.get("cross") or {}
         out.append([x for x in (str(cr.get("at", "") or ""), str(cr.get("text", "") or "")) if x])
+        return out
+    if kind == "gauge":
+        out = [_keys_of(m, unit) for m in (spec.get("marks") or [])[:MAX_MARKS]]
+        if "value" in (spec.get("value") or {}):
+            out.append(_keys_of(spec["value"], unit))
+        vd = spec.get("verdict") or {}
+        if vd.get("text"):
+            # 答えにも `value` を書けます（「住民税 0円」に value 0 ＝ 声の「0円」で当たる）
+            out.append(_keys_of(vd, unit))
         return out
     if kind == "table":
         out = []

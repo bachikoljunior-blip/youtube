@@ -250,3 +250,55 @@ def test_陰性対照_文の表は1画素も変わらない():
     im = viz.draw(spec, (900, 400), 1.0)
     px = [p for p in im.getdata() if p[3] > 60 and p[2] > p[0] + 20]
     assert not px, "青の棒が出ている ＝ 文の表に長さを引いている"
+
+
+# ------------------------------------------------- 5つ目 の形: 数直線と線（2026-09-19 15:0x）
+
+_GAUGE = {"kind": "gauge", "title": "住民税がかかる線",
+          "marks": [{"label": "住民税がかかる線", "value": 450000}],
+          "value": {"label": "この方の所得", "value": 100000},
+          "verdict": {"text": "住民税 0円", "value": 0}}
+
+
+def test_数直線は_線_その人_答え_の順に歩を持つ():
+    assert viz.check(_GAUGE) == []
+    assert viz.steps(_GAUGE) == 3
+    keys = viz.step_keys(_GAUGE)
+    assert keys[0][0] == "45万円" and keys[1][0] == "10万円"
+    assert "0円" in keys[2], "答えにも声の手がかりが要る（value を書けば当たる）"
+
+
+def test_数直線は_声がその数を言う瞬間に引かれる():
+    from studio import narration as N
+    say = "住民税は、所得が45万円以下ならかかりません。所得10万円なので0円。所得税も0円です。"
+    w = N.cue_windows(say, 8.0, viz.step_keys(_GAUGE), {})
+    assert len(w) == 3
+    assert all(b > a for a, b in w), "3歩 とも声に当たる ＝ 3つ とも動く"
+    assert w[0][1] <= w[1][0] + 1e-9 <= w[1][1] + 1e-9 <= w[2][0] + 1e-9
+
+
+def test_止める3つ():
+    assert viz.check({"kind": "gauge", "value": {"label": "所得", "value": 1}})[0].endswith(
+        "marks が空（線が 1つ も無い ＝ この形ではありません）")
+    many = dict(_GAUGE, marks=[{"label": "a", "value": 1}, {"label": "b", "value": 2},
+                               {"label": "c", "value": 3}, {"label": "d", "value": 4}])
+    assert any("marks が 4" in x for x in viz.check(many))
+    same = {"kind": "gauge", "marks": [{"label": "線", "value": 450000}],
+            "value": {"label": "この方", "value": 450000}}
+    assert any("ぴったり同じ" in x for x in viz.check(same))
+
+
+def test_線より下は緑_上は赤():
+    im = viz.draw(_GAUGE, (900, 420), 1.0)
+    px = list(im.getdata())
+    green = sum(1 for p in px if p[3] > 60 and p[1] > p[0] + 25 and p[1] > p[2] + 25)
+    red = sum(1 for p in px if p[3] > 60 and p[0] > p[1] + 25 and p[0] > p[2] + 25)
+    assert green > red > 0, "線（45万円）が右寄りなので、緑の帯のほうが長い"
+
+
+def test_声が線を言う前は色で答えを出さない():
+    """**進み 0 の絵に、緑も赤も出ないこと**（声より先に答えが画面に出ると、聞く理由が消えます）。"""
+    im = viz.draw(_GAUGE, (900, 420), 0.0)
+    px = list(im.getdata())
+    band = sum(1 for p in px if p[3] > 60 and (p[1] > p[0] + 25 or p[0] > p[1] + 25) and p[2] < 160)
+    assert band == 0
