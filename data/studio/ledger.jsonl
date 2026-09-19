@@ -7066,3 +7066,4 @@
 {"subs": 40, "title": "カワウソの年金計算室", "handle": "カワウソの年金計算室", "exact": true, "src": "public_page", "at": "2026-09-19T14:12:34+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
 {"cmd": "status", "at": "2026-09-19T14:15:23+09:00", "id": "-", "event": "quota_exceeded"}
 {"seconds": 86.6, "image": true, "chars": 438, "scenes": [12.4, 6.9, 9.1, 10.0, 6.8, 11.7, 7.6, 9.3, 5.8, 7.0], "sig": "2:76a0bb17f465", "at": "2026-09-19T14:27:04+09:00", "id": "2026-09-21-kuriage-60sai-short", "event": "built"}
+{"seconds": 91.8, "image": true, "chars": 442, "scenes": [13.2, 7.2, 9.1, 10.9, 8.6, 12.5, 8.0, 9.6, 5.8, 7.0], "sig": "2:3546921b9e17", "at": "2026-09-19T15:05:56+09:00", "id": "2026-09-21-kuriage-63sai-short", "event": "built"}
