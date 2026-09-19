@@ -40,8 +40,16 @@ def test_その本を決めていれば命令の行は出ない(monkeypatch):
 
 
 def test_下書きが無ければ作る手を出す(monkeypatch):
+    # **`readout` を渡すこと**（2026-09-19 21:0x・最適化の回に直した）。
+    # ここが見たいのは「**まだ 24h の先読みが無い**あいだに、下書きが 1本も無ければ作る手を出す」枝
+    # （`ro is None`）です。渡さないと `outside_long_readout()` が**実物の台帳**を読みます ——
+    # 09/19 に 外の作りの長尺 `fMlY_uzHOMw` が 齢 46h に入って判定が `"stop"` になった日から、
+    # この検査は**別の枝**（「未着手の題材が topics.yaml に残っていない」）を見て赤くなりました。
+    # **検査は正しく、時計だけが動いていた側**です ＝ 固定した時計を渡します
+    # （`test_実物の前提が開いているあいだは期限が読める` が、実物を読む側の検査として残ります）。
     monkeypatch.setattr(daily_pick, "_outside_long_deadline", lambda: "2026-09-07")
-    out = daily_pick.outside_long_lines(date(2026, 9, 4), None, topics=TOPICS, drafts=[])
+    out = daily_pick.outside_long_lines(date(2026, 9, 4), None, topics=TOPICS, drafts=[],
+                                        readout=([], None))
     joined = "\n".join(out)
     assert "まだ池に1本も在りません" in joined
     assert "python -m src.pipeline --topic nenkin-uketorikata-65-70-75-handan --dry-run" in joined
