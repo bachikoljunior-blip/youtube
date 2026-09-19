@@ -2216,28 +2216,19 @@ def record(role: str, now: datetime | None = None,
     return row
 
 
-def _quota_mod():
-    """`scripts/quota.py` を、**どちらの撃ち方でも**引く（2026-09-19 18:xx）。
-
-    `python scripts/next_round.py` で撃つと `sys.path[0]` は `scripts/` になり、
-    `import scripts.quota` はカレントが repo の根のときにしか通りません
-    （`quota.py` 冒頭が `next_round` 側で踏んだのと同じ形・あちらは 2つ 試しています）。
-    **片方だけ試すと、落ちた回は黙って台帳が欠けます。**
-    """
-    last = None
-    for mod in ("scripts.quota", "quota"):
-        try:
-            return __import__(mod, fromlist=["sub_model"])
-        except Exception as exc:                               # noqa: BLE001
-            last = exc
-    raise last if last else ImportError("quota")
-
-
 def _sub_model_line(role: str) -> tuple[str, str]:
     """その役の模型と理由（印字と台帳で**同じ1か所**から採る・2026-09-19 18:xx）。
 
     **答えが出ない回も、模型は返します**（親を止めない）——
     理由の字にそのまま「答えません」と入るので、台帳を読む側から見えます。
+
+    **`quota` は `_quota_mod()` から引くこと**（2026-09-19 19:xx に踏んで直した）——
+    この回は最初、同じ名前の関数を**もう1つ**書き、後ろの定義が前のを隠しました。
+    そちらは `scripts.quota` を先に返す順だったので、
+    `tests/test_next_round_respawn_rounds.py::test_台帳が無くても落ちないこと` が赤に
+    （`quota.MODEL_CHOICE_FILE` に当てた `monkeypatch` が、別の module object に効かない）。
+    **`_quota_mod` の註が、その順を入れ替えた理由をそのまま書いています**（09/12 06:3x）。
+    ＝ **門は 1か所。同じ問いに 2つ目の口を作らないこと。**
     """
     try:
         return _quota_mod().sub_model(role=role)
