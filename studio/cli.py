@@ -1650,8 +1650,21 @@ def cmd_schedule(a):
         yt.make_private(a.replace)
         print("差し替え: 前の", a.replace, "を private に戻した（消していない）")
     # 公開の時刻は publish_at（"at" は「いつやったか」。unscheduled の was_at と同じ向き）
+    # **`units` はこの行が本当に使った分**（2026-09-19 16:0x・optimizer・Opus 5）。
+    # **なぜ書くか**: `budget.UNITS_BY_EVENT["scheduled"]` は `UPLOAD_UNITS`（1,650 ＝ 長尺の値段）**1つ**で、
+    # サムネを撃たなかったショートも 1,650 で数えていました。12:xx の回が
+    # `UPLOAD_UNITS_SHORT = 1600` と `RESERVE 600→400` を入れて「6本 × 1,600 ＋ 400 ＝ 10,000（ちょうど）」と
+    # 書いたのに、**数える側がショートの値段を 1度も使っていません** ＝ 台帳の上では
+    # 6本目 が永久に立ちません（1,650 × 6 ＝ 9,900 で 残り 100 ＜ RESERVE 400）。
+    # **枠を 6 にした回が、定数だけ足して使う所を足さなかった側**で、
+    # 同じ日の `SHORT_SLOTS` 6枠 対 連作 5本 と**同じ形の穴**です（JOURNAL 2026-09-19 15:2x）。
+    # `budget.spent` は `units` を持つ行をそちらで数えるので、ここで書けば 1か所 で直ります
+    # （`UNITS_BY_EVENT` は `units` の無い古い行のための既定値なので、触りません）。
+    # **覆る条件**: 6本/日 を 2日 撃って 6本目 が 2日 とも 403 なら、Google の数えはこちらより多い
+    # ＝ `budget` の覆る条件 (5) のとおり戻すこと（**1日 の 403 で戻さない**）。
     ledger("scheduled", a.id, video_id=vid, publish_at=at.isoformat(timespec="minutes"), replaced=a.replace or None,
-           title=s.title)
+           title=s.title,
+           units=budget.UPLOAD_UNITS if sets_thumbnail(s) else budget.UPLOAD_UNITS_SHORT)
     verify_meta(vid, s)
     return 0
 
