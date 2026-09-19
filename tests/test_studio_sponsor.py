@@ -121,3 +121,45 @@ def test_短い行は_まだ送っていないことを言う():
     line = sponsor.short(_rows())
     assert line
     assert "0社" in line or "まだ 1社 も送っていません" in line
+
+
+# --- (4) 本数は「読んだ回数」ではない -------------------------------------------
+# **2026-09-20 04:xx に踏んだ穴**（optimizer・Opus 5・ultracode）: `sponsor.kit` が
+# `trend.channel_growth()["n"]`（＝ **チャンネルを読んだ台帳の行数**）を本数として拾い、
+# `sheet`／`letter` が `本数 {n}本` と刷っていました ＝ **媒体資料と送り状が 359本
+# （実物 293本・22% 多い側）と名乗っていた**。出す先は実在の会社なので、
+# **1通目で崩れる種類の狂い**です。本数は同じ台帳行の `videos` 欄（`cli.py:890` の
+# `videoCount` と同じ数・**API 0単位**）から取ること。
+
+def test_sheet_video_count_is_not_the_lap_count():
+    rows = _rows()
+    g = trend.channel_growth(rows)
+    k = sponsor.kit(rows)
+    assert k["n"] == g["videos"], "本数は `videos`（実物）から取ること"
+    if g["videos"] is not None and g["n"] != g["videos"]:
+        assert k["n"] != g["n"], (
+            "`channel_growth()['n']` は台帳の行数（チャンネルを読んだ回数）であって "
+            "本数ではありません —— これを刷ると媒体資料が実物より多く名乗ります"
+        )
+
+
+def test_channel_growth_videos_matches_the_last_channel_row():
+    rows = _rows()
+    g = trend.channel_growth(rows)
+    cs = trend._channel_rows(rows)
+    assert g["videos"] == (cs[-1].get("videos") if cs else None)
+
+
+def test_本数が読めない周は本数を名乗らない():
+    """`videos` が無い台帳（古い周）でも落ちず、**嘘の本数を刷らない**こと。"""
+    rows = [dict(r) for r in _rows()]
+    for r in rows:
+        if r.get("event") == "channel":
+            r.pop("videos", None)
+    g = trend.channel_growth(rows)
+    assert g["videos"] is None, "書いていない数は None（0 と読まないこと）"
+    s, l = sponsor.sheet(rows), sponsor.letter(rows)
+    assert "本数" not in s, "読めない本数を名乗らないこと"
+    assert "これまでに" not in l
+    # 総再生と登録は残ること（落とすのは本数の 1語 だけ）
+    assert "総再生" in s and "総再生" in l

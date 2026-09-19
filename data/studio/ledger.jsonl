@@ -7596,3 +7596,10 @@
 {"views_live": 995, "views_ledger": 847, "over": 148, "age_h": 39.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "qqlUo148_cg", "event": "views_over"}
 {"views_live": 1130, "views_ledger": 1076, "over": 54, "age_h": 41.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "2u22TXSLyno", "event": "views_over"}
 {"views_live": 1188, "views_ledger": 1165, "over": 23, "age_h": 44.8, "src": "status", "at": "2026-09-20T03:49:27+09:00", "id": "tQPfODv61vg", "event": "views_over"}
+{"subs": 43, "views": 96951, "videos": 293, "title": "カワウソの年金計算室", "at": "2026-09-20T04:03:20+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-19T22:00:00Z", "meta_drift": [], "at": "2026-09-20T04:03:21+09:00", "id": "MNT83q6wQCg", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T01:00:00Z", "meta_drift": [], "at": "2026-09-20T04:03:21+09:00", "id": "1OpfbzDeabE", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T03:00:00Z", "meta_drift": [], "at": "2026-09-20T04:03:22+09:00", "id": "MLL4JQmxjvw", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T06:00:00Z", "meta_drift": [], "at": "2026-09-20T04:03:22+09:00", "id": "npqWaTf9JlY", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T09:00:00Z", "meta_drift": [], "at": "2026-09-20T04:03:22+09:00", "id": "Se7er7lwcJc", "event": "ready_checked"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "privacy": "private", "publish_at": "2026-09-20T12:00:00Z", "meta_drift": [], "at": "2026-09-20T04:03:22+09:00", "id": "TOQq91UQW7g", "event": "ready_checked"}

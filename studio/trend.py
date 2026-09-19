@@ -6851,7 +6851,16 @@ def channel_growth(rows: list[dict]) -> dict:
     cs = _channel_rows(rows)
     ps = _channel_env_points(cs)
     laps = [p["rows"] for p in ps]
-    base = {"n": len(cs), "laps": len(laps), "flat_laps": _flat_laps(ps),
+    # **`n` は「チャンネルを何回 読んだか」（台帳の行数）で、本数ではありません。**
+    # 2026-09-20 04:xx に踏んだ穴: `sponsor.sheet` がこの `n` を `本数 {n}本` と
+    # 刷り、**媒体資料が 359本（実物 293本）**と名乗っていました（22% 多い側・
+    # 出す先は実在の会社）。名前が `n` の 1字 だったことが唯一の原因です。
+    # **本数は同じ行の `videos` に、API 0単位 で載っています**（`cli.record_channel`）
+    # —— `cli.py:890` の `ch['videoCount']` と同じ数。**本数を出す口はこちらを読むこと。**
+    # 覆る条件: `videos` を書かない周が出たら（古い台帳）`None` が返る ＝
+    # **0 と読まないこと**・そのときは本数の行ごと落とすこと（`sponsor.sheet`）。
+    base = {"n": len(cs), "videos": (cs[-1].get("videos") if cs else None),
+            "laps": len(laps), "flat_laps": _flat_laps(ps),
             "flat_h": _flat_span_h(ps),
             "vid_sum": None, "vid_n": None, "vid_fresh": None, "vid_skipped": None,
             "vid_no_base": None,

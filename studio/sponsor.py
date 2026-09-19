@@ -163,7 +163,10 @@ def kit(rows: list[dict], scripts_dir=None) -> dict:
         "audience_window": (a.get("start"), a.get("day")),
         "subs": g.get("subs"),
         "views_total": g.get("views"),
-        "n": g.get("n"),
+        # **本数は `channel_growth` の `n` ではありません**（`n` は台帳の行数 ＝
+        # チャンネルを読んだ回数）。2026-09-20 04:xx まで `n` を刷っていて、
+        # 媒体資料が **359本（実物 293本）** と名乗っていました。`trend` の註を読むこと。
+        "n": g.get("videos"),
     }
 
 
@@ -180,7 +183,14 @@ def sheet(rows: list[dict], scripts_dir=None) -> str:
          "## どんな画面か",
          "",
          "年金・退職金の「手取りが実際にいくらか」を、1本 1分ほどで数字だけ見せるショート動画です。",
-         f"本数 {k['n']:,}本・総再生 {k['views_total']:,}回・チャンネル登録 {k['subs']:,}人。",
+         # **本数が読めない周は、その 1語 ごと落とします**（`trend.channel_growth` の
+         # 覆る条件）—— 測っていない数を相手に名乗ると、返事の 1通目 で崩れます
+         # （`audience_measured` の行と同じ形・覆る条件 (3)）。
+         ("本数 {n}・総再生 {v:,}回・チャンネル登録 {s:,}人。".format(
+             n=(f"{k['n']:,}本" if k["n"] is not None else "—"),
+             v=k["views_total"] or 0, s=k["subs"] or 0)
+          if k["n"] is not None else
+          f"総再生 {k['views_total'] or 0:,}回・チャンネル登録 {k['subs'] or 0:,}人。"),
          ""]
     if k["audience_measured"] and k["p65"] is not None:
         s, e = k["audience_window"]
@@ -252,7 +262,11 @@ def letter(rows: list[dict], target: "dict | None" = None, scripts_dir=None) -> 
         "突然のご連絡を失礼いたします。\n"
         f"YouTubeで「{BRAND_NAME}」というチャンネルを運営しております。\n"
         "年金・退職金の手取り額を1本1分ほどの動画で解説しており、\n"
-        f"これまでに{k['n']:,}本・総再生{k['views_total']:,}回です。\n"
+        # **本数が読めない周は本数を名乗りません**（`sheet` と同じ門）。
+        + (f"これまでに{k['n']:,}本・総再生{k['views_total'] or 0:,}回です。\n"
+           if k["n"] is not None else
+           f"これまでの総再生は{k['views_total'] or 0:,}回です。\n")
+        +
         "\n"
         f"{age}現在の再生数は月あたり約{k['views_month']:,.0f}回、\n"
         f"投稿本数を1日{k['per_day_cap']:.0f}本に戻した場合は月あたり約{k['views_month_cap']:,.0f}回を見込んでおります。\n"
