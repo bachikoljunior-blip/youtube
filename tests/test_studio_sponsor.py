@@ -163,3 +163,83 @@ def test_本数が読めない周は本数を名乗らない():
     assert "これまでに" not in l
     # 総再生と登録は残ること（落とすのは本数の 1語 だけ）
     assert "総再生" in s and "総再生" in l
+
+
+# --- (5) 1通目の頼みの形 -------------------------------------------------------
+# **2026-09-20 06:xx に変えた**（optimizer・Opus 5・ultracode）: 1通目 が頼むのは
+# 「タイアップのご相談は可能でしょうか」（＝ 相手に**予算の決裁**をさせる頼み）ではなく、
+# **「まず費用をいただかずに 1本 作って実績をご報告します」**（＝ 相手の判断が
+# **掲載可否の一存**に落ちる）。**決めと覆る条件 (A)(B)(C) は `studio/sponsor.py`
+# 「1通目の頼みの形」の註** ＝ ここへ写さないこと。
+
+def test_1通目は無料の試しを頼む():
+    body = sponsor.letter(_rows())
+    assert "費用をいただかず" in body, (
+        "1通目の頼みが『無料の試し』でなくなっています "
+        "（戻すなら `studio/sponsor.py`「1通目の頼みの形」の覆る条件 (A) を引くこと）"
+    )
+    assert "ご興味があればご返信" not in body, "受け身の頼みへ戻っています"
+
+
+def test_1通目はこちらが持っていない数を約束しない():
+    """クリック数はこちらの口では読めません（Shorts のリンクは押せない・`studio/asp.py`）。
+
+    約束してよいのは **再生数・視聴維持率** と、**相手の計測用URLをそのまま載せること**だけ。
+    """
+    body = sponsor.letter(_rows())
+    assert "計測用URL" in body
+    assert "クリック数" not in body, "こちらが読めない数を実績として約束しています"
+
+
+def test_窓の貼る文と道具の頼みの形がそろっている():
+    """**窓は手書きの写しです**（前の周の申し送り）—— 道具だけ直すと、貼られる字は古いまま。"""
+    import pathlib
+    md = pathlib.Path(__file__).resolve().parents[1] / "docs" / "FOR_OWNER.md"
+    if not md.exists():                      # repo の外で走らせた周
+        pytest.skip("docs/FOR_OWNER.md が無い")
+    txt = md.read_text(encoding="utf-8")
+    if "### 出す 2026-09-21 09:00" not in txt:   # 窓が畳まれた周
+        pytest.skip("09/21 の窓はもう在りません")
+    assert "費用をいただかず" in txt, (
+        "`sponsor.letter` は無料の試しを頼むのに、09/21 の窓の貼る文が古い字のままです"
+    )
+
+
+# --- (6) 一覧の「社数」は、ちがう会社の数であること ------------------------------
+# **2026-09-20 06:xx に踏んだ穴**（optimizer・Opus 5・ultracode）: `TARGETS` の 5番目
+# （エイチームライフデザイン・ライフドット）は **1番目（鎌倉新書）と同じ相手**でした ——
+# ライフドット事業は 2025-06-02 に 鎌倉新書 へ譲渡ずみ。`short()` は毎周 status に
+# 「相手の一覧 5社」と刷っていて、**実際に送れる先は 4社** でした。
+# **決めと覆る条件は `studio/sponsor.py` の註 ＝ ここへ写さないこと。**
+
+def test_相手の名は重複しない():
+    names = [t["name"] for t in sponsor.TARGETS]
+    assert len(names) == len(set(names)), f"同じ相手が 2行 入っています: {names}"
+
+
+def test_読んだ相手の宛先はURLか電話を持つ():
+    """`checked` が True ＝ 口を開いた、です。開いた口は場所を持ちます。"""
+    for t in sponsor.checked_targets():
+        assert "http" in t["route"] or "-" in t["route"], (
+            f"{t['name']} の宛先に、開ける場所がありません"
+        )
+
+
+def test_窓に出る宛先は口を読んだ相手だけ():
+    """**窓へ URL を写すのは手作業です** —— 読んでいない相手が混ざると、その 1通 は捨て札。
+
+    09/21 の窓に在る `https://` の URL は、`checked_targets()` の `route` の中に在ること。
+    """
+    import pathlib, re
+    md = pathlib.Path(__file__).resolve().parents[1] / "docs" / "FOR_OWNER.md"
+    if not md.exists():
+        pytest.skip("docs/FOR_OWNER.md が無い")
+    txt = md.read_text(encoding="utf-8")
+    if "### 出す 2026-09-21 09:00" not in txt:
+        pytest.skip("09/21 の窓はもう在りません")
+    blk = txt.split("### 出す 2026-09-21 09:00", 1)[1].split("\n### ", 1)[0]
+    urls = set(re.findall(r"https://\S+", "\n".join(
+        l for l in blk.splitlines() if l.startswith("> "))))
+    routes = " ".join(t["route"] for t in sponsor.checked_targets())
+    for u in urls:
+        assert u in routes, f"窓の宛先 {u} が、口を読んだ相手の route に在りません"
