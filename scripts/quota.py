@@ -1441,6 +1441,16 @@ def _choices_live_since(start: datetime, end: datetime) -> tuple[datetime, float
     気づけなかったのは「**直っても、台帳に開いた穴は消えない**」ほうです。
     **この形は次も来ます** —— 書き口を直した回と、その台帳で数える回は別の周なので、
     **直した側は『いつから信じてよいか』を数で残すこと。** それがこの関数です。
+
+    ## **いま死んだ台帳は、これでも捕まります**（門を鈍らせていないこと）
+
+    **穴の右の縁でしか窓を動かしません。** だから台帳が**これから**止まったら、
+    その区間には縁（次のサブの行）が無く、窓は動きません ＝ `births_diag` だけが増えて
+    `subs_per_lap` が 1.00 を割り、`tests/test_quota_fable_cost_per_sub.py` が**赤に戻ります。**
+    ＝ **過去の穴には騙されず、いまの穴は捕まえる**、という向きです。
+    **この検査が赤くなったら、門を下げずに 2つ を読むこと**:
+    (a) 台帳がいま書けているか（`model_choice.jsonl` の最後の行の刻 対 `rounds.jsonl` の最後の行）、
+    (b) 1周に立てる体数が変わっていないか（`next_round.ROLES`）。
     """
     subs = _choice_times(start, end)
     live, gap_h, gap_rounds = start, 0.0, 0
