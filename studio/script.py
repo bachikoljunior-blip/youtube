@@ -800,6 +800,37 @@ class Script(BaseModel):
                     for x in phrase_runs(self.segments)]
         return out
 
+    def unlinked_viz_steps(self) -> tuple[int, int, str] | None:
+        """(声に当たった歩, 歩の合計, 例) —— 全部 当たっていれば None。**API 0単位・焼かない**。
+
+        「当たる」は `narration.find_cue`（図の歩の値の字が、そのコマの `say` の中に**数として丸ごと**出る）。
+        `warnings()` の材料で、**門ではありません**。
+        """
+        from . import narration as _n
+        from . import viz as _v
+        hit = tot = 0
+        miss: list[str] = []
+        for i, g in enumerate(self.segments, 1):
+            if not g.viz:
+                continue
+            at = 0
+            gone = 0
+            for cand in _v.step_keys(g.viz):
+                tot += 1
+                for key in cand:
+                    pos = _n.find_cue(g.say, key, at)
+                    if pos:
+                        hit += 1
+                        at = pos[1]
+                        break
+                else:
+                    gone += 1
+            if gone:
+                miss.append(f"コマ{i}（{gone}歩）")
+        if not tot or hit == tot:
+            return None
+        return hit, tot, "・".join(miss[:4])
+
     def warnings(self) -> list[str]:
         """止めない。書き手（Fable）が読んで決める材料（オーナー 09/06「点って言ってるとこ」「漢字の読み変なのいっぱい」）。"""
         out = []
@@ -829,6 +860,24 @@ class Script(BaseModel):
         #   **覆る条件**: (1) Neural2 でも `customPronunciations` が効くようになったら（撃って確かめて）この行を消すこと。
         #   (2) 声を Chirp3-HD へ戻したら、この行は自動で黙ります（`tts.uses_custom_pronunciations`）。
         #   (3) `kana_in_voice` に全語を入れる形（`tts.FORCE_ALL_KANA`）を既定にしたら、この行は要りません。
+        # **図の歩が持っている数を、声が 1度 も言っていないコマ**（2026-09-19 13:4x・`studio/narration.py`）。
+        # 2026-09-19 13:xx から、図の 1歩 は**その数を声が言う瞬間**に動きます（オーナー `9155fe09`）。
+        # **声がその数を言わない歩は、合わせる先がありません** —— 等間隔に落ちる（止まりません）。
+        # **この回に在庫 11本 を数えたら 388歩 中 203歩（52%）しか当たりませんでした。**
+        # 残り 48% は「画面に出ているのに、声が 1度 も触れない数」＝ オーナー 2026-09-10 12:4x
+        # 「画面を有効活用できてない」の裏返し（**声のほうが画面に追いついていない**）。
+        # **止めません** —— 表の「見出しの行」や、比べるためだけに置いた段は、言わなくてよい数です。
+        # **覆る条件**: (1) 当たる割合を上げた本の維持率が上がらなければ、直す先は声ではなく**歩の数**
+        # （言わない数を図から落とす）。(2) 割合が 3本 続けて 80% を越えたら、この行は仕事を終えています。
+        unlinked = self.unlinked_viz_steps()
+        if unlinked:
+            n_hit, n_all, ex = unlinked
+            out.append(
+                f"**図の歩 {n_all - n_hit}/{n_all} が、声の中にその数を持っていません**"
+                f"（当たり {n_hit / n_all:.0%}）: {ex}。"
+                f"**止めません** —— 見出しや比べるためだけの段は言わなくてよい数です。"
+                f"**直すなら、声にその数を言わせるか、歩そのものを落とすこと**"
+                f"（合わせる先が無い歩は等間隔に落ちます・`studio/narration.py`）")
         from .tts import uses_custom_pronunciations
         if self.yomi and not uses_custom_pronunciations(self.voice):
             dead = [w for w in self.yomi if w not in (self.kana_in_voice or [])]

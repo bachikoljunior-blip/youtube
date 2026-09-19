@@ -167,3 +167,31 @@ def test_図が在るコマは_sub_を描かない_板のコマは今までど�
     from studio.slides import sub_on_screen
     assert sub_on_screen("税金は合わせて138万8700円", True) == ""
     assert sub_on_screen("税金は合わせて138万8700円", False) == "税金は合わせて138万8700円"
+
+
+# ---------------------------------------------------------------- 声が言わない歩（材料・門ではない）
+
+def test_声がその数を言わない歩を数える_止めない():
+    from studio.script import Script, Segment
+    s = Script(id="t", date="2026-09-20", title="t", takeaway="t", description="d", segments=[
+        Segment(show="枠は 800万円", sub="", say="枠は800万円です。",
+                viz={"kind": "bars", "items": [{"label": "枠", "value": 8000000}],
+                     "total": {"label": "合計", "value": 9999999}}),
+    ])
+    got = s.unlinked_viz_steps()
+    assert got is not None
+    hit, tot, _ex = got
+    assert (hit, tot) == (1, 2), "800万円 は声に在る・9999999 は無い"
+    assert any("図の歩" in w for w in s.warnings())
+    # **止めません** —— `problems()`（焼けなくなる側）には 1件 も入れないこと
+    assert not any("図の歩" in p for p in s.problems())
+
+
+def test_全部の歩が声に在れば黙る():
+    from studio.script import Script, Segment
+    s = Script(id="t", date="2026-09-20", title="t", takeaway="t", description="d", segments=[
+        Segment(show="枠は 800万円", sub="", say="枠は800万円です。",
+                viz={"kind": "bars", "items": [{"label": "枠", "value": 8000000}]}),
+    ])
+    assert s.unlinked_viz_steps() is None
+    assert not any("図の歩" in w for w in s.warnings())
