@@ -7336,3 +7336,12 @@
 {"views_live": 1114, "views_ledger": 1076, "over": 38, "age_h": 36.6, "src": "status", "at": "2026-09-19T22:34:04+09:00", "id": "2u22TXSLyno", "event": "views_over"}
 {"views_live": 1170, "views_ledger": 1165, "over": 5, "age_h": 39.6, "src": "status", "at": "2026-09-19T22:34:04+09:00", "id": "tQPfODv61vg", "event": "views_over"}
 {"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-19T22:34:04+09:00", "id": "BzWoZR1Y4ZI", "event": "zero_probe"}
+{"subs": 43, "views": 96391, "videos": 293, "title": "カワウソの年金計算室", "at": "2026-09-19T23:28:41+09:00", "id": "UChTXZzwkIJHqyL7L_fEtuqQ", "event": "channel"}
+{"views_live": 179, "views_ledger": 0, "over": 179, "age_h": 13.5, "src": "status", "at": "2026-09-19T23:28:42+09:00", "id": "oNiKmRKi4N4", "event": "views_over"}
+{"views_live": 1043, "views_ledger": 709, "over": 334, "age_h": 16.5, "src": "status", "at": "2026-09-19T23:28:42+09:00", "id": "o_c9fMHlIq4", "event": "views_over"}
+{"views_live": 1050, "views_ledger": 1046, "over": 4, "age_h": 29.5, "src": "status", "at": "2026-09-19T23:28:42+09:00", "id": "ktbvrdAeavA", "event": "views_over"}
+{"views_live": 953, "views_ledger": 802, "over": 151, "age_h": 32.5, "src": "status", "at": "2026-09-19T23:28:42+09:00", "id": "49Wa5jNNzOk", "event": "views_over"}
+{"views_live": 985, "views_ledger": 847, "over": 138, "age_h": 35.5, "src": "status", "at": "2026-09-19T23:28:42+09:00", "id": "qqlUo148_cg", "event": "views_over"}
+{"views_live": 1114, "views_ledger": 1076, "over": 38, "age_h": 37.5, "src": "status", "at": "2026-09-19T23:28:42+09:00", "id": "2u22TXSLyno", "event": "views_over"}
+{"views_live": 1174, "views_ledger": 1165, "over": 9, "age_h": 40.5, "src": "status", "at": "2026-09-19T23:28:42+09:00", "id": "tQPfODv61vg", "event": "views_over"}
+{"ok": true, "upload": "processed", "processing": "succeeded", "failure": null, "at": "2026-09-19T23:28:42+09:00", "id": "BzWoZR1Y4ZI", "event": "zero_probe"}

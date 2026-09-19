@@ -2542,3 +2542,10 @@
 {"at": "2026-09-19T22:34:04+09:00", "api": "youtube", "method": "commentThreads.list", "units": 1, "ok": true}
 {"at": "2026-09-19T22:34:04+09:00", "api": "youtube", "method": "commentThreads.list", "units": 1, "ok": true}
 {"at": "2026-09-19T22:34:05+09:00", "api": "youtube", "method": "commentThreads.list", "units": 1, "ok": true}
+{"at": "2026-09-19T23:28:41+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-19T23:28:41+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-19T23:28:42+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-19T23:28:43+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-19T23:28:43+09:00", "api": "youtube", "method": "commentThreads.list", "units": 1, "ok": true}
+{"at": "2026-09-19T23:28:43+09:00", "api": "youtube", "method": "commentThreads.list", "units": 1, "ok": true}
+{"at": "2026-09-19T23:28:44+09:00", "api": "youtube", "method": "commentThreads.list", "units": 1, "ok": true}
