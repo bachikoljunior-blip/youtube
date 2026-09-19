@@ -2554,6 +2554,10 @@ def lines(rows: list[dict], within_h: float = 24 * 3, now: dt.datetime | None = 
     # **4行目**（2026-09-19 04:5x に足した）—— 面の**中の何から**来たか。
     #  **決めと覆る条件は `surface_detail` の註 ＝ ここへ数を写さないこと。**
     out.append(surface_detail_line(rows))
+    # **5行目**（2026-09-19 10:4x に足した）—— 面の**相手が誰か**（齢×性別）。
+    #  上の 4行 は「どの面から・面の中の何から」で、**誰に**は 1度 も無かった。
+    #  **決めと覆る条件は `analytics.audience` の註 ＝ ここへ数を写さないこと。**
+    out.append(audience_line(rows))
     # **いまの出し方の 円/月**（2026-09-18 09:4x に足した・GOAL (4-w)）——
     #  すぐ上の 3行 は全部 **再生**の単位です。**目標の単位は「円」**（「月収20万」）で、
     #  `studio/` には円を読む口が 1つ もありませんでした ＝ 在るのは「**要る**再生」側だけ
@@ -9330,6 +9334,50 @@ def surface_line(rows: "list[dict] | None" = None) -> str:
                 "（扉(b) へ入る面は `LONG_SURFACES` の 4つ だけ・"
                 "`SUBSCRIBER` の天井はいまの登録者数）")
     return head + f"{s['day']} まで {s['total']:,}再生 ＝ {top}{tail}"
+
+
+#: 相手の行が「古すぎて読めない」門（日）。`surface_line` と同じ 7日。
+AUDIENCE_STALE_D = 7
+
+
+def audience_split(rows: "list[dict] | None" = None) -> dict:
+    """いちばん新しい `analytics_audience` から、**相手（齢×性別）**を返す（**Data API 0単位**）。
+
+    **陰性の札は `surface_split` と同じ**: `measured=False` ＝ 台帳に行が無い ＝ **「若い」でも「老いている」でもない**。
+    数の出どころ・決め・覆る条件は `analytics.audience` の註（ここへ写さない）。
+    """
+    rows = rows if rows is not None else ledger_rows()
+    au = [r for r in rows if r.get("event") == "analytics_audience" and r.get("p55") is not None]
+    if not au:
+        return {"measured": False, "why": "台帳に `analytics_audience` が 1行 もありません（`cli analytics` が書く）"}
+    last = au[-1]
+    day = str(last.get("id") or "")
+    stale = None
+    try:
+        stale = (now_jst().date() - dt.date.fromisoformat(day)).days
+    except Exception:
+        pass
+    return {"measured": True, "day": day, "start": last.get("start"), "stale_days": stale,
+            "p55": float(last["p55"]), "p65": float(last.get("p65") or 0),
+            "top": dict(last.get("top") or {})}
+
+
+def audience_line(rows: "list[dict] | None" = None) -> str:
+    """毎周 1行。`surface_detail_line` の真下（面 → 面の中 → **相手**）。"""
+    s = audience_split(rows)
+    head = "**相手（誰に配られているか・`trend.audience_split`・Data API 0単位）**: "
+    if not s["measured"]:
+        return head + f"**測っていません** ＝ 若いとも老いているとも読めません（{s['why']}）"
+    if s["stale_days"] is not None and s["stale_days"] > AUDIENCE_STALE_D:
+        return (head + f"いちばん新しい引きが **{s['day']}（{s['stale_days']}日 前）** ＝ "
+                "**古すぎて読めません**（`analytics.audience` の覆る条件 (3)）")
+    t = s["top"]
+    top = (f"・最大 {t.get('age')} {t.get('gender')} {float(t.get('pct') or 0):.1f}%" if t else "")
+    side = ("**相手違いではありません** ＝ 天井は この層の反応の薄さと面の側"
+            if s["p55"] >= 80 else
+            "**55歳以上 が 80% を切っています** ＝ 相手違いの側も読み直すこと（覆る条件 (1)）")
+    return (head + f"{s['start']}〜{s['day']}: **55歳以上 {s['p55']:.1f}%・65歳以上 {s['p65']:.1f}%**{top}"
+            f" ＝ {side}")
 
 
 # ---------------------------------------------------------------------------

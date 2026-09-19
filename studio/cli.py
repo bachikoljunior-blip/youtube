@@ -2468,6 +2468,22 @@ def cmd_analytics(a):
                subs_gained=int(r["subscribersGained"]), likes=int(r["likes"]))
     ledger("analytics_traffic", last_day, start=start, lag_days=lag,
            sources={r["insightTrafficSourceType"]: int(r["views"]) for r in tr})
+    # **誰に配られているか**（齢×性別・別枠のクエリ 1回・**Data API 0単位**）。
+    # 09/19 10:4x まで 1度 も引いていなかった数 —— 天井（~1,000回）の読みは相手が誰かで割れる
+    # （`analytics.audience` の註 ＝ 決めと覆る条件はそこ・ここへ数を写さない）。
+    # **引けなければ「若い」とも「老いている」とも読まない**（黙って 0 を返さない・§4 (0-b)）。
+    try:
+        aud = analytics.audience(start, last_day)
+    except Exception as e:
+        print(f"  （齢×性別 が引けませんでした: {str(e)[:80]} ＝ **相手は測っていません**）")
+        aud = []
+    asum = analytics.audience_summary(aud)
+    if asum["measured"]:
+        t = asum["top"]
+        print(f"相手（窓 {start}〜{last_day}・割合だけ）: **55歳以上 {asum['p55']:.1f}%・65歳以上 {asum['p65']:.1f}%**"
+              f"・最大 {t['age']} {t['gender']} {t['pct']:.1f}%")
+        ledger("analytics_audience", last_day, start=start, p55=asum["p55"], p65=asum["p65"],
+               top=t, groups=aud)
     # **面の内訳**（検索語・関連の相手の id・ページ名）。**Data API 0単位**・別枠のクエリが面の数だけ。
     # **足した理由**: 09/19 まで、台帳は「どの面から来たか」は持っていましたが
     # 「**その面の中の何から**来たか」を持つ口が 1つ もありませんでした

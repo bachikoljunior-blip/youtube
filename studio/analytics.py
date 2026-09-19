@@ -287,3 +287,64 @@ def curve_marks(c: dict[float, float]) -> dict[str, float] | None:
             return None
         out[f"p{int(m * 100)}"] = round(v, 3)
     return out
+
+
+# ---------------------------------------------------------------------------
+# **誰に配られているか**（`ageGroup`×`gender`・2026-09-19 10:4x・optimizer・Fable 5.1・ultracode）
+# ---------------------------------------------------------------------------
+#
+# **なぜ足したか**: 09/06 から 09/19 まで、この repo は「配りは YouTube が持っている」（§1）と
+# 「配りが ~1,000回 で止まる」（§7 の天井）を持っていましたが、**誰に配られているかを 1度 も
+# 引いていませんでした**（`analytics_video`・`analytics_curve`・`analytics_traffic` のどれも、
+# 相手の齢を持たない）。**天井の読みは、相手が誰かで 2つ に割れます**:
+#   (a) 相手が若ければ（Shorts の主の層）—— 年金の本は**相手違い**で、天井は「刺さらない」側。
+#   (b) 相手が 55歳 以上なら —— 天井は「その層の Shorts の人口と、その層の反応の薄さ」の側で、
+#       **本の中身ではなく、押させる手（いいね・コメント・共有）と面の問題**。
+# **2026-09-19 10:4x の実測（窓 09/06〜09/16・新しい作り・Data API 0単位）**:
+#   65歳以上 女 37.3% ／ 65歳以上 男 29.1% ／ 55〜64 男 15.9% ／ 55〜64 女 12.7% ／ 45〜54 男 4.1% ／ 45〜54 女 0.9%
+#   ＝ **65歳以上 66.4%・55歳以上 95.0%**（上位 6本 だけで引いても 65.5% / 94.6% ＝ 同じ形）。
+#   旧作り（08/20〜09/05）は 65歳以上 30.3%・55歳以上 54.8%・25〜44 が 22.8% ＝ **新しい作りは相手を 65歳以上 へ寄せた**。
+#   ＝ **(b) です**。天井は相手違いではない。この層の反応: いいね 27／7,437回（0.36%）・共有 7・コメント 3・
+#   登録 +7（0.09%）。**登録した人からの再生は 18回**（`subscribedStatus`）＝ 配りは 99.8% が未登録の人。
+# **この数で決まること**（決めは METHOD §5 2026-09-19 10:4x・ここへ写さない）: 題材は「年金を**もらっている**人」の側
+#   （手取り・引かれる保険料・遺族・在職）が相手の 2/3 に当たり、「退職金・現役の手」は 55〜64 の 29% に当たる。
+#   出口の字（`asp.CTA_SEG`「プロフのリンク」）は 65歳以上 に通じる語か疑う側（**変えるのは ASP の 1枚 が来てから** ＝ §5 決め (1)）。
+# **覆る条件**: (1) 窓を替えて 55歳以上 が 80% を切ったら、(a) の側も読み直すこと。
+#   (2) この口は `viewerPercentage` ＝ **割合だけ**で人数を返しません。分母は同じ窓の `views`。
+#   (3) 引けない周（403／空）は **「若い」とも「老いている」とも読まない**（`measured=False`）。
+
+#: 「55歳以上」に数える齢の札（API の `ageGroup` の値そのまま）。
+AGE_55_PLUS = ("age55-64", "age65-")
+AGE_65_PLUS = ("age65-",)
+
+
+def audience(start: str, end: str, ids: "list[str] | None" = None) -> list[dict]:
+    """齢×性別ごとの視聴者の割合（`viewerPercentage`・**Data API 0単位**・別枠のクエリ 1回）。
+
+    返り: `[{"age": "age65-", "gender": "female", "pct": 37.3}, ...]`（割合の大きい順）。
+    `ids` を渡すとその本だけ（`filters=video==`・上限 `MAX_IDS`）。**割合だけで人数は返りません。**
+    """
+    kw = dict(startDate=start, endDate=end, metrics="viewerPercentage",
+              dimensions="ageGroup,gender", sort="-viewerPercentage")
+    if ids:
+        kw["filters"] = "video==" + ",".join(list(dict.fromkeys(ids))[:MAX_IDS])
+    out = []
+    for r in _rows(_query(**kw)):
+        out.append({"age": str(r.get("ageGroup", "")), "gender": str(r.get("gender", "")),
+                    "pct": round(float(r.get("viewerPercentage", 0) or 0), 1)})
+    return out
+
+
+def audience_summary(rows: list[dict]) -> dict:
+    """`audience()` の返りを 3つ の数に畳む: 55歳以上・65歳以上・いちばん大きい 1組。
+
+    **行が無ければ `measured=False`**（0% ではない・覆る条件 (3)）。
+    """
+    if not rows:
+        return {"measured": False}
+    p55 = sum(r["pct"] for r in rows if r["age"] in AGE_55_PLUS)
+    p65 = sum(r["pct"] for r in rows if r["age"] in AGE_65_PLUS)
+    top = max(rows, key=lambda r: r["pct"])
+    return {"measured": True, "p55": round(p55, 1), "p65": round(p65, 1),
+            "top": {"age": top["age"], "gender": top["gender"], "pct": top["pct"]},
+            "n": len(rows)}
