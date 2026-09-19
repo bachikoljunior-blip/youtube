@@ -2663,3 +2663,16 @@
 {"at": "2026-09-20T01:59:45+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
 {"at": "2026-09-20T01:59:45+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
 {"at": "2026-09-20T01:59:45+09:00", "api": "youtubeAnalytics", "method": "reports.query", "units": 0, "ok": true}
+{"at": "2026-09-20T02:21:29+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:30+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:31+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:31+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:32+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:32+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:32+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:32+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:34+09:00", "api": "youtube", "method": "videos.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:34+09:00", "api": "youtube", "method": "channels.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:35+09:00", "api": "youtube", "method": "commentThreads.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:35+09:00", "api": "youtube", "method": "commentThreads.list", "units": 1, "ok": true}
+{"at": "2026-09-20T02:21:35+09:00", "api": "youtube", "method": "commentThreads.list", "units": 1, "ok": true}
