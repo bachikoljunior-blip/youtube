@@ -243,3 +243,127 @@ def test_窓に出る宛先は口を読んだ相手だけ():
     routes = " ".join(t["route"] for t in sponsor.checked_targets())
     for u in urls:
         assert u in routes, f"窓の宛先 {u} が、口を読んだ相手の route に在りません"
+
+
+# --- (4) 何社 に声を掛ければ 1社 の yes が立つか -------------------------------
+# **2026-09-20 07:xx に足した**（optimizer・Opus 5・ultracode）。
+# `need_targets` の註が言っているのは「40社 だ」ではなく「**いまの一覧では足りない**」です。
+# **検査もそこだけを見ます** —— 帯の数（1%/4%/10%）も信頼（80%）も**写しません**。
+
+
+def test_要る相手の数は帯の3点ともいまの一覧より多い():
+    """**この道の詰まりが『一覧の長さ』であることを、数で押さえる。**
+
+    帯のどこを取っても「要る相手 > いま読めている相手」が立つこと。
+    **1点でも逆転したら、それは「足りるようになった」日** ＝
+    `need_targets` の註（覆る条件 (1)）に従って帯を引き直す番です。
+    """
+    d = sponsor.need_targets()
+    for lv, n in d["need"].items():
+        assert n > d["have"], (
+            f"帯 {lv} で 要る {n}社 ≦ いま {d['have']}社 —— "
+            "足りるようになったなら `need_targets` の覆る条件 (1) を引くこと")
+
+
+def test_1社でも立つ確率は帯の3点とも信頼に届かない():
+    """**陰性の側**（上の裏）。`p_at_least_one` が信頼に届いたら、この段の主張は消えます。"""
+    d = sponsor.need_targets()
+    for lv, p in d["p_at_least_one"].items():
+        assert p < d["confidence"], (
+            f"帯 {lv} で いまの一覧の見込み {p:.0%} ≧ 信頼 {d['confidence']:.0%}")
+
+
+def test_要る相手の数は信頼を上げると増える():
+    """**陽性対照**（計器が死んでいないか）。C を上げれば N は必ず増えること。"""
+    lo = sponsor.need_targets(0.50)["need"]
+    hi = sponsor.need_targets(0.95)["need"]
+    for lv in lo:
+        assert hi[lv] > lo[lv], f"帯 {lv}: C=95% の {hi[lv]} が C=50% の {lo[lv]} を超えません"
+
+
+def test_status_の行が要る相手の数を刷る():
+    """**数えた物が周に出ること** —— 出ない数は、次の回が読めません。"""
+    line = sponsor.need_short()
+    d = sponsor.need_targets()
+    assert f"{d['need']['中']}社" in line
+    assert "未測" in line, "測っていない帯を、測った顔で出さないこと"
+
+
+# --- (5) 貼る文を出す窓の宛先は、全部 口を読んだ相手 ----------------------------
+# **2026-09-20 07:xx に、09/21 だけを見ていた検査を「貼る文の窓 全部」へ広げた。**
+# 窓は手で書き写すので、**窓を 1つ 足すたびに検査を 1つ 足す形だと、足し忘れが通ります。**
+
+
+def test_貼る文を出す窓の宛先は全部_口を読んだ相手():
+    """`> ` の中に「そのまま貼って」と書いてある窓の URL は、全部 `checked_targets` の中に在ること。"""
+    import pathlib
+    import re
+
+    md = pathlib.Path(__file__).resolve().parents[1] / "docs" / "FOR_OWNER.md"
+    if not md.exists():
+        pytest.skip("docs/FOR_OWNER.md が無い")
+    txt = md.read_text(encoding="utf-8")
+    out = txt.split("## 出す", 1)[1].split("\n## ", 1)[0]
+    routes = " ".join(t["route"] for t in sponsor.checked_targets())
+    seen = 0
+    for blk in out.split("\n### ")[1:]:
+        if not blk.startswith("出す "):
+            continue
+        body = "\n".join(l for l in blk.splitlines() if l.startswith("> "))
+        if "そのまま貼って" not in body:
+            continue
+        seen += 1
+        for u in set(re.findall(r"https://\S+", body)):
+            assert u in routes, (
+                f"窓『{blk.splitlines()[0]}』の宛先 {u} が、口を読んだ相手の route に在りません")
+    assert seen >= 1, "貼る文を出す窓が 1つ も見つかりません（見出しの形が変わった？）"
+
+
+# --- (6) 貼る窓に「フォームの無い口」を入れない --------------------------------
+# **2026-09-20 07:4x に踏んだ穴**（optimizer・Opus 5・ultracode）: 09/21 の窓は
+# 「下の4つの**フォーム**に、その下の文をそのまま貼って送ってください」と書いたまま
+# `https://www.osohshiki.jp/alliance/` を並べていました。**あのページにフォームはありません**
+# —— 在るのは電話番号だけ（06-7166-0067）で、フォームへのリンクが 1つ もない。
+# ＝ **オーナーを、貼る所の無いページへ送っていた**（4社 のうち 1社 ＝ その窓の 25%）。
+# **`checked` は「口を開いた」しか言っておらず、「貼れるか」を言っていませんでした。**
+# **決めと出どころは `studio/sponsor.TARGETS` の その行の註 ＝ ここへ写さないこと。**
+
+def test_貼る窓にフォームの無い口を入れない():
+    """route に「フォーム無し」と書いた相手の URL が、貼る文の窓に在ったら落ちる。"""
+    import pathlib
+    import re
+
+    md = pathlib.Path(__file__).resolve().parents[1] / "docs" / "FOR_OWNER.md"
+    if not md.exists():
+        pytest.skip("docs/FOR_OWNER.md が無い")
+    formless = set()
+    for t in sponsor.TARGETS:
+        if "フォーム無し" in t["route"]:
+            formless.update(re.findall(r"https://[^\s（）\"]+", t["route"]))
+    if not formless:
+        pytest.skip("フォームの無い口が 1つ もない（この検査は空振り）")
+    txt = md.read_text(encoding="utf-8")
+    out = txt.split("## 出す", 1)[1].split("\n## ", 1)[0]
+    for blk in out.split("\n### ")[1:]:
+        if not blk.startswith("出す "):
+            continue
+        body = "\n".join(l for l in blk.splitlines() if l.startswith("> "))
+        if "そのまま貼って" not in body:
+            continue
+        for u in formless:
+            assert u not in body, (
+                f"窓『{blk.splitlines()[0]}』に、フォームの無い口 {u} が入っています "
+                "—— 貼る所がないページへオーナーを送ることになります"
+            )
+
+
+def test_フォーム無しの印は_route_に立っている_陽性対照():
+    """上の検査が『いつも空振り』で通っていないことを確かめる側。"""
+    got = [t for t in sponsor.TARGETS if "フォーム無し" in t["route"]]
+    assert got, (
+        "`フォーム無し` の印を持つ相手が 0社 —— 印を消したなら、"
+        "上の検査は何も守っていません（消した理由を JOURNAL に書くこと）"
+    )
+    for t in got:
+        assert "電話" in t["route"] or "-" in t["route"], (
+            f"{t['name']}: フォームが無いのに、代わりの口（電話）が書いてありません")
