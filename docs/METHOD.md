@@ -1650,7 +1650,7 @@ derivation は `docs/JOURNAL.md` 2026-09-19 11:xx。検査は `tests/test_pubche
 derivation は `docs/JOURNAL.md` 2026-09-19 12:xx。検査は `tests/test_studio_budget.py`（**+6件**）・`tests/test_studio_catchup_cta.py`（+2件）・`tests/test_studio_ungated.py`（式が 1か所 であること）。
 
 
-### **【2026-09-19 13:xx】画面は声から切り離されていました —— 図の動きを「その数を言う瞬間」に合わせた（`studio/narration.py`）**（optimizer・Opus 5・ultracode・1周 1体・**Data API 0単位**）
+### **【2026-09-19 13:0x】画面は声から切り離されていました —— 図の動きを「その数を言う瞬間」に合わせた（`studio/narration.py`）**（optimizer・Opus 5・ultracode・1周 1体・**Data API 0単位**）
 
 オーナー 12:3x（受け取り帳 `9155fe09`・**一字も変えないこと**）:
 
@@ -1720,7 +1720,7 @@ derivation は `docs/JOURNAL.md` 2026-09-19 12:xx。検査は `tests/test_studio
       絵の側（棒・引き算）へ寄せるか、表そのものをマスの中の棒にするかは、次に立った側が決めること。
       **決める前に、この周の 09/20 の 5本 の 24h を見ること**（動きを入れた最初の日）。
 
-derivation は `docs/JOURNAL.md` 2026-09-19 13:xx。検査は `tests/test_studio_narration_cue.py`（**19件**・陰性対照 2件）。
+derivation は `docs/JOURNAL.md` 2026-09-19 12:3x〜13:1x。検査は `tests/test_studio_narration_cue.py`（**21件**・陰性対照 2件）。
 
 
 **【2026-09-18 05:xx】訊く数は 3つ です。その 0つ 目は「向き」** ——
