@@ -3698,6 +3698,98 @@ def cta_gap_line(rows: list[dict], pubs: list[dict], now: dt.datetime) -> str:
 SHIPPABLE_SHOW = 12
 
 
+#: **焼きにかかる秒（形ごと・実測）**（2026-09-20 00:xx・optimizer・Opus 5・ultracode）。
+#: **「1本 92秒」はショートの数でした** —— `shippable_line` の見出しは形を見ずに 92秒 と言い続け、
+#: 09/19 23:xx の周はそれを読んで「長尺 3本 を 1周（床 98分）で焼き直す」と決め、**1本も焼き上がりませんでした。**
+#: 実測（`2026-09-20-nenkin-tedori-hayamihyou`・182コマ・`viz` 65コマ・絵 2,001枚・1,169.9秒 の本）:
+#: **14:43:28 → 15:03:08 ＝ 1,180秒**（＝ 92秒 の **12.8倍**）。
+#: **覆る条件**: (1) コマ数や `viz` の数で秒が変わるので、これは**その形の中央**であって上限ではありません ——
+#: 1本 で 2倍 外した回が出たら、`ledger` の `built` の刻から形ごとに引き直すこと（`build_perf.py`）。
+#: (2) 焼きが速くなったら（`viz` を間引く・絵を使い回す）ここも直すこと。**数は 1か所**。
+BUILD_SECONDS = {"short": 92, "long": 1180}
+
+
+#: **これを越える焼きは、周に置かずに切り離すこと**（秒）。
+#: **床（98分）ではありません** —— 床は**親がサブを立てる間隔**であって、**サブが生きている長さではありません。**
+#: 09/19 23:xx の周は「長尺 3本 ＝ 1周 に入りません」と書きましたが、**算数は 3×19分 ＝ 59分 で床の内側**です。
+#: 入らなかった理由は別で、**サブが床より早く畳まれたから**でした（実測: その周は 28分 で畳まれ、
+#: 焼きは **1本目 の途中**）。**そして畳まれても焼きは死にません** —— 死ぬのは、
+#: 焼きを置いた worktree が一緒に消されるからで、2本目 は `ModuleNotFoundError: No module named 'studio'`
+#: で落ちていました（この周が前の周の log で確かめた）。
+#: **＝ 見るべきは「床に入るか」ではなく「サブより長いか」**で、サブの長さは**その回に分かりません**。
+#: 10分 にしたのは、いちばん短い実測の畳まれ（28分）に 3倍 近い余裕を取った所です。**切り離しの代は 0** ——
+#: 外しても失う物が無いので、**安い側へ倒しています**。
+#: **覆る条件**: (1) サブが畳まれる長さの実測が 3回 たまったら、その中央の 1/3 へ置き直すこと。
+#: (2) 焼きが worktree を見なくなったら（`scripts/longform_chain.sh` が既定になったら）この札は要りません。
+DETACH_SECONDS = 600
+
+
+def rebuild_cost(stale: "list[str]", form_of_id: "dict[str, str]") -> str:
+    """**焼き直しの値段を、形ごとに言う**（`BUILD_SECONDS` の註が理由）。**API 0単位。**
+
+    なぜ 1つ の数で言ってはいけないか: 「1本 92秒」は**ショートの数**で、長尺は **実測 1,180秒（12.8倍）**。
+    「焼き直しが要る 3本」とだけ見えた回が、**それを 3×92秒 ＝ 5分 の手だと読んで 1周 に積み**、
+    **1本も焼き上がりませんでした**（09/19 23:xx）。**形を書けば、その読み違いは起きません。**
+    """
+    if not stale:
+        return "`build` 0本"
+    n: "dict[str, int]" = {}
+    for v in stale:
+        n[form_of_id.get(v, "short")] = n.get(form_of_id.get(v, "short"), 0) + 1
+    bits, total = [], 0
+    for form, c in sorted(n.items()):
+        sec = BUILD_SECONDS.get(form, BUILD_SECONDS["short"])
+        total += sec * c
+        bits.append(f"{form} {c}本 × 約{sec // 60}分" if sec >= 120 else f"{form} {c}本 × 約{sec}秒")
+    return "`build` " + "・".join(bits) + f" ＝ 合わせて **約{total // 60}分**"
+
+
+def rebuild_seconds(stale: "list[str]", form_of_id: "dict[str, str]") -> int:
+    """`rebuild_cost` が言っている秒そのもの（**数は 1か所**・札を出すかの判定はこれを見る）。"""
+    return sum(BUILD_SECONDS.get(form_of_id.get(v, "short"), BUILD_SECONDS["short"]) for v in stale)
+
+
+def detach_line(stale: "list[str]", form_of_id: "dict[str, str]") -> str:
+    """**周から切り離せ**の札（越えていなければ空文字 ＝ 黙る）。`DETACH_SECONDS` の註が理由。"""
+    sec = rebuild_seconds(stale, form_of_id)
+    if sec <= DETACH_SECONDS:
+        return ""
+    return (f"    **この焼き直しは周に置かないこと**（約{sec // 60}分 ＝ サブが畳まれるより長い見込み）: "
+            "`bash scripts/longform_chain.sh <id> ...` で切り離す。"
+            "**床 98分 の内側でも切り離すこと** —— 床は親がサブを立てる間隔で、**サブの寿命ではありません**"
+            "（09/19 23:xx の周は 28分 で畳まれ、焼きは 1本目 の途中でした）")
+
+
+def stale_why(have: "str | None", want: str) -> str:
+    """**なぜ焼き直しが要るのか**を、指紋の**どこが**動いたかで言い分ける（**API 0単位**）。
+
+    **なぜ足したか**（2026-09-20 00:xx に踏んだ実測）: この行は 3つ の別々の理由に対して
+    **いつも同じ 1文**「台本が build のあとに動いた」を出していました。ところが この周の 3本 は、
+    **台本が 1字 も動いていません** —— 動いたのは `BUILD_SIG_VERSION`（**2 → 3**）で、
+    中身は `0653fadbdbec` のまま同じでした（指紋は `<版>:<中身>` の形・`script.build_sig`）。
+    ＝ **オーナー `9155fe09` の直し（声に合わせて動く画面）が入った、というのが本当の理由**です。
+
+    読み違いは 2つ 起きます: **(a)** 次の回が「誰かが台本を触った」と読んで、**触っていない台本を読み直します**
+    （§16 (1) の「同じ本文を読み直す回は、何周 積んでも答えが変わりません」に、わざわざ入っていく）。
+    **(b)** 逆に「台本が動いた ＝ 中身は新しい」と読んで、**道具が直った本を古いまま出します**。
+
+    **覆る条件**: (1) 指紋の形（`<版>:<中身>`）を変えたら、ここの `split(":")` も一緒に直すこと。
+    (2) 版と中身が**同時に**動いた回は「両方」と言います —— その字が 3周 続けて出たら、
+        道具を直す回が台本も触っている ＝ 分けて撃つほうが安い（そのとき理由を JOURNAL に）。
+    """
+    if not have:
+        return "まだ焼いていない（`build.sig` が無い ＝ 刻む前の版で焼いた）"
+    hv, _, hb = have.partition(":")
+    wv, _, wb = want.partition(":")
+    if hv != wv and hb == wb:
+        return (f"**道具が直った**（`BUILD_SIG_VERSION` {hv}→{wv}）"
+                "＝ **台本は 1字 も動いていません**。焼き直すと mp4 だけが別物になります")
+    if hv != wv:
+        return (f"**道具も台本も動いた**（版 {hv}→{wv}・中身 {hb[:6]}→{wb[:6]}）"
+                "＝ 分けて撃つほうが、どちらが効いたか読めます")
+    return f"台本が build のあとに動いた（中身 {hb[:6]}→{wb[:6]}）"
+
+
 def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
     """**焼いてあって まだ上げていない本**を、`schedule` が通る側と通らない側に分けて出す。
 
@@ -3751,6 +3843,7 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
             verdict[r["id"]] = r
     ok, stale = [], []
     form_of_id: "dict[str, str]" = {}
+    sigs: "dict[str, tuple[str | None, str]]" = {}   # vid -> (焼いた指紋, いまの指紋)
     try:
         dirs = sorted(d for d in common.WORK.iterdir() if d.is_dir())
     except OSError:
@@ -3764,12 +3857,14 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
         except Exception:  # noqa: BLE001  台本が消えた作業場は数えない
             continue
         form_of_id[vid] = s.form
-        (ok if render.built_sig(vid) == s.build_sig(image_for(vid)) else stale).append(vid)
+        have, want = render.built_sig(vid), s.build_sig(image_for(vid))
+        sigs[vid] = (have, want)
+        (ok if have == want else stale).append(vid)
     if not ok and not stale:
         return ""
     open_loop = [v for v in ok if verdict.get(v) and verdict[v].get("done") is False]
     head = (f"**出せる在庫（焼いてあって まだ上げていない本）**: 出せる **{len(ok)}本**"
-            f"・**焼き直しが要る {len(stale)}本**（`build` 1本 92秒・**API 0単位**）")
+            f"・**焼き直しが要る {len(stale)}本**（{rebuild_cost(stale, form_of_id)}・**API 0単位**）")
     if open_loop:
         head += (f"　**うち 輪が開いたままの本 {len(open_loop)}本**"
                  "（台帳の `critique` が `done: false` ＝ **[real] が残っています**。"
@@ -3797,9 +3892,10 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
     if len(ok) > SHIPPABLE_SHOW:
         out.append(f"    …ほか **{len(ok) - SHIPPABLE_SHOW}本**（`ls {common.WORK}` で全部）")
     for vid in stale[:SHIPPABLE_SHOW]:
-        out.append(f"    焼き直す     {vid}（台本が build のあとに動いた ＝ `schedule` は止めます）")
+        out.append(f"    焼き直す     {vid}（{stale_why(*sigs[vid])} ＝ `schedule` は止めます）")
     if len(stale) > SHIPPABLE_SHOW:
         out.append(f"    …ほか 焼き直しが要る **{len(stale) - SHIPPABLE_SHOW}本**")
+    out.append(detach_line(stale, form_of_id))
     out.append(form_priority_line(ok, form_of_id))
     return "\n".join(x for x in out if x)
 
