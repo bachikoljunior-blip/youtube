@@ -7574,3 +7574,7 @@
 {"n": 2, "kinds": ["sharper", "missing_cond"], "at": "2026-09-20T03:04:27+09:00", "id": "2026-09-24-maisouryou-taishoku-3kagetsu-short", "event": "crosscheck"}
 {"seconds": 71.0, "image": true, "chars": 397, "scenes": [8.7, 7.1, 6.5, 7.8, 8.2, 6.8, 5.9, 7.2, 5.7, 7.0], "sig": "4:9a3250b88fd2", "at": "2026-09-20T03:08:00+09:00", "id": "2026-09-24-sousaihi-kouki-short", "event": "built"}
 {"seconds": 69.8, "image": true, "chars": 387, "scenes": [8.2, 7.0, 6.5, 7.0, 8.2, 7.0, 5.9, 7.2, 5.7, 7.0], "sig": "4:5e864b56108c", "at": "2026-09-20T03:09:25+09:00", "id": "2026-09-24-sousaihi-kokuho-short", "event": "built"}
+{"seconds": 90.9, "image": true, "chars": 448, "scenes": [14.3, 10.0, 8.5, 6.5, 11.2, 11.4, 7.4, 7.7, 6.9, 7.0], "sig": "4:6752ca56807f", "at": "2026-09-20T02:43:59+09:00", "id": "2026-09-23-kakyu-3sai-shita-short", "event": "built"}
+{"seconds": 91.4, "image": true, "chars": 448, "scenes": [14.6, 10.0, 8.5, 6.5, 11.2, 11.6, 7.4, 7.7, 6.9, 7.0], "sig": "4:522f4a1cb13a", "at": "2026-09-20T02:45:49+09:00", "id": "2026-09-23-kakyu-4sai-shita-short", "event": "built"}
+{"seconds": 90.8, "image": true, "chars": 448, "scenes": [14.4, 10.0, 8.5, 6.5, 11.1, 11.2, 7.4, 7.7, 6.9, 7.0], "sig": "4:91cb9064317d", "at": "2026-09-20T02:47:40+09:00", "id": "2026-09-23-kakyu-5sai-shita-short", "event": "built"}
+{"seconds": 91.6, "image": true, "chars": 448, "scenes": [14.6, 10.0, 8.5, 6.5, 11.3, 11.7, 7.4, 7.7, 6.9, 7.0], "sig": "4:d2d7b7f95820", "at": "2026-09-20T02:49:31+09:00", "id": "2026-09-23-kakyu-6sai-shita-short", "event": "built"}
