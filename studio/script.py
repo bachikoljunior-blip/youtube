@@ -884,7 +884,9 @@ class Script(BaseModel):
                 f"（当たり {n_hit / n_all:.0%}）: {ex}。"
                 f"**止めません** —— 見出しや比べるためだけの段は言わなくてよい数です。"
                 f"**直すなら、声にその数を言わせるか、歩そのものを落とすこと**"
-                f"（合わせる先が無い歩は等間隔に落ちます・`studio/narration.py`）")
+                f"（**合わせる先が無い歩は、もう動きません** —— 前のコマで出ている歩と、"
+                f"声が 1歩 も指さないコマの図は、頭から出たまま止まります。"
+                f"2026-09-19 14:3x に向きを変えた・`studio/narration.cue_windows` の `carry`）")
         from .tts import uses_custom_pronunciations
         if self.yomi and not uses_custom_pronunciations(self.voice):
             dead = [w for w in self.yomi if w not in (self.kana_in_voice or [])]

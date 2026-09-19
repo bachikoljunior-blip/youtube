@@ -30,14 +30,24 @@ def build(s: Script, image: Path | None = None, parts: dict[str, Path] | None = 
     # 無いコマは今までどおり 1枚。`pngs` は sheet 用（コマごとに最後の 1枚）・`entries` は ffmpeg に渡す全部。
     pngs: list[Path] = []
     entries: list[tuple[Path, float]] = []
+    # **前のコマで もう動いた歩**（積み上がる表・棒は、コマが進むごとに 1行 増える）。
+    # ここに在る歩は、次のコマでは**頭から出ていて動きません**（`narration.cue_windows(carry=)`）。
+    # 在庫 42本 の実測（2026-09-19 14:3x）: 当たらない歩 476 のうち **172（36%）が この形**で、
+    # **声が新しい行を言っている間に、前の行が湧いて**いました。
+    seen: set[tuple[str, ...]] = set()
     for i, (seg, nm, t) in enumerate(zip(s.segments, names, durs), 1):
         bg = parts.get(nm) or image
         # **声の時計**（`studio/narration.py`・オーナー 2026-09-19 12:3x `9155fe09`
         # 「ナレーションとアニメーションの表現をリンクさせたりしないとわかりやすくなんないでしょ？」）。
         # 図の 1歩 は**その数を声が言う瞬間**に動き、字幕は**いま言っている句**が光る。
         tl = narration.timeline(seg.say, t, s.yomi)
-        wins = (narration.cue_windows(seg.say, t, _viz.step_keys(seg.viz), s.yomi)
+        sigs = [tuple(c) for c in _viz.step_keys(seg.viz)] if seg.viz else []
+        carry = 0
+        while carry < len(sigs) and sigs[carry] and sigs[carry] in seen:
+            carry += 1
+        wins = (narration.cue_windows(seg.say, t, _viz.step_keys(seg.viz), s.yomi, carry=carry)
                 if seg.viz else [])
+        seen.update(x for x in sigs if x)
         plan = narration.frame_plan(t, tl, wins, _viz.steps(seg.viz) if seg.viz else 0)
         if len(plan) <= 1 and not seg.viz:
             # 句が 1つ しか無いコマ（光りが動かない）は、今までどおり 1枚。焼きを増やさない
