@@ -147074,6 +147074,12 @@ Shorts の説明欄・コメント欄の URL は押せず（METHOD §5 09/19 08:
 **この周が `-m live` の 2,597件 を撃ったら、赤は 3件 でした**（`pytest.ini` の `testpaths = tests` で
 **収集 9,683件**・全部 撃つと約9分）。**どれも この周の変更とは無関係で、前から落ちています。**
 
+**撃ち直した結果**（`python -m pytest -m live -q`・**この周の前後**）:
+
+    前  **3 failed, 2,597 passed**, 15 skipped, 7,066 deselected, 2 xfailed（327秒）
+    後  **1 failed, 2,599 passed**, 15 skipped, 7,066 deselected, 2 xfailed（327秒）
+        ＝ 残る 1件 は (d)。**わざと赤のままにしてあります。**
+
     (a) tests/test_endcard_verdict.py   旧 `src/` の本 2本 ＝ **この周が留めた**（§9・緑）
     (b) tests/test_form_priority_line.py **決めが 09/19 18:xx に動き、検査が前の字のまま** ＝ **この周が直した**（緑）
     (c) tests/test_for_owner_minimal_steps.py **窓が答えられた瞬間に落ちる形** ＝ **この周が形へ移した**（緑）
