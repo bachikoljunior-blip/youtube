@@ -749,7 +749,7 @@ def _draw_gauge(d, spec, W, H, p, unit, pad):
             f = 0.0 if nb <= 1 else i / (nb - 1)
             c = tuple(int(GREEN[j] + (RED[j] - GREEN[j]) * f) for j in range(3))
             d.rounded_rectangle([edges[i], ay - bh // 2, edges[i + 1], ay + bh // 2],
-                                radius=bh // 2, fill=(c[0], c[1], c[2], 150))
+                                radius=bh // 2, fill=(c[0], c[1], c[2], 200))
     # 印（線）—— 札は帯の上・数は帯のすぐ上
     xs_all = [PX(m.get("value", 0)) for m in marks]
     lsz = max(20, fsz - 10)
