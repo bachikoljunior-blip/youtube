@@ -1478,6 +1478,36 @@ derivation は `docs/JOURNAL.md` 2026-09-19 07:0x。
 
 derivation は `docs/JOURNAL.md` 2026-09-19 08:xx。検査は `tests/test_studio_profile_link.py`（**7件**・陽性対照 1件）。
 
+### **【2026-09-19 09:xx】上の (3) は半分だけ正しい —— チャンネルページには URL の載る面が 2つ あり、説明欄（概要）は機械の手で置けて、押せます**（optimizer・Fable 5.1・ultracode・1周 1体）
+
+**事実（公開ページで確かめた・Data API 0単位・2026-09-19 09:1x）**:
+ - `UCX6OQ3DkcsbYNE6H8uQQuVA` の**説明欄**の `https://mrbeast.store` は、ページの中で `navigationEndpoint`／`urlEndpoint`
+   （`youtube.com/redirect?…`）を持つ ＝ **押せる字**。リンク欄の印（`channelExternalLinkViewModel`）はページに 0件 ＝
+   08:xx の「12 host」は**説明欄の側**でした。
+ - **うちの説明欄は前のチャンネルの字のまま**: 「制度の解説ではなく…扱っている範囲：残業代と割増賃金、失業給付、所得控除、社会保険、税金の手続き。」
+   年金・退職金の字が 1つ も無く、リンクも無い。**ショートからアイコンを叩いた人が着く面が、別のチャンネルの説明でした。**
+ - 説明欄は `brandingSettings.channel.description` ＝ `channels.update`（**50単位**・`channels.list` 1単位 と合わせて 51）。
+
+**決め（2つ）**:
+ (1) **説明欄を `asp.channel_description()` の字にする**（1行目 で何のチャンネルか・【PR】＋アフィリエイト の 2語・案件 2本 の URL・490字/上限 1,000）。
+     口は `cli channel-desc`（`--dry-run` 0単位）と **`catchup` の 1手**（打ち直しの次・コメント欄の一手より先 ＝ 全部の本から 1タップで着く面・消えない面）。
+     台帳 `channel_desc_set`／`channel_desc_refused`（51単位）・落ちた回が `CHANNEL_DESC_REFUSE_CAP`（2）に届いたら オーナーの側へ（題と同じ型）。
+     **09/19 09:2x に 1度 撃って 403（日枠）＝ 16:00 の `catchup` が撃つ（約302単位）。**
+ (2) **リンク欄（窓【2】）は残す** —— 2つ 在るほうが押されやすく、重ねても害は無い。`status` の「プロフィールのリンク（成果報酬）」は
+     **在（説明欄）／在（リンク欄）／未** の 3値（`pubcheck.channel_public` の `asp_link_desc`）。
+
+**この決めが動かす数**: 押せる面が **オーナーの手を待たずに 1つ** 立つ（16:00 JST）。上の (14)（09/22 16:00 を越えて `False`）は、
+説明欄の側では **16:00 の周の 1手 で決まる** —— 越えて `asp_link_desc` が False なら、覆る条件 (17)。
+**固定2 の答えは変わりません**（押される率は未測）。読むべき 1枚 は **説明欄が置かれた後（09/21〜22）の ASP の画面**。
+
+**覆る条件**:
+ (17) `channels.update` が 200 を返して説明欄が動かなかったら（題と同じ型）、2回 で止め、窓【2】に「説明欄」の 1行 を足す。
+ (18) 説明欄を置いて 7日、ASP のクリック 0 なら、面ではなく**声の文**を疑う（(15) と同じ 1か所）。
+ (19) `PROFILE_NOTE` の字は変えないこと —— 上がっている本の説明欄がその字で組まれていて、変えると `drift_fields` が毎周「食い違い」を印字する
+     （この回に 1度 変えかけて戻した・`asp.PROFILE_NOTE` の註）。
+
+derivation は `docs/JOURNAL.md` 2026-09-19 09:xx。検査は `tests/test_studio_channel_desc.py`（**10件**・陽性対照 2件・陰性対照 2件）。
+
 
 **【2026-09-18 05:xx】訊く数は 3つ です。その 0つ 目は「向き」** ——
 **(0) `channel_trajectory_line`（先週より配りが増えたか）→ (i) `form_yield_line` → (ii) `long_per_video_line`。**

@@ -2935,6 +2935,57 @@ def catchup_line(rows: list[dict], now: dt.datetime | None = None) -> str:
             f"・安い順・1,650単位 の `schedule --replace` は撃ちません）")
 
 
+#: `channels.update` が 200 を返して説明欄が動かない回が、この数 続いたら撃つのをやめる（題と同じ型・`rename_pending` の註）。
+CHANNEL_DESC_REFUSE_CAP = 2
+
+
+def channel_desc_pending(rows: list[dict]) -> bool:
+    """**チャンネルの説明欄（成果報酬のリンク）が まだ置かれていないか**（**API 0単位**・台帳で見る）。
+
+    2026-09-19 09:xx・optimizer・Fable 5.1・ultracode。なぜ・覆る条件は `studio/asp.py`「チャンネルの説明欄」の註。
+    `channel_desc_set` が 1行 在れば済み。落ちた回（`channel_desc_refused`）が `CHANNEL_DESC_REFUSE_CAP` に届いたら、
+    この手はオーナーの側へ移る（毎周 51単位 を捨てない）。案件が 0本 なら置く字が無いので False。
+    """
+    if any(r.get("event") == "channel_desc_set" for r in rows):
+        return False
+    if sum(1 for r in rows if r.get("event") == "channel_desc_refused") >= CHANNEL_DESC_REFUSE_CAP:
+        return False
+    return bool(asp.offers())
+
+
+def cmd_channel_desc(a):
+    """**チャンネルの説明欄（概要）に、成果報酬のリンクを置く**（`channels.list` 1単位 ＋ `channels.update` 50単位）。
+
+    なぜ・覆る条件は `studio/asp.py`「チャンネルの説明欄」の註（Shorts から押せる面のうち、機械の手で置ける ただ 1つ。
+    いまの説明欄は前のチャンネルの字 ＝「残業代と割増賃金、失業給付…」で、年金の字もリンクも無い）。
+    **`--dry-run` は置く字を印字するだけ（0単位）。** 済んでいれば撃たない（`--anyway` で撃ち直す）。
+    """
+    text = asp.channel_description()
+    rows = ledger_rows()
+    print(f"チャンネルの説明欄（{len(text)}字 / 上限 {asp.CHANNEL_DESC_LIMIT}・案件 {len(asp.offers())}本）:")
+    for line in text.split("\n"):
+        print("  |", line)
+    if getattr(a, "dry_run", False):
+        print("  （`--dry-run` ＝ 置いていません・**0単位**）")
+        return 0
+    if not channel_desc_pending(rows) and not getattr(a, "anyway", False):
+        n_ok = sum(1 for r in rows if r.get("event") == "channel_desc_set")
+        n_ng = sum(1 for r in rows if r.get("event") == "channel_desc_refused")
+        print(f"  済んでいます（置いた {n_ok}回・落ちた {n_ng}回 / 門 {CHANNEL_DESC_REFUSE_CAP}）＝ 撃ちません（`--anyway` で撃ち直す）")
+        return 0
+    r = yt.set_channel_description(text)
+    if not r["ok"]:
+        ledger("channel_desc_refused", "-", units=51, before=(r["before"] or "")[:200], after=(r["after"] or "")[:200])
+        n = sum(1 for x in ledger_rows() if x.get("event") == "channel_desc_refused")
+        print(f"  !! 打った字が読み返せません ＝ `channel_desc_set` は書きません（落ちた回 {n}回目 / 門 {CHANNEL_DESC_REFUSE_CAP}。"
+              f"門に届いたら この手はオーナーの側（`docs/FOR_OWNER.md`）へ移ります）")
+        return 1
+    ledger("channel_desc_set", "-", units=51, before=(r["before"] or "")[:300], chars=len(text))
+    print(f"  置きました（前の字 {len(r['before'] or '')}字 → {len(text)}字・51単位）。"
+          f"公開ページの `asp_link_desc` が次の周から True になるはずです（`status`・0単位）")
+    return 0
+
+
 def cmd_catchup(a):
     """**日枠が戻った周に、詰まっている手を安い順で一気に撃つ**（2026-09-17 08:3x・optimizer・Fable 5.1・ultracode）。
 
@@ -2984,15 +3035,17 @@ def cmd_catchup(a):
     cta = cta_pending(rows, now, skip={b["video_id"] for b in bad})[:CTA_CATCHUP_MAX]
     done_wm = any(r.get("event") == "watermark_set" for r in rows)
     rn = rename_pending(rows)
+    cd = channel_desc_pending(rows)
     print(f"catchup（安い順・**判定はしません**）: 出ていない本 {len(bad)}本・"
+          f"チャンネルの説明欄（成果報酬） {'**未**' if cd else '置いてある'}・"
           f"コメント欄の一手 未 {len(cta)}本・"
           f"透かし {'置いてある' if done_wm else '**未**'}・"
           f"題 {'打ってある' if not rn else f'**未**（`{RENAME_TARGET}`）'}")
-    if not bad and not cta and done_wm and not rn:
+    if not bad and not cta and done_wm and not rn and not cd:
         print("  撃つものがありません（**0単位**）")
         return 0
     if getattr(a, "dry_run", False):
-        print(f"  [dry-run] 撃てば 約{1 + len(bad) * 51 + len(cta) * 50 + (0 if done_wm else 50) + (52 if rn else 0)}単位"
+        print(f"  [dry-run] 撃てば 約{1 + len(bad) * 51 + (51 if cd else 0) + len(cta) * 50 + (0 if done_wm else 50) + (52 if rn else 0)}単位"
               f"（**いまは 0単位**）")
         return 0
     ch = yt.channel()                      # **1単位**。尽きていれば ここで 403 ＝ `main()` が受ける
@@ -3022,6 +3075,11 @@ def cmd_catchup(a):
     # コメント欄の塊が触るのは**門の外の分子**で、`trend.rev_deadline` が
     # 「期限の中で 1 を切りうる」と数えている ただ 1本 の腕です。
     # **そして相手は 48h で消えます**（上の註）—— 透かしの相手は消えません。
+    # **チャンネルの説明欄は 打ち直しの次・コメント欄の一手より先**（2026-09-19 09:xx・`asp.py`「チャンネルの説明欄」の註）——
+    # 同じ 51単位 でも、コメント欄の塊は本 1本 の面（Shorts では押せない・48h で相手が消える）で、
+    # 説明欄は **全部の本からアイコン 1タップで着く面**（押せる・消えない）。「どの周に撃っても同じ答えになる手」。
+    if cd:
+        cmd_channel_desc(argparse.Namespace(dry_run=False, anyway=False))
     if cta:
         print(f"  コメント欄の一手（**新しい順**・{len(cta)}本 ＝ {len(cta) * 50}単位）")
         cmd_cta(argparse.Namespace(ids=",".join(cta), max=len(cta), anyway=False,
@@ -3231,6 +3289,11 @@ def main(argv=None):
     # **詰まっている手を、日枠が戻った周に安い順で一気に撃つ**（`cmd_catchup` の註）。
     cu = sub.add_parser("catchup")
     cu.add_argument("--dry-run", action="store_true", help="何を撃つかだけ（**0単位**）")
+    # **チャンネルの説明欄（概要）に成果報酬のリンクを置く**（2026-09-19 09:xx・`cmd_channel_desc` の註）。
+    # Shorts から押せる面のうち、機械の手で置ける ただ 1つ（51単位・`catchup` の 1手 でもある）。
+    cdp = sub.add_parser("channel-desc")
+    cdp.add_argument("--dry-run", action="store_true", help="置く字を印字するだけ（**0単位**）")
+    cdp.add_argument("--anyway", action="store_true", help="済んでいても撃ち直す（51単位）")
     wm = sub.add_parser("watermark")
     wm.add_argument("--offset-ms", type=int, default=15000, dest="offset_ms",
                     help="本の頭から出るまで（既定 15000 ＝ 15秒）")

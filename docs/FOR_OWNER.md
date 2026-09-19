@@ -31,6 +31,11 @@
 >
 > 返事は要りません。
 
+**【2】は残しますが、押せる面は 09/19 16:00 に機械の手でも 1つ 立ちます**（2026-09-19 09:xx JST・optimizer・Fable 5.1）:
+チャンネルページの**説明欄（概要）**は `channels.update`（50単位）で書けて、その URL は押せます（公開ページで確かめた・`studio/asp.py`「チャンネルの説明欄」の註）。
+いまの説明欄は前のチャンネルの字（「残業代と割増賃金、失業給付…」）のままだったので、16:00 の `catchup` が `asp.channel_description()` の字（年金・退職金の説明 ＋ 【PR】＋ 案件 2本）に置きます。
+【2】のリンク欄は**もう 1つ の面**として残します（両方 在るほうが押されやすい）。**同じ物を 2つ の窓で頼まないこと** —— 説明欄はオーナーに頼みません。
+
 **【2】を「コメントの固定 5本」から「チャンネルのリンク 2本」に替えました**（2026-09-19 07:5x JST・optimizer・Fable 5.1）。
 **なぜ**: YouTube は 2023-08-31 から **Shorts の説明欄とコメント欄の URL を押せなくしています**（固定コメントも同じ・
 `support.google.com/youtube/answer/13748639`「URLs placed in YouTube Shorts comments and Shorts descriptions are non-clickable」）。

@@ -83,6 +83,11 @@ OFFERS = [
 #      （「チャンネル名をタップ」が伝わっていない側）。
 #  (3) `pubcheck` の `asp_link` が 09/22 16:00 を越えて `False` のままなら、窓【2】の頼み方を疑うこと
 #      （2度 空振り ＝ 刻を疑う・JOURNAL 09/19 07:0x）。
+#: 「プロフィールのリンク」＝ チャンネルページの **2つ の面** のどちらでもよい（09/19 09:xx に 2つ目 を足した）:
+#:   リンク欄（オーナーの手・窓【2】）と **チャンネルの説明欄**（`channel_description()`・`channels.update` 51単位・機械の手）。
+#:   声（`CTA_SEG`「プロフのリンクから」）と この字の「リンク」は、どちらの面も指せる。
+#:   **この字を変えないこと** —— 上がっている本の説明欄はこの字で組まれていて、変えると `drift_fields` が
+#:   「説明欄 食い違い」を毎周 印字し、直しに行く周が 50単位/本 を払う（2026-09-19 09:xx に 1度 変えかけて戻した）。
 PROFILE_NOTE = "スマホのショートではこのURLは押せません。チャンネルのアイコンをタップ → 「リンク」から開けます。"
 
 #: 最後のコマ（**ショート用**）。**`say` は 41字 まで** —— 在庫の本の字数の蓋（`lint` の「合計 N字まで」＝ その本の
@@ -225,3 +230,55 @@ def comment_block() -> str:
     body = "\n".join(f"・{line}\n{url}" for url, line in got)
     tail = "※申し込みがあるとこのチャンネルに紹介料が入ります。動画の計算は公的な資料だけで出していて、紹介料とは関係ありません。"
     return f"{head}\n{body}\n{tail}"[:COMMENT_LIMIT]
+
+
+# ---------------------------------------------------------------------------
+# **チャンネルの説明欄（概要）**（2026-09-19 09:xx・optimizer・Fable 5.1・ultracode が足した）
+# ---------------------------------------------------------------------------
+#
+# **なぜ足したか（固定2 の答えの、その 1本 の道の「押せる面」を、機械の手で 1つ 作る）**:
+# 07:2x〜08:xx の周が「Shorts から押せる面はチャンネルページのリンクだけ・API に口が無い ＝ オーナーの手（窓【2】）」
+# と書きました。**半分だけ正しい。** チャンネルページには URL の載る面が **2つ** あって、
+#   (a) リンク欄（登録ボタンの横・`brandingSettings` に欄が無い ＝ オーナーの手）
+#   (b) **チャンネルの説明欄（概要）** —— `brandingSettings.channel.description`（`channels.update` **50単位**）。
+# **(b) の URL は押せます**（2026-09-19 09:1x に公開ページで確かめた・**Data API 0単位**）:
+# `UCX6OQ3DkcsbYNE6H8uQQuVA` の説明欄の `https://mrbeast.store` は、ページの中で
+# `"navigationEndpoint":{...,"urlEndpoint":{"url":"https://www.youtube.com/redirect?…"}}` を持つ ＝ 押せる字として組まれている。
+# 07:5x の「12 host」は、この (b) の側でした（(a) の印 `channelExternalLinkViewModel` はページに 0件）。
+#
+# **そして、うちの (b) は 前のチャンネルの字のままでした**（同じ刻に読んだ）:
+# 「制度の解説ではなく…扱っている範囲：残業代と割増賃金、失業給付、所得控除、社会保険、税金の手続き。」
+# ＝ 年金・退職金 の字が 1つ も無く、リンクも無い。**ショートからアイコンを叩いた人が着く面が、別のチャンネルの説明**でした。
+#
+# **決め**: `channel_description()` の字を `channels.update` で置く（`cli channel-desc`・`catchup` の 1手）。
+# (a) は窓【2】のまま残す（両方 在るほうが押されやすい・重ねても害は無い）。
+#
+# **覆る条件**:
+#  (1) `channels.update` が 200 を返して **説明欄が動かなかったら**（題と同じ型・`rename_pending` の註）、
+#      `CHANNEL_DESC_REFUSE_CAP` 回 で止め、この面はオーナーの手（窓）へ移すこと。
+#  (2) 置いて 7日、`pubcheck` の `asp_link_desc` が True なのに ASP のクリックが 0 なら、面ではなく**声の文**を疑うこと。
+#  (3) YouTube が説明欄の URL を押せなくしたら（`navigationEndpoint` が消えたら）、(a) だけに戻す。
+
+#: YouTube のチャンネル説明欄の上限（字）。**越えると `channels.update` が 400 で落ちます**。
+CHANNEL_DESC_LIMIT = 1000
+
+#: 1行目（スマホのチャンネルページで「…もっと見る」の上に出る側）。
+CHANNEL_DESC_HEAD = (f"{BRAND_NAME}。年金・退職金・税金の「手取り」を、条文と公表資料の式で計算して出しています。"
+                     "前提は毎回 画面に出しているので、自分の場合に置き換えられます。")
+CHANNEL_DESC_TAIL = ("※ 一般的な情報提供で、個別の助言ではありません。制度は改正されます。"
+                     "実行前に公式の情報・専門家にご確認ください。")
+
+
+def channel_description() -> str:
+    """チャンネルの説明欄に置く字。**案件が 1本 も無ければ、リンク無しの字**（この file は止めません）。
+
+    `【PR】` と「アフィリエイト」の 2語 は、説明欄・コメント欄と同じく塊の 1行目 に出します（景表法・ステマ規制）。
+    上限 `CHANNEL_DESC_LIMIT`（1,000字）は蓋で、いまの字は約 500字。
+    """
+    got = offers()
+    if not got:
+        return f"{CHANNEL_DESC_HEAD}\n\n{CHANNEL_DESC_TAIL}"[:CHANNEL_DESC_LIMIT]
+    pr = (f"{MARK}「自分の場合はいくら？」は、下から無料で相談できます（アフィリエイトです）。\n"
+          + "\n".join(f"・{line}\n{url}" for url, line in got)
+          + f"\n{DISCLOSURE}")
+    return f"{CHANNEL_DESC_HEAD}\n\n{pr}\n\n{CHANNEL_DESC_TAIL}"[:CHANNEL_DESC_LIMIT]

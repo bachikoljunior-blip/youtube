@@ -56,6 +56,9 @@ UNITS_BY_EVENT = {
     "replied": 50,
     # コメント欄の成果報酬の塊（`studio/asp.comment_block`・`cli cta`・`commentThreads.insert`）。
     "cta_comment": 50,
+    # チャンネルの説明欄（`studio/asp.channel_description`・`cli channel-desc`・`channels.list` 1 ＋ `channels.update` 50）。
+    "channel_desc_set": 51,
+    "channel_desc_refused": 51,
 }
 
 

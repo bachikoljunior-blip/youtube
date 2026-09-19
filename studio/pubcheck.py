@@ -241,6 +241,9 @@ _SUBS_EN = re.compile(r'"(?:content|accessibilityLabel)":"([\d,.]+)([KMB]?) subs
 _SUBS_JA = re.compile(r'"(?:content|accessibilityLabel)":"チャンネル登録者数\s*([\d,.]+)(万|億)?人"')
 _TITLE = re.compile(r'"channelMetadataRenderer":\{"title":"((?:[^"\\]|\\.)*)"')
 _VANITY = re.compile(r'"vanityChannelUrl":"([^"]*)"')
+#: チャンネルの説明欄（概要）。`channelMetadataRenderer` の `title` の直後に `description` が並ぶ
+#: （2026-09-19 09:1x に うちと `UCX6OQ3DkcsbYNE6H8uQQuVA` の 2ページ で確かめた）。
+_META_DESC = re.compile(r'"channelMetadataRenderer":\{"title":"(?:[^"\\]|\\.)*","description":"((?:[^"\\]|\\.)*)"')
 _MULT = {"": 1, "K": 1_000, "M": 1_000_000, "B": 1_000_000_000, "万": 10_000, "億": 100_000_000}
 
 
@@ -303,10 +306,22 @@ def channel_public(channel_id: str, timeout: float = 25.0, fetch=None) -> dict |
     # 陽性対照: リンクを持つ他チャンネルの公開ページには、リンク先の host がそのまま載ります
     # （2026-09-19 07:5x に `UCX6OQ3DkcsbYNE6H8uQQuVA` で `mrbeast.store` ほか 12 host を確かめた）。
     from .asp import HOST as _ASP_HOST
+    # **URL の載る面は 2つ**（2026-09-19 09:xx・`asp.py`「チャンネルの説明欄」の註）:
+    #   `asp_link`      … ページのどこかに host が在る（リンク欄でも説明欄でも ＝ **押せる面が 1つ は在る**）
+    #   `asp_link_desc` … **説明欄**に在る（機械の手 `channels.update` で置いた側。読めなければ `None`）
+    dm = _META_DESC.search(html)
+    desc = None
+    if dm:
+        try:
+            desc = json.loads('"' + dm.group(1) + '"')
+        except Exception:
+            desc = dm.group(1)
     return {"id": channel_id, "subscriberCount": subs,
             "exact": subs < PUBLIC_SUBS_EXACT_MAX,
             "title": title, "handle": handle, "src": "public_page",
-            "asp_link": _ASP_HOST in html}
+            "asp_link": _ASP_HOST in html,
+            "asp_link_desc": (_ASP_HOST in desc) if desc is not None else None,
+            "description": desc}
 
 
 def channel_public_line(ch: dict | None) -> str:
@@ -326,7 +341,9 @@ def channel_public_line(ch: dict | None) -> str:
                  f" ＝ 改名は片側だけ（handle は API から替えられない ＝ オーナーの手）")
     if ch.get("asp_link") is False:
         head += ("・**プロフィールのリンク（成果報酬）は 未** ＝ Shorts では説明欄・コメント欄の URL が押せないので、"
-                 "**押せる面が 1つ も無い**（API に口が無い ＝ オーナーの窓【2】・`asp.PROFILE_NOTE` の註）")
+                 "**押せる面が 1つ も無い**（リンク欄はオーナーの窓【2】・**チャンネルの説明欄は `channel-desc`（51単位・機械の手）**"
+                 "・`asp.py`「チャンネルの説明欄」の註）")
     elif ch.get("asp_link"):
-        head += "・プロフィールのリンク（成果報酬）**在**（Shorts から押せる面が開いた）"
+        where = ("説明欄" if ch.get("asp_link_desc") else "リンク欄")
+        head += f"・プロフィールのリンク（成果報酬）**在**（{where}・Shorts から押せる面が開いた）"
     return head

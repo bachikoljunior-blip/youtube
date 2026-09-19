@@ -148,11 +148,15 @@ def test_順は_打ち直し_コメント欄_透かし_題(monkeypatch):
     monkeypatch.setattr(cli.yt, "readiness",
                         lambda vid: {"no_publish_at": True, "publish_at": None, "privacy": "private"})
     monkeypatch.setattr(cli, "cmd_reschedule", lambda ns: calls.append(("reschedule", ns.id)) or 0)
+    # **チャンネルの説明欄は 打ち直しの次・コメント欄より先**（2026-09-19 09:xx・`asp.py`「チャンネルの説明欄」の註）——
+    # 全部の本からアイコン 1タップで着く面・押せる・消えない。コメント欄の塊は本 1本 の面で 48h で相手が消える。
+    monkeypatch.setattr(cli, "channel_desc_pending", lambda rows: True)
+    monkeypatch.setattr(cli, "cmd_channel_desc", lambda ns: calls.append(("channel_desc",)) or 0)
     monkeypatch.setattr(cli, "cmd_cta", lambda ns: calls.append(("cta", ns.ids)) or 0)
     monkeypatch.setattr(cli, "cmd_watermark", lambda ns: calls.append(("watermark",)) or 0)
     monkeypatch.setattr(cli, "cmd_rename_channel", lambda ns: calls.append(("rename", ns.title)) or 0)
     assert cli.cmd_catchup(argparse.Namespace(dry_run=False)) == 0
-    assert calls == [("reschedule", "s-x"), ("cta", "B,A,C"), ("watermark",),
+    assert calls == [("reschedule", "s-x"), ("channel_desc",), ("cta", "B,A,C"), ("watermark",),
                      ("rename", cli.RENAME_TARGET)]
 
 
@@ -161,10 +165,16 @@ def test_dry_run_は_コメント欄も撃たない(monkeypatch, capsys):
     monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [])
     monkeypatch.setattr(cli, "ledger_rows", lambda: _rows() + [{"event": "watermark_set"}])
     monkeypatch.setattr(cli, "rename_pending", lambda rows: False)
+    monkeypatch.setattr(cli, "channel_desc_pending", lambda rows: False)
     monkeypatch.setattr(cli, "cmd_cta", lambda *a, **k: pytest.fail("dry-run で撃った"))
     monkeypatch.setattr(cli.yt, "channel", lambda: pytest.fail("dry-run で口を撃った"))
     assert cli.cmd_catchup(argparse.Namespace(dry_run=True)) == 0
     assert "約151単位" in capsys.readouterr().out
+    # 説明欄が未なら 51 足す（2026-09-19 09:xx）。
+    monkeypatch.setattr(cli, "channel_desc_pending", lambda rows: True)
+    monkeypatch.setattr(cli, "cmd_channel_desc", lambda *a, **k: pytest.fail("dry-run で撃った"))
+    assert cli.cmd_catchup(argparse.Namespace(dry_run=True)) == 0
+    assert "約202単位" in capsys.readouterr().out
 
 
 # ---- 陽性対照（この検査が死んでいないこと） --------------------------------

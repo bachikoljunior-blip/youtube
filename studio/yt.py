@@ -347,6 +347,27 @@ def set_channel_title(title: str) -> dict:
     return {"before": before, "after": after, "ok": after == title}
 
 
+def set_channel_description(text: str) -> dict:
+    """**チャンネルの説明欄（概要）を置く**（`channels.list` **1単位** ＋ `channels.update` **50単位**）。
+
+    **2026-09-19 09:xx に足した**（optimizer・Fable 5.1・ultracode）。なぜ・覆る条件は `studio/asp.py` の
+    「チャンネルの説明欄」の註（Shorts から押せる面のうち、**機械の手で置ける ただ 1つ**）。
+
+    型は `set_channel_title` と同じ: `brandingSettings` は**読んでから書く**（渡した部を丸ごと置き換えるので、
+    読まずに書くと `keywords`・`title`・`unsubscribedTrailer` が黙って消える）・
+    **読み返しは `update` の返りから採る**（別の `list` は遅れた複製から返る）。
+    **返り `ok` が False なら台帳に `channel_desc_set` を書かないこと**（題が黙って無視された型 ＝ `rename_pending` の註）。
+    """
+    ch = svc().channels().list(part="brandingSettings", mine=True).execute()["items"][0]
+    bs = ch.get("brandingSettings") or {}
+    before = (bs.get("channel") or {}).get("description", "")
+    bs.setdefault("channel", {})["description"] = text
+    resp = svc().channels().update(part="brandingSettings",
+                                   body={"id": ch["id"], "brandingSettings": bs}).execute()
+    after = ((resp.get("brandingSettings") or {}).get("channel") or {}).get("description", "")
+    return {"before": before, "after": after, "ok": after == text}
+
+
 def update_meta(video_id: str, title: str, description: str, tags: list[str]) -> dict:
     """題・説明欄・tags だけを直す（videos.update 50単位。本は上げ直さない・予約もそのまま）。
     09/07 05:5x（hourly）: 予約ずみの本の説明欄の1文（実の誤り）を、ID を変えずに直すために足した。

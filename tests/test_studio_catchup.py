@@ -54,6 +54,7 @@ def test_刻が在る本は打ち直さない(monkeypatch, capsys):
     monkeypatch.setattr(cli.pubcheck, "taken_slots", lambda *a, **k: [])
     monkeypatch.setattr(cli, "ledger_rows", lambda: [{"event": "watermark_set"}])
     monkeypatch.setattr(cli, "rename_pending", lambda rows: False)
+    monkeypatch.setattr(cli, "channel_desc_pending", lambda rows: False)
     monkeypatch.setattr(cli.yt, "channel", lambda: {"subscriberCount": 32, "viewCount": 1})
     monkeypatch.setattr(cli.yt, "readiness", lambda vid: {
         "no_publish_at": False, "publish_at": "2026-09-18T10:00:00Z", "privacy": "private"})
@@ -70,6 +71,7 @@ def test_刻が無い本は空き枠へ打ち直し_透かしも置く(monkeypat
                         lambda taken, now, n=3: [dt.datetime(2026, 9, 18, 19, 0, tzinfo=JST)])
     monkeypatch.setattr(cli, "ledger_rows", lambda: [])
     monkeypatch.setattr(cli, "rename_pending", lambda rows: True)
+    monkeypatch.setattr(cli, "channel_desc_pending", lambda rows: False)
     monkeypatch.setattr(cli.yt, "channel", lambda: {"subscriberCount": 32, "viewCount": 1})
     monkeypatch.setattr(cli.yt, "readiness", lambda vid: {
         "no_publish_at": True, "publish_at": None, "privacy": "private"})
@@ -87,6 +89,7 @@ def test_透かしが置いてあれば撃たない(monkeypatch):
     monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [])
     monkeypatch.setattr(cli, "ledger_rows", lambda: [{"event": "watermark_set"}])
     monkeypatch.setattr(cli, "rename_pending", lambda rows: False)
+    monkeypatch.setattr(cli, "channel_desc_pending", lambda rows: False)
     monkeypatch.setattr(cli.yt, "channel", lambda: pytest.fail("撃つものが無いのに口を撃った"))
     monkeypatch.setattr(cli, "cmd_watermark", lambda *a, **k: pytest.fail("2度目 の透かし"))
     monkeypatch.setattr(cli, "cmd_rename_channel", lambda *a, **k: pytest.fail("2度目 の題"))
@@ -96,6 +99,7 @@ def test_透かしが置いてあれば撃たない(monkeypatch):
 def test_catchup_line_は_詰まった手を1行で名指しする(monkeypatch):
     monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [_bad()])
     monkeypatch.setattr(cli, "rename_pending", lambda rows: False)
+    monkeypatch.setattr(cli, "channel_desc_pending", lambda rows: False)
     s = cli.catchup_line([])
     assert "出ていない本 1本" in s and "透かし 未" in s and "約102単位" in s
     monkeypatch.setattr(cli.pubcheck, "missing", lambda *a, **k: [])
