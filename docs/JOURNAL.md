@@ -148068,9 +148068,22 @@ n が 8本 未満の回は符号を読まない／齢 48h 未満は入れない�
 
 **この周が撃ったのは `-m live` です**（§4）。
 
-### 4. 検査（**`-m live`・documented の門**）
+### 4. 検査（**`-m live`・documented の門**）—— 撃ちました
 
-（下に追記）
+    python -m pytest -m live -q
+    **1 failed, 2630 passed, 15 skipped, 7066 deselected, 2 xfailed ・ 337.81s（5分38秒）**
+
+**落ちた 1件 は `tests/test_quota_fable_cost_per_sub.py::test_pace_のサブの診断も生きている口から出ること`**
+＝ **前の周が「赤のまま・`studio` を import しない側 ＝ 別に撃つこと」と申し送った、当の検査**です。
+**`-m live` は、別に撃たなくても拾います。** 門を下げていないので、この 1件 は赤のまま残します
+（撃つべき 3手 と覆る条件は `scripts/quota.py` の `_births_between()` の註 ＝ **ここへ写しません**）。
+
+**`tests/test_for_owner_minimal_steps.py` は緑になりました**（この周の窓の割りで 1,005字 → 283/178字）。
+**＝ この 1回 の `-m live` が、前の周の申し送りが「2,127 passed / 0 failed」と書いた同じ瞬間に
+赤かった 2件 を、両方とも 1つ の命令で出しました。**
+**7,066 deselected は旧道具の側**（§8・`pytest tests/` は約9分 で xfail 3件 を含む）＝ **増やす先ではありません。**
+
+**この数を写して引かないこと。撃って読むこと**（`studio/livetests.py` の註と同じ）。
 
 ### 5. 触っていないもの
 

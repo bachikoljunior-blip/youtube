@@ -2988,6 +2988,15 @@ derivation は `docs/JOURNAL.md` 2026-09-20 01:5x。検査は `tests/test_trend_
 「`studio` を import する N本」と書いた周は、**`-m live` を撃っていません**（規則B・C は
 `for_owner`・`owner_ask`・`next_round`・`quota` ＝ **オーナーの窓と親の手続き**の側なので、
 そこが落ちると「オーナーに何を出すか」の欠陥だけが構造的に見えなくなります）。
+**この周が撃った実測**（2026-09-20 02:5x・窓を割ったあとの状態で）:
+
+    python -m pytest -m live -q
+    **1 failed, 2630 passed, 15 skipped, 7066 deselected, 2 xfailed ・ 337.81s**
+
+落ちた 1件 は `test_quota_fable_cost_per_sub` ＝ **申し送りが「別に撃つこと」と書いた当の検査**。
+**`-m live` は、別に撃たなくても拾います。**「別に撃つこと」と書いた時点で、門が `-m live` では
+なくなっていた、ということです。**5分38秒 は 9分 ではありません** —— 近道を作る理由だった
+「9分 待てない」は、`-m live` には当てはまりません。
 **覆る条件**: 規則B・C の当て先が全部 `studio` を import するようになったら、この段は要らなくなる
 （そのとき近道2 と `-m live` は同じ集合を選びます）。
 
