@@ -82,6 +82,24 @@ def build(s: Script, image: Path | None = None, parts: dict[str, Path] | None = 
     # `work/` は git に入らないので、**刻印は台帳の `built` の側にも要ります**（`cli.cmd_build`）。
     sig = s.build_sig(image)
     (d / "build.sig").write_text(sig, encoding="utf-8")
+    # **焼いた台本そのものも、隣に写します**（2026-09-20 00:xx・optimizer・Opus 5・ultracode）。
+    # **なぜ**（この周が踏んだ実測）: `2026-09-20-nenkin-tedori-hayamihyou` の mp4 は
+    # `3:0ff130dd52b0` を刻んでいるのに、**commit された台本から引くと `3:0653fadbdbec`** でした。
+    # 焼いたのは前の周の worktree に在った**まだ commit されていない台本**で、
+    # **その台本は worktree ごと消えました** ＝ **その mp4 を「新しい」と言える台本が、どこにも無い。**
+    # `status` は永久に「焼き直しが要る」と言い、次の回は毎回 **19分** を払い直します
+    # （長尺の焼きは 1,180秒 ＝ 落ちる時間が周より長い所が、他の焼き直しと違います）。
+    # **指紋だけでは足りません** —— 指紋は「違う」としか言えず、**何が違うか**は台本が要ります。
+    # ここに置く理由は `build.sig` と同じ: **mp4 を書くのはこの関数だけなので、写し忘れる道がありません。**
+    # `work/` は git に入らないので**これは記録ではなく証拠**です（掃かれます・`WORK_KEEP_DAYS`）。
+    # **覆る条件**: (1) `git status --porcelain` を `cmd_build` の前に鳴らす手を足したら、
+    #     こちらは「消えた台本を読む」側だけに残ること（**鳴らす側と読む側は別の問い**）。
+    # (2) 台本が大きくなって写しが重くなったら（いまは 1本 数十KB）、`segments` だけに絞ってよい ——
+    #     **指紋に入る物は全部 残すこと**（`build_sig` が読む 4つ: voice・rate・yomi・kana_in_voice）。
+    try:
+        (d / "script.json").write_text(s.model_dump_json(indent=1), encoding="utf-8")
+    except OSError:
+        pass   # 写しは証拠であって、焼きの成否ではありません ＝ **止めません**
     return {"mp4": mp4, "wavs": wavs, "durations": durs, "total": probe_duration(mp4),
             "sheet": sheet, "slides": pngs, "sig": sig,
             "frames": len(entries), "viz": sum(1 for g in s.segments if g.viz)}
@@ -91,3 +109,21 @@ def built_sig(vid: str) -> str | None:
     """**いま `work/` に在る mp4 が、どの本文で焼かれたか**（無ければ None ＝ 焼いていないか、刻む前の版で焼いた）。"""
     p = workdir(vid) / "build.sig"
     return p.read_text(encoding="utf-8").strip() if p.exists() else None
+
+
+def built_script(vid: str) -> "Script | None":
+    """**その mp4 を焼いた台本そのもの**（無ければ None ＝ 写す前の版で焼いた）。
+
+    `built_sig` は「いまの台本と違う」としか言えません。**何が違うか**を読むのはこちらです。
+    使い所は 2つ: **(1)** 消えた worktree で焼かれた mp4 の中身を見る（この関数が在る理由）。
+    **(2)** `stale_why` が「台本が動いた」と言ったとき、**どのコマが動いたか**を出す。
+
+    **壊れていたら None を返します**（写しは証拠であって台帳ではない ＝ 読めないより嘘が高い）。
+    """
+    p = workdir(vid) / "script.json"
+    if not p.exists():
+        return None
+    try:
+        return Script.model_validate_json(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
