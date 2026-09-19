@@ -991,6 +991,15 @@ def _births_between(rows: list[dict], start: datetime, end: datetime) -> int:
          （**平均です** —— 1つ ずつの区間では割っていないので、「1度も破っていない」とは言えません）。
          **壊れている証拠が、まだ数の側に出ていません。**
 
+    ### **【2026-09-20 02:4x】撃ちました。答えは「単位はずれていない」です**
+
+    **`_choices_live_since()` の註が正本です（ここへ写しません ＝ 決めは1か所）。** 要点だけ:
+    上の「直近1日 畳んだ周 37 対 立てたサブ 11 ＝ 比 0.30」は、
+    **`model_choice.jsonl` の 25.4時間 の穴（09/18 16:59→09/19 18:23 JST・周 35／サブ 1）を
+    窓に入れて割った数**でした。**台帳が書けていた区間だけで数えると 13体 / 13周 ＝ 比 1.00** ＝
+    `births`（周）はそのままサブ 1体 です。**式は 1つ も変えていません。**
+    下の 3手 は、**1) と 2) をこの回が撃ち、3) が「births のほう」と答えた**形で閉じています。
+
     **次に来た側が撃つ 1つ**（これで決まります・API 0単位）::
 
         1) `pace()` の `per_lap` を、分母 `births`（起きた回）と
@@ -1334,6 +1343,128 @@ OTHER_MODEL = "opus"
 MODEL_CHOICE_FILE = ROOT / "data" / "model_choice.jsonl"
 
 
+#: **穴とみなす条件**（`_choices_live_since()`）——「親は起きて周を書いたのに、
+#: サブの台帳が 1行 も増えなかった」区間に、周が何件 在れば穴と呼ぶか。
+#: 1件 では、たまたま書き損じた 1行 と見分けがつきません。
+CHOICES_BLACKOUT_ROUNDS = 3
+
+
+def _choice_times(start: datetime, end: datetime) -> list[datetime]:
+    """`model_choice.jsonl` の刻（`start`〜`end`・昇順）。読めなければ空。"""
+    if not MODEL_CHOICE_FILE.exists():
+        return []
+    out: list[datetime] = []
+    try:
+        lines = MODEL_CHOICE_FILE.read_text(encoding="utf-8").splitlines()
+    except Exception:                                          # noqa: BLE001
+        return []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:                                      # noqa: BLE001
+            continue
+        at = _parse_iso(row.get("at"))
+        if at and start <= at <= end:
+            out.append(at)
+    out.sort()
+    return out
+
+
+def _choices_live_since(start: datetime, end: datetime) -> tuple[datetime, float, int]:
+    """`model_choice.jsonl` が**いちばん最後に穴を閉じた刻**と、その穴の長さ（時間・周の数）。
+
+    ## **【2026-09-20 02:4x】`subs_per_lap` は、穴の上でも平気で比を出していました**
+    ##（optimizer・Opus 5・ultracode・1周 1体・**API 0単位**）
+
+    `_subs_from_choices()` の**覆る条件 (1)** は、こう書いてありました ——
+    「親が `record_model_choice` の `except` に落ちて行が積まれない回が続いたら、
+    この数も過少になります —— **そのときは行の欠けを黙って詰めず、`pace()` の側を見ること**」。
+    **その条件が立ちました。実測（この回・API 0単位）**::
+
+        `data/model_choice.jsonl` の穴 09/18 16:59 → 09/19 18:23 JST  **25.4時間**
+          その間の `rounds.jsonl` …… **35回**（`role=optimizer`・親は起き続けていた）
+          その間の `model_choice` …… ** 1体**
+          その間に枝へ載った commit … **200件**（＝ **サブは働いていました。穴は台帳の側です**）
+
+        台帳ぜんたい（09/03 09:26 → 09/20 02:20・400.9時間）の 3時間 以上 の穴
+                                   …… **合計 77.7時間 ＝ 19%**
+
+    **だから `subs_per_lap` の 0.45体 は、サブが立っていないという意味ではありません。**
+    穴をまたいで「周 29 ÷ サブ 13」を割っただけです。**台帳が書けていた区間だけで数えると**::
+
+        09/19 18:23 JST → いま（8.1時間）   サブ **13体** ／ 周 **13回** ＝ 比 **1.00**
+
+    ＝ **1周に 1体。オーナー 09/14 20:22 の「サブ立てるのは 1体 だけ」と、`next_round.ROLES` と、
+    実測が 3つ とも 一致します。**
+
+    ## **これが `_births_between()` の「撃つ 1つ」の答えです**（02:1x の註の 3手）
+
+    3手 は「分母の単位（起きた回 か 立てたサブ か）を実測で決めること」でした。
+    **決まりました: 単位はずれていません。**`births`（`rounds.jsonl` の周）＝ サブ 1体 で、
+    02:1x が出した「サブ 1体 あたり 約3.4回」は、**25.4時間 の穴を分子に数えただけ**です
+    （穴の中は 周 35 ／ サブ 1 なので、窓に混ぜると比が 3.4倍 に膨らみます）。
+    **`per_lap` の分母も `floor_min` も、動かす理由がありません**（この回は式を 1つ も変えていません）。
+
+    ## それでも `floor` は破られています（別の話・数だけ置きます）
+
+    実測（`model_choice.jsonl` の隣り合う差・穴をまたがない側）: 末尾 **12周 続けて** 床 101.5分 を下回り
+    （直近 3周 は 23.0・24.8・16.6分）、台帳ぜんたいでの最長は **346周 連続**。
+    02:1x の「平均 131分 ＝ 床は破られていません」は **24時間 ÷ 11体** で出した数で、
+    その 24時間 に上の 25.4時間 の穴が入っています ＝ **区間の測り方ではありません。**
+    **`_births_between()` の覆る条件 (3)（「GO から GO が床を 2周 続けて下回ったら分母は壊れている」）は、
+    字の上では立ちました。** ただし**分母は上のとおり壊れていません**ので、
+    **次に来た側が見るのは `decide()` の側**（`passed >= floor` が何と何の差を測っているか）です。
+    **この回はそこを触っていません** —— 触る前に、いまの間隔での着地（`landing()`）が
+    **すべて 100.0%** ＝ 枠をちょうど使い切る側に在ることを読むこと。
+    **速いことは、それ自体では欠陥ではありません**（目標は最短・`docs/GOAL.md`）。
+
+    **覆る条件**: (1) `record_model_choice` が落ちない口になったら（穴が出なくなったら）、
+    この関数は常に `start` を返すだけになります ＝ そのとき消してよい。
+    (2) 親が 1周 に 2体 以上 立てるようになったら、比 1.00 は 1周の体数へ変わります
+    （`next_round.ROLES` と一緒に読むこと）。
+    (3) **穴の理由は読めました。しかも、もう直っています** ——
+    `scripts/next_round.py` の `--record` の枝の註（2026-09-19 18:0x・optimizer・Opus 5）が、
+    **この穴を名指しで書いています**: 「`record_model_choice` は GO を印字する枝の**副作用**で、
+    `--record` の枝は `rounds.jsonl` しか書きません。実測 `model_choice.jsonl` は
+    **09/18 16:59 で止まっています**（26時間・約17周ぶん 欠け）」。
+    18:0x の回が**書く口を `--record` へ移し**、台帳は **09/19 18:23 ＝ その直後の最初の周**から
+    生き返りました（上の「比 1.00」の区間の頭が、まさにその刻です）。
+    **＝ 穴は過去の傷で、いま開いている穴ではありません。**
+
+    **それでも この関数を残す理由**（消さないこと）: 台帳は**過去の穴を持ったまま**なので、
+    窓が 09/19 18:23 JST をまたぐかぎり、比は穴の上で割られ続けます。
+    **02:1x の周が「サブ 1体 あたり 約3.4回 ＝ 分母の単位がずれている」と書いたのは、
+    書き口が直った 8時間 後**で、**直ったこと自体には気づいていました**（同じ枝を読んでいる）。
+    気づけなかったのは「**直っても、台帳に開いた穴は消えない**」ほうです。
+    **この形は次も来ます** —— 書き口を直した回と、その台帳で数える回は別の周なので、
+    **直した側は『いつから信じてよいか』を数で残すこと。** それがこの関数です。
+
+    ## **いま死んだ台帳は、これでも捕まります**（門を鈍らせていないこと）
+
+    **穴の右の縁でしか窓を動かしません。** だから台帳が**これから**止まったら、
+    その区間には縁（次のサブの行）が無く、窓は動きません ＝ `births_diag` だけが増えて
+    `subs_per_lap` が 1.00 を割り、`tests/test_quota_fable_cost_per_sub.py` が**赤に戻ります。**
+    ＝ **過去の穴には騙されず、いまの穴は捕まえる**、という向きです。
+    **この検査が赤くなったら、門を下げずに 2つ を読むこと**:
+    (a) 台帳がいま書けているか（`model_choice.jsonl` の最後の行の刻 対 `rounds.jsonl` の最後の行）、
+    (b) 1周に立てる体数が変わっていないか（`next_round.ROLES`）。
+    """
+    subs = _choice_times(start, end)
+    live, gap_h, gap_rounds = start, 0.0, 0
+    # **窓の頭そのものが穴の中に在ることが在ります**（この回が踏んだ ＝ 枠の頭 09/19 07:00 JST は
+    # 25.4時間 の穴の内側で、隣り合う差だけを見ると穴が 1つ も見えませんでした）。
+    # だから「窓の頭 → 最初のサブ」も 1つ の区間として数えます。
+    pts = [start] + subs
+    for a, b in zip(pts, pts[1:]):
+        n = _laps_between(a, b)
+        if n >= CHOICES_BLACKOUT_ROUNDS:
+            live, gap_h, gap_rounds = b, (b - a).total_seconds() / 3600, n
+    return live, gap_h, gap_rounds
+
+
 def _subs_from_choices(start: datetime, end: datetime,
                        model: str | None = None) -> int:
     """`start`〜`end` に**親が立てたサブの数**（`data/model_choice.jsonl` の行数）。
@@ -1360,6 +1491,9 @@ def _subs_from_choices(start: datetime, end: datetime,
     **覆る条件**: (1) 親が `record_model_choice` の `except` に落ちて行が積まれない回が
     続いたら（`margin_series()` の覆る条件 (1) と同じ症状）、この数も過少になります ——
     そのときは行の欠けを黙って詰めず、`pace()` の側を見ること。
+    **【2026-09-20 02:4x】この (1) が立ちました** —— 穴 25.4時間・周 35／サブ 1。
+    書いてあるとおり**行の欠けは詰めていません**。`pace()` の側を直しました
+    （比の窓を、台帳が書けていた区間まで切り戻す ＝ `_choices_live_since()` の註が正本）。
     (2) この台帳は**立てる直前**に書くので、親が印字だけして立てなかった周があると
     **過大**に数えます（過大 ＝ 1体ぶんの費用を小さく見る ＝ 切り替えが遅い側）。
     周ごとに 2行 を越えない事は `next_round.ROLES` が決めているので、
@@ -2821,7 +2955,10 @@ def pace(now: datetime | None = None) -> dict | None:
     # **覆る条件**: 枠の頭からまだ 1周も立っていない刻（リセット直後の 1周ぶん）は、
     # それでも None です ＝ そこも埋めるなら、窓を「直近 24時間」の固定にすること
     # （**そのときは枠の窓と別物になる**ので、印字にそう書くこと）。
-    subs_lap_from, subs_lap_to = start, max(at, now)
+    subs_lap_to = max(at, now)
+    # **穴の上で比を割らないこと**（`_choices_live_since()` の註・2026-09-20 02:4x）——
+    # 台帳が 25.4時間 書けていなかった区間をまたぐと、比は 1.00 → 0.45 へ潰れます。
+    subs_lap_from, subs_blackout_h, subs_blackout_laps = _choices_live_since(start, subs_lap_to)
     subs_diag = _subs_from_choices(subs_lap_from, subs_lap_to)
     births_diag = _births_between(rows, subs_lap_from, subs_lap_to)
 
@@ -3072,6 +3209,8 @@ def pace(now: datetime | None = None) -> dict | None:
         "hours": hours, "births": births, "subs": subs,
         "subs_per_lap": (subs_diag / births_diag) if births_diag else None,
         "subs_diag": subs_diag, "births_diag": births_diag,
+        "subs_window_from": subs_lap_from,
+        "subs_blackout_h": subs_blackout_h, "subs_blackout_laps": subs_blackout_laps,
         "rate": rate, "per_lap": per_lap, "per_lap_cum": per_lap_cum,
         "seg": seg, "seg_weight": weight,
         "reset_at": reset_at, "reset_from": reset_from,
@@ -3384,6 +3523,16 @@ def pace_report(now: datetime | None = None) -> None:
                  f"**サブを分母にすると {p['subs_per_lap']:.1f}倍 速い側へ倒れます**）"
                  f"／床の分母は目盛りまでの 周 {p['births']}件"
                  if p.get("subs_per_lap") else ""))
+        # **穴を黙って詰めないこと**（`_choices_live_since()` の註・2026-09-20 02:4x）——
+        # 比の窓は「台帳が書けていた区間」まで切り戻してあります。切った分をここに出さないと、
+        # 読む側には **1.00体 と 0.45体 の区別がつきません**（どちらも同じ字で出る）。
+        if p.get("subs_blackout_h"):
+            print(f"      [!] **サブの台帳（`model_choice.jsonl`）に穴が在ります** —— "
+                  f"この枠の中で **{p['subs_blackout_h']:.1f}時間**・そのあいだに 周 "
+                  f"**{p['subs_blackout_laps']}件**（親は起きていた・サブの行は増えていない）。"
+                  f"上の比は穴の**後ろ**（{p['subs_window_from'].astimezone(JST):%m/%d %H:%M} JST 以降）"
+                  f"だけで数えています ＝ **穴をまたいで割ると 1.00体 が 0.45体 に潰れます**"
+                  f"（`_choices_live_since()` の註・実測 09/18 16:59→09/19 18:23 JST の 25.4時間）")
         if p.get("floor_clipped") == "max" and p.get("floor_raw"):
             print(f"      [!] **これは測った数ではありません** —— 測って出たのは "
                   f"**{p['floor_raw']:.0f}分**（{p['floor_raw'] / 60:.1f}時間）で、"

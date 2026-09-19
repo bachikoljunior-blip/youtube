@@ -2941,10 +2941,13 @@ def cmd_demand(a):
     """
     seeds = [s for s in (a.seeds or "").split(",") if s.strip()] or list(demand.SEEDS)
     tails = demand.TAILS[:a.tails] if a.tails else demand.TAILS
-    hits = demand.harvest(seeds, tails=tails)
+    stats: dict = {}
+    hits = demand.harvest(seeds, tails=tails, workers=(a.workers or None), stats=stats)
     ranked = demand.score(hits)
     gap = demand.gaps(ranked, demand.covered(ledger_rows()), top=a.top)
-    row = demand.record(seeds, ranked, gap, pulls=len(seeds) * len(tails))
+    # **予定した数ではなく、本当に引けた数を台帳へ**（`demand.record` の註）。
+    row = demand.record(seeds, ranked, gap,
+                        pulls=stats.get("ok", len(seeds) * len(tails)), stats=stats)
     for line in demand.lines(row):
         print(line)
     return 0
@@ -3594,6 +3597,8 @@ def main(argv=None):
                     help=f"この1回で使ってよい単位の蓋（既定 {peers.DEEP_MAX_UNITS}）")
     de = sub.add_parser("demand"); de.add_argument("--seeds", default="")
     de.add_argument("--tails", type=int, default=0); de.add_argument("--top", type=int, default=60)
+    de.add_argument("--workers", type=int, default=0,
+                    help=f"同時に引く数（既定 {demand.WORKERS}・1 なら直列）")
     rpt = sub.add_parser("reporting"); rpt.add_argument("--setup", action="store_true")
     rp = sub.add_parser("reply"); rp.add_argument("comment_id"); rp.add_argument("--text", required=True)
     rp.add_argument("--dry-run", action="store_true")
