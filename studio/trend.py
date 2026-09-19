@@ -8100,6 +8100,36 @@ def videos_by_form(rows: list[dict], scripts_dir: "Path | None" = None) -> dict[
 #      A にも B にも寄らない日が出たら、次は**同じ刻に 2本**を 1日 だけ置いて分けること。
 #  (4) 齢の門は `SPREAD_MIN_AGE_H`〜`SPREAD_MAX_AGE_H`。**その窓の外の測りは読みません**
 #      （出したその周の 0回 と、1週間 後の尾を同じ表に入れない）。
+#
+# **【2026-09-19 19:xx・optimizer・Opus 5・ultracode】この関数は、上の註が使っている
+#   「刻の順」を、返り値では捨てていました。**
+#   上の実測の行は **「10:00 **1191** ／ 12:00 **1** ／ 19:00 2 ／ 21:00 0」** と、
+#   **出した順**で書いてあります。ところが `same_day_spread` は `sorted(byday[day])` で
+#   **再生の小さい順に並べ替えて**返すので、**何本目 が何回だったかは 1つ も残りません**。
+#   ＝ **この repo でいちばん多い壊れ方（言っている所と、している所が別）** の、また 1例 です。
+#
+#   **捨てていたのは飾りではありません。** いま 4つ の覆る条件が、この順の数を名指しで要求します:
+#       `studio/budget.py` 覆る条件 (6)   「**6本目** の 24h 中央が、同じ日の 1〜5本目 の中央の 半分 未満なら」
+#       `cli.SHORT_SLOTS` の註 09/19 12:xx  同じ (6)（21:00 の刻を疑うか 5本 に戻すか）
+#       METHOD §38 覆る条件 (1)            「**21:00 の本**の 24h 中央が …… 半分 未満なら」
+#       METHOD §38 覆る条件 (2)            「**15年 の 24h 中央だけ**が 他の 5本 の 半分 未満なら」
+#   **どれも「最後に出した 1本 対 その前の中央」という同じ比**で、それを出す口が 1つ もありませんでした
+#   （`same_day_spread` は中央と最大しか返さない ＝ **最大が何本目かを言わない**）。
+#   ＝ 読む側は、覆る条件に当たったかどうかを**目で mp4 を見るのと同じやり方**でしか決められません。
+#
+#   **足したのは 2つ だけ**（門は 1か所・**新しい関数は作りません**）:
+#       `by_slot`     出した順の `[{"at": "HH:MM", "views": n}]`
+#       `last_ratio`  **最後に出した 1本 ÷ その前の中央**（n が 2本 未満なら None）
+#   **判定はしません**（§5 ＝ 判定は立ったサブ）。`same_day_spread_line` は順と比を印字するだけです。
+#
+#   **覆る条件（数ではなく関係で書くこと ＝ METHOD §5 決め (7)）**:
+#    (5) **`SHORT_SLOTS` の最後の刻が変わったら**、`last_ratio` が見ているのは
+#        「その日にいちばん遅く出した本」であって「21:00 の本」ではありません
+#        ＝ 刻で読みたい回は `by_slot` の `at` で選ぶこと（`last_ratio` は順の側の数）。
+#    (6) **その日に `schedule --force` で刻の外へ置いた本が在ったら**、`by_slot` の最後は
+#        枠の本ではありません ＝ 比の分子が「枠が薄いか」を測っていない ＝ `at` を見ること。
+#    (7) `last_ratio` が **半分 未満 の日が、刻を動かしても 2日 続けて出たら**、
+#        薄いのは枠ではなく**その日の最後に回している本の中身**です（§38 覆る条件 (2) の側）。
 # ---------------------------------------------------------------------------
 
 #: 同じ日の本を読むための齢の窓（24h の判定）。
@@ -8112,6 +8142,9 @@ SPREAD_A_MEDIAN = 20
 SPREAD_A_TOP = 100
 #: 読み B の門（最大 ÷ 中央 がこれ未満）。
 SPREAD_B_RATIO = 3.0
+#: **最後に出した 1本 ÷ その前の中央** の門（`budget` 覆る条件 (6)・METHOD §38 (1)(2) の「半分」）。
+#: **門は 1か所** —— あちら 3つ は言葉で「半分」と書いてあるだけで、数を持っていません。
+SPREAD_TAIL_HALF = 0.5
 
 
 def same_day_spread(rows: list[dict], form: str = "short",
@@ -8130,26 +8163,36 @@ def same_day_spread(rows: list[dict], form: str = "short",
         age = float(r.get("age_h") or 0)
         if SPREAD_MIN_AGE_H <= age <= SPREAD_MAX_AGE_H:
             seen[r["id"]] = int(r.get("views") or 0)
-    byday: dict[str, list[int]] = {}
+    byday: dict[str, list[tuple[str, int]]] = {}
     for vid, n in seen.items():
-        day = (vids[vid].get("publish_at") or "")[:10]
+        at = vids[vid].get("publish_at") or ""
+        day = at[:10]
         if day:
-            byday.setdefault(day, []).append(n)
+            byday.setdefault(day, []).append((at, n))
     out = []
     for day in sorted(byday):
-        vs = sorted(byday[day])
+        # **出した順**（`by_slot`）と、**再生の小さい順**（`views`）の 2つ を持ちます。
+        # 前者が無いと、4つ の覆る条件（上の註）が「何本目 か」を訊けません。
+        slots = sorted(byday[day])
+        vs = sorted(n for _, n in slots)
         if len(vs) < SPREAD_MIN_N:
             continue
-        mid = (float(vs[len(vs) // 2]) if len(vs) % 2
-               else (vs[len(vs) // 2 - 1] + vs[len(vs) // 2]) / 2.0)
+        mid = _median(vs)
         top = vs[-1]
         verdict = None
         if mid < SPREAD_A_MEDIAN and top >= SPREAD_A_TOP:
             verdict = "A"
         elif top / max(mid, 1.0) < SPREAD_B_RATIO:
             verdict = "B"
+        by_slot = [{"at": at[11:16] or at, "views": n} for at, n in slots]
+        head_mid = _median([n for _, n in slots[:-1]]) if len(slots) > 1 else None
         out.append({"day": day, "views": vs, "n": len(vs),
-                    "median": mid, "top": top, "verdict": verdict})
+                    "median": mid, "top": top, "verdict": verdict,
+                    "by_slot": by_slot,
+                    "head_median": head_mid,
+                    "last_views": slots[-1][1],
+                    "last_ratio": (None if head_mid is None
+                                   else slots[-1][1] / max(head_mid, 1.0))})
     return out
 
 
@@ -8172,7 +8215,28 @@ def same_day_spread_line(rows: list[dict], form: str = "short",
     return (head + f"直近は **{d['day'][5:]} {d['n']}本** ＝ "
             + "／".join(f"{v:,}" for v in d["views"])
             + f"（中央 {d['median']:,.0f}回・最大 {d['top']:,}回）＝ {say}{rest}。"
-            "**判定は立ったサブ（いま 1体）**")
+            "**判定は立ったサブ（いま 1体）**\n      " + _spread_order_line(d))
+
+
+def _spread_order_line(d: dict) -> str:
+    """**出した順**と「最後の 1本 ÷ その前の中央」（`same_day_spread` の註 09/19 19:xx）。
+
+    **この行は判定しません** —— `budget` 覆る条件 (6)・`cli.SHORT_SLOTS` の註・
+    METHOD §38 覆る条件 (1)(2) が名指しで訊いている数を、**訊けるように印字するだけ**です。
+    **数ではなく関係で読むこと**（METHOD §5 決め (7)）: 門は「その前の中央の半分」で、
+    半分は `SPREAD_TAIL_HALF` の 1か所にしかありません。
+    """
+    order = "・".join(f"{x['at']} {x['views']:,}" for x in d["by_slot"])
+    if d.get("last_ratio") is None:
+        return f"**出した順**: {order}"
+    r = d["last_ratio"]
+    last = d["by_slot"][-1]
+    mark = ("**その前の中央の半分 未満** ＝ 覆る条件（`budget` (6)・METHOD §38 (1)(2)）**に当たりました**"
+            if r < SPREAD_TAIL_HALF else
+            f"その前の中央の **{r:.2f}倍** ＝ 半分（{SPREAD_TAIL_HALF}）**を割っていません**")
+    return (f"**出した順**: {order} ＝ **最後の 1本**（{last['at']} {last['views']:,}回）は "
+            f"{mark}（その前 {d['n'] - 1}本 の中央 {d['head_median']:,.0f}回）。"
+            "**1日 で決めないこと**（`budget` 覆る条件 (6) の字）")
 
 
 def form_yield(rows: list[dict], scripts_dir: "Path | None" = None) -> dict:
