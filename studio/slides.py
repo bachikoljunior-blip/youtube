@@ -487,6 +487,11 @@ def slide_frames(show: str, sub: str, say: str, i: int, n: int, image: Path | No
         ovs = ([ov for ov, _t in V.frames_cued(viz_spec, seconds, (w, h), plan)]
                if viz_spec else [None] * len(plan))
         lits = [(a, b) for _d, _p, a, b in plan]
+        if len(set(lits)) <= 1:
+            # **光りが動かないコマは光らせません**（句が 1つ しか無い `say`）——
+            # 全部が黄色い字幕は「いま言っている所」を 1つ も指さず、白 1色 より読みにくいだけです。
+            # 図は動くので、刻み自体は残します（2026-09-19 13:2x）。
+            lits = [None] * len(plan)
     out = []
     for k, ((dt, _pr, _a, _b), ov, lit) in enumerate(zip(plan, ovs, lits)):
         last = k == len(plan) - 1
