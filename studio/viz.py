@@ -49,7 +49,7 @@ from PIL import Image, ImageDraw, ImageFont
 FONT_BOLD = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 FONT_BLACK = "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc"
 
-KINDS = ("bars", "waterfall", "table")
+KINDS = ("bars", "waterfall", "table", "lines")
 FPS = 12                 # 動く刻（1秒 12枚。ffmpeg は 30fps に伸ばす）
 MAX_ITEMS = 6            # 棒・行の数の上限（縦 480px に 7行 は入らない）
 MAX_LABEL = 14           # 札の字数（板の 1行 と同じ）
@@ -133,6 +133,37 @@ def check(spec: dict, where: str = "") -> list[str]:
             want = float(spec["end"]["value"])
             if abs(got - want) > 0.5:
                 out.append(f"{pre} start − steps ＝ {fmt_num(got)} で end の {fmt_num(want)} と合わない")
+    elif kind == "lines":
+        xs = spec.get("x") or {}
+        ser = spec.get("series") or []
+        if len(ser) != 2:
+            out.append(f"{pre} series は 2本（いま {len(ser)}）")
+        for sr in ser:
+            labels.append(str(sr.get("label", "")))
+            for key in ("at", "per_month"):
+                if key not in sr:
+                    out.append(f"{pre} 「{sr.get('label')}」に {key} が無い")
+        if "from" not in xs or "to" not in xs:
+            out.append(f"{pre} x に from / to（横の齢の端）が無い")
+        if not out:
+            x0v, x1v = float(xs["from"]), float(xs["to"])
+            xu = str(xs.get("unit", "歳"))
+            if x1v <= x0v:
+                out.append(f"{pre} x の from {x0v} が to {x1v} 以上")
+            cx = _cross_x(ser[0], ser[1])
+            if cx is None:
+                out.append(f"{pre} 2本 の per_month が同じ ＝ 追い越しません")
+            elif not (x0v < cx < x1v):
+                out.append(f"{pre} 追い越すのは {_age_text(cx, xu)} で、x の {x0v}〜{x1v} の外")
+            else:
+                want = str((spec.get("cross") or {}).get("at", "") or "").strip()
+                got = _age_text(cx, xu)
+                if not want:
+                    out.append(f"{pre} cross.at が無い（追い越す齢の字。計算では {got}）")
+                elif want != got:
+                    out.append(f"{pre} cross.at「{want}」は計算では {got}")
+                else:
+                    labels.append(want)
     elif kind == "table":
         rows = spec.get("rows") or []
         head = spec.get("head") or []
@@ -176,6 +207,14 @@ def describe(spec: dict) -> str:
         parts += [f"− {s.get('label', '')} {fmt_num(abs(float(s.get('value', 0))), unit)}" for s in spec.get("steps", [])]
         parts.append(f"＝ {en.get('label', '')} {_text(en, unit)}")
         return f"引き算の棒（引く分が赤く切れる）{t}" + " ".join(parts)
+    if kind == "lines":
+        xs = spec.get("x") or {}
+        xu = str(xs.get("unit", "歳"))
+        parts = [f"{sr.get('label', '')}（{_age_text(float(sr.get('at', 0) or 0), xu)}から毎月"
+                 f"{fmt_num(float(sr.get('per_month', 0) or 0), unit)}）" for sr in (spec.get("series") or [])]
+        cr = str((spec.get("cross") or {}).get("at", "") or "")
+        return (f"折れ線（合計が右へのびて交わる）{t}" + " ／ ".join(parts)
+                + (f" → 合計が並ぶのは {cr}" if cr else ""))
     if kind == "table":
         head = spec.get("head") or []
         rows = [" | ".join(map(str, r)) for r in spec.get("rows", [])]
@@ -378,7 +417,144 @@ def _draw_table(d, spec, W, H, p, unit, pad):
         y += row_h
 
 
-_DRAW = {"bars": _draw_bars, "waterfall": _draw_waterfall, "table": _draw_table}
+# ---------------------------------------------------------------- 折れ線（累計の追い越し・2026-09-19 13:3x）
+# オーナー `9155fe09`「ナレーションとアニメーションの表現をリンクさせたりしないとわかりやすくなんない
+# でしょ？**画面がある意味が文字だけになってんのどうにかしろよ**」——
+# 前半（声に合わせる）は `frames_cued` が受けました。**ここは後半です。**
+#
+# 実測（2026-09-19 13:2x・在庫 42本 の台本を数えた）: 図 302 のうち **`table` が 173 ＝ 57%**。
+# `table` は**字を並べた絵**なので、画面は字のままです。いちばん重いのが 繰り上げ受給 の本で、
+# 山場（「いつ追いつかれるか」）が **4行 の字の表**、その次のコマが **4列×5行 の字の表**でした。
+# ところが、その山場で声が言っているのは
+#   「先の325万4400円を1万4400円で割ると、差がゼロになる226か月」
+#   「65歳から18年10か月あとは83歳10か月。**ここで合計が同じになります**」
+# ＝ **2本 の累計がのびて交わる**という、字では運べない形です。
+#
+# **これは冒頭の覆る条件 (2) が名指しで待っていた 4つ目 の形**です
+# （「例: 齢 → 額 の折れ線・『何歳で元が取れるか』」）。覆る条件 (3)（オーナーが画面の動きに
+# 言葉を出したら、その言葉が正本）が、それを引きました。
+#
+# 形は**累計の追い越しに絞ります**（一般の折れ線にしない）:
+#   series は 2本・それぞれ「`at` の齢から毎月 `per_month` ずつ」。縦は合計、横は齢。
+#   交わる齢は**この機械が解きます** —— 台本は答え（`cross.at`）だけ書き、`check` が計算と照らします
+#   （`waterfall` の「start − steps ＝ end」と同じ、**本物の算数の門**）。
+# **一般の折れ線（好きな点の列）は、まだ作りません。**
+# 覆る条件 (4): 累計の追い越しに収まらない折れ線が要る本が 2本 出たら、`points` の形を足すこと。
+# 覆る条件 (5): この形を入れた本 3本 の維持率が、字の表のままの本 3本 を下回ったら、字の表へ戻すこと。
+
+
+def _age_text(x: float, unit: str = "歳") -> str:
+    """83.8333… → 「83歳10か月」。月は四捨五入（1か月 ＝ 0.0833年）。"""
+    y = int(math.floor(x + 1e-9))
+    m = int(round((x - y) * 12))
+    if m >= 12:
+        y, m = y + 1, 0
+    return f"{y}{unit}" + (f"{m}か月" if m else "")
+
+
+def _cross_x(a: dict, b: dict) -> float | None:
+    """2本 の累計（`at` から毎月 `per_month`）が同じ額になる齢。平行なら None。
+
+    ra(x − aa) ＝ rb(x − ab)  →  x ＝ (ra·aa − rb·ab) / (ra − rb)   （「毎月」の 12 は消える）
+    """
+    ra, rb = float(a.get("per_month", 0) or 0), float(b.get("per_month", 0) or 0)
+    aa, ab = float(a.get("at", 0) or 0), float(b.get("at", 0) or 0)
+    if abs(ra - rb) < 1e-9:
+        return None
+    return (ra * aa - rb * ab) / (ra - rb)
+
+
+def _draw_lines(d, spec, W, H, p, unit, pad):
+    top = _title(d, spec, W, pad) if H >= 360 else pad
+    xs = spec.get("x") or {}
+    xu = str(xs.get("unit", "歳"))
+    ser = list(spec.get("series") or [])
+    n = len(ser) + 1
+    x0v, x1v = float(xs.get("from", 0)), float(xs.get("to", 1))
+    if x1v <= x0v:
+        x1v = x0v + 1
+    fsz = max(22, min(34, int((H - top) * 0.10)))
+    lf = _font(FONT_BOLD, fsz)
+    cols = [COLORS.get(s.get("color", ""), (ORANGE, BLUE)[k % 2]) for k, s in enumerate(ser)]
+
+    # 凡例（色の棒 ＋ 札）を 1行。**線の札は線の横に置きません** —— 右の端では 2本 が近く、字が重なります。
+    sw = fsz - 4
+    x = pad
+    for k, s in enumerate(ser):
+        d.rounded_rectangle([x, top + fsz // 3, x + sw, top + fsz // 3 + sw // 3], radius=3, fill=cols[k])
+        lb = str(s.get("label", ""))
+        d.text((x + sw + 8, top), lb, font=lf, fill=cols[k], stroke_width=2, stroke_fill=(0, 0, 0))
+        x += sw + 8 + d.textbbox((0, 0), lb, font=lf)[2] + 24
+
+    plot_top = top + int(fsz * 1.55)
+    base = H - pad - int(fsz * 1.35)
+    if base - plot_top < 70:                      # 箱が低いコマでは凡例の下を詰める
+        plot_top = top + int(fsz * 1.15)
+    px0, px1 = pad + 6, W - pad - 6
+    maxv = max([float(s.get("per_month", 0) or 0) * (x1v - float(s.get("at", 0) or 0)) for s in ser] + [1.0])
+
+    def PX(v: float) -> float:
+        return px0 + (v - x0v) / (x1v - x0v) * (px1 - px0)
+
+    def PY(v: float) -> float:
+        return base - (v / maxv) * (base - plot_top)
+
+    d.line([(px0, base), (px1, base)], fill=(255, 255, 255, 110), width=3)
+
+    prc = _slot(len(ser), n, p)
+    cx = _cross_x(ser[0], ser[1]) if len(ser) == 2 else None
+    inside = cx is not None and x0v <= cx <= x1v
+
+    def _val(sr: dict, xv: float) -> float:
+        a = float(sr.get("at", 0) or 0)
+        return float(sr.get("per_month", 0) or 0) * max(0.0, xv - a)
+
+    # **2本 のあいだを塗る（線より先に）。** 線だけだと 2本 はほとんど平行に見えます ——
+    # 差は合計の 2〜7% で、7px の線の太さと同じくらいしかありません（実物で見た・2026-09-19 13:3x）。
+    # 塗ると「**どちらが前に出ているか**」が面になり、**交わる所で面が 0 に潰れます**。
+    # 潰れる瞬間が、声の「ここで合計が同じになります」と同じ刻に来ます ＝ 字では運べない形。
+    if prc > 0 and inside:
+        e = _ease(prc)
+        mid = (x0v + cx) / 2                      # **前に出ている側は数えます**（series の並び順に頼らない）
+        left = 0 if _val(ser[0], mid) >= _val(ser[1], mid) else 1
+        for lo, hi, who in ((x0v, cx, left), (cx, x1v, 1 - left)):
+            xs_pts = [lo + (hi - lo) * j / 24 for j in range(25)]
+            poly = ([(PX(v), PY(_val(ser[who], v))) for v in xs_pts]
+                    + [(PX(v), PY(_val(ser[1 - who], v))) for v in reversed(xs_pts)])
+            d.polygon(poly, fill=cols[who] + (int(135 * e),))
+
+    for k, s in enumerate(ser):
+        pr = _ease(_slot(k, n, p))
+        if pr <= 0:
+            continue
+        a = float(s.get("at", x0v) or 0)
+        r = float(s.get("per_month", 0) or 0)
+        xe = a + (x1v - a) * pr
+        d.line([(PX(a), PY(0)), (PX(xe), PY(r * (xe - a)))], fill=cols[k], width=7)
+        d.ellipse([PX(a) - 7, PY(0) - 7, PX(a) + 7, PY(0) + 7], fill=cols[k])
+
+    if prc > 0 and inside:
+        e = _ease(prc)
+        a0 = float(ser[0].get("at", 0) or 0)
+        r0 = float(ser[0].get("per_month", 0) or 0)
+        cyy = PY(r0 * (cx - a0))
+        alpha = int(220 * e)
+        yy = base                                  # 軸から交わる所まで、点線で立てる
+        while yy > cyy:
+            d.line([(PX(cx), yy), (PX(cx), max(cyy, yy - 11))], fill=(255, 225, 120, alpha), width=3)
+            yy -= 22
+        rad = int(10 + 9 * (1 - e))                # 大きい輪が縮んで点に止まる
+        d.ellipse([PX(cx) - rad, cyy - rad, PX(cx) + rad, cyy + rad],
+                  outline=YELLOW, width=4, fill=(255, 225, 120, int(130 * e)))
+        txt = str((spec.get("cross") or {}).get("at", "") or "")
+        if txt:
+            vf = _font(FONT_BLACK, fsz + 4)
+            right = PX(cx) > (px0 + px1) / 2
+            d.text((PX(cx) + (-14 if right else 14), base + 2), txt, font=vf, fill=YELLOW,
+                   anchor="ra" if right else "la", stroke_width=3, stroke_fill=(0, 0, 0))
+
+
+_DRAW = {"bars": _draw_bars, "waterfall": _draw_waterfall, "table": _draw_table, "lines": _draw_lines}
 
 
 def draw(spec: dict, size: tuple[int, int], progress: float = 1.0) -> Image.Image:
@@ -431,6 +607,8 @@ def steps(spec: dict) -> int:
         return 2 + len(spec.get("steps") or [])
     if kind == "table":
         return len(spec.get("rows") or [])
+    if kind == "lines":
+        return len(spec.get("series") or []) + 1      # 線 1本 ずつ → 最後に交わる所
     return 1
 
 
@@ -464,6 +642,17 @@ def step_keys(spec: dict) -> list[list[str]]:
         return ([_keys_of(spec["start"], unit)]
                 + [_keys_of(s, unit) for s in (spec.get("steps") or [])]
                 + [_keys_of(spec["end"], unit)])
+    if kind == "lines":
+        # **齢（札）が先**。横の軸が齢なので、声の「65歳から」が線を、「83歳10か月」が交わる所を指します。
+        out = []
+        for sr in (spec.get("series") or []):
+            k = [str(sr.get("label", "") or ""), str(sr.get("text", "") or "")]
+            if "per_month" in sr:
+                k.append(fmt_num(float(sr["per_month"] or 0), unit))
+            out.append([x for x in k if x])
+        cr = spec.get("cross") or {}
+        out.append([x for x in (str(cr.get("at", "") or ""), str(cr.get("text", "") or "")) if x])
+        return out
     if kind == "table":
         out = []
         for r in (spec.get("rows") or []):

@@ -212,7 +212,21 @@ def result_seg(f: dict) -> dict:
         sub=f"65歳から{f['even_y']}年{f['even_mo']}か月あとは{f['even_age']}歳{f['even_mo']}か月 "
             f"そこまで生きると受け取った合計は同じになる",
         board=["65歳から", f"{f['even_y']}年{f['even_mo']}か月あと", f"＝ {f['even_age']}歳{f['even_mo']}か月",
-               "そこで合計が同じ"])
+               "そこで合計が同じ"],
+        # **このコマは 09/19 13:3x まで画面が字だけでした**（`show` と `board` だけ・`viz` が無い）——
+        # オーナー `9155fe09`「**画面がある意味が文字だけになってんのどうにかしろよ**」。
+        # ここは連作の山場（「合計が同じになる」）で、言っているのは **2本 の合計が交わる**こと ＝
+        # 表でも棒でも引き算でも運べません。`viz.KINDS` の 4つ目（`lines`）を足して、ここに入れました
+        # （`viz.py` 冒頭の覆る条件 (2) が名指しで待っていた形・(3) がそれを引いた）。
+        # **声とのつなぎ**: 「65歳から」で青が伸び、「{even_age}歳{even_mo}か月」で交わる所が光ります
+        # （`viz.step_keys` → `narration.cue_windows`。台本の字は 1字 も足していません ＝ 字数の門は動きません）。
+        # **答えは機械が解きます** —— `viz.check` が `cross.at` を自分の計算と照らすので、
+        # ここの字と `figures()` の数がずれたら `build` が止まります（`waterfall` の start−steps＝end と同じ門）。
+        viz={"kind": "lines", "title": "合計が並ぶのはいつか", "unit": "円",
+             "x": {"unit": "歳", "from": f["age"], "to": 90},
+             "series": [{"label": f"{f['age']}歳から", "at": f["age"], "per_month": f["amt"], "color": "orange"},
+                        {"label": "65歳から", "at": 65, "per_month": P, "color": "blue"}],
+             "cross": {"at": f"{f['even_age']}歳{f['even_mo']}か月"}})
 
 
 #: **コマ8（しくみ）の表は 5本 で同じ**（この連作の背骨そのもの ＝ どの本から入っても全体が見える）。

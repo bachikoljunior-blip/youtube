@@ -107,3 +107,87 @@ def test_動くコマは数枚になり最後の名は静止画と同じ(tmp_pat
     fr2 = slides.slide_frames("所得 70万円", "", "計算すると。", 3, 10, None, tmp_path / "l", 6.0, TBL, form="long") \
         if (tmp_path / "l").mkdir() is None else None
     assert fr2 and Image.open(fr2[-1][0]).size == (1920, 1080)
+
+
+# ---------------------------------------------------------------- 折れ線（2026-09-19 13:3x）
+# オーナー `9155fe09`「ナレーションとアニメーションの表現をリンクさせたりしないとわかりやすく
+# なんないでしょ？**画面がある意味が文字だけになってんのどうにかしろよ**」——
+# 在庫 42本 で図 302 のうち `table` が 173（57%）＝ **画面の半分以上が字を並べた絵**でした。
+# `lines` は `viz.py` 冒頭の覆る条件 (2) が名指しで待っていた 4つ目 の形です。
+
+LINES = {"kind": "lines", "title": "合計が並ぶのはいつか", "unit": "円",
+         "x": {"unit": "歳", "from": 63, "to": 90},
+         "series": [{"label": "63歳から", "at": 63, "per_month": 135600, "color": "orange"},
+                    {"label": "65歳から", "at": 65, "per_month": 150000, "color": "blue"}],
+         "cross": {"at": "83歳10か月"}}
+
+
+def test_折れ線は通り交わる齢を自分で解く():
+    assert viz.check(LINES) == []
+    assert "83歳10か月" in viz.describe(LINES)
+    assert abs(viz._cross_x(LINES["series"][0], LINES["series"][1]) - (65 + 226 / 12)) < 1e-6
+
+
+def test_交わる齢が台本と合わなければ止める():
+    """**本物の算数の門**（`waterfall` の start − steps ＝ end と同じ族）。
+    ここが緩むと、声の言う齢と画面の点が別の所を指したまま焼けます。"""
+    bad = {**LINES, "cross": {"at": "84歳10か月"}}
+    assert any("計算では 83歳10か月" in m for m in viz.check(bad))
+    assert any("cross.at が無い" in m for m in viz.check({**LINES, "cross": {}}))
+    # 交わる所が横の端の外（＝ 画面に出ない）のも止める
+    assert any("外" in m for m in viz.check({**LINES, "x": {"unit": "歳", "from": 63, "to": 70}}))
+    # 同じ額なら追い越しません
+    flat = {**LINES, "series": [dict(LINES["series"][0]), {**LINES["series"][1], "per_month": 135600}]}
+    assert any("追い越しません" in m for m in viz.check(flat))
+
+
+def test_歩は線の数ぷらす交わる所で手がかりは齢が先():
+    assert viz.steps(LINES) == 3 == len(viz.step_keys(LINES))
+    keys = viz.step_keys(LINES)
+    assert keys[0][0] == "63歳から" and keys[1][0] == "65歳から"
+    assert keys[2] == ["83歳10か月"]
+
+
+def test_交わる所は最後の歩でだけ現れる():
+    """**声が齢を言うまで、答えの点を出さないこと。** ここが崩れると、
+    `frames_cued` が刻んでも「先に答えが出ている」絵に戻ります。"""
+    size = (900, 460)
+    two = viz.draw(LINES, size, 2 / 3 - 1e-6)     # 線 2本 まで
+    one = viz.draw(LINES, size, 1 / 3 - 1e-6)     # 線 1本 だけ
+    full = viz.draw(LINES, size, 1.0)
+    assert list(one.getdata()) != list(two.getdata()) != list(full.getdata())
+
+    # 交わる所（点・点線・齢の字）は**黄**。線は橙(220,150,40)と青なので、緑で分かれます。
+    # 箱の背景まで数えないよう、色で拾うこと（帯で数えると黒い箱が 4万画素 入ります）。
+    def marker(im):
+        return sum(1 for p in im.getdata()
+                   if p[3] > 60 and p[0] > 230 and p[1] > 195 and p[2] < 190)
+
+    assert marker(one) == marker(two) == 0 < marker(full)
+
+
+def test_前に出ている側は並び順ではなく数で決まる():
+    """`series` を逆に書いても、塗りの色は**先に受け取っている側**のまま。"""
+    size = (900, 460)
+    a = viz.draw(LINES, size, 1.0)
+    rev = {**LINES, "series": [LINES["series"][1], LINES["series"][0]]}
+    b = viz.draw(rev, size, 1.0)
+
+    # 交わる所より左の塗りは、どちらの書き方でも橙のほうが多い
+    def hue(im):
+        px = [p for p in im.crop((120, 200, 420, 420)).getdata() if p[3] > 60]
+        return sum(1 for p in px if p[0] > p[2]) - sum(1 for p in px if p[2] > p[0])
+
+    assert hue(a) > 0 and hue(b) > 0
+
+
+def test_繰り上げの連作は山場に折れ線を持つ():
+    """**このコマは 09/19 まで画面が字だけでした**（`show` と `board` だけ）。"""
+    from studio import series_kuriage as k
+    for fn in k.ALL:
+        b = fn()
+        res = [g for g in b["segments"] if g.get("tag") == "結論"][0]
+        assert res["viz"]["kind"] == "lines"
+        assert viz.check(res["viz"]) == []
+        # 交わる齢の字が、声の中にそのまま在る（＝ `cue_windows` が当てられる）
+        assert res["viz"]["cross"]["at"] in res["say"]
