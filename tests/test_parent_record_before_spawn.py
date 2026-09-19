@@ -84,3 +84,40 @@ def test_覆る条件が書いてある() -> None:
     block = doc[i : i + 2500]
     assert "覆る条件" in block
     assert "立て直す" in block
+
+
+def test_record_は_模型の台帳も書く() -> None:
+    """**`--record` が書くのは `rounds.jsonl` と `model_choice.jsonl` の 2つ。**
+
+    2026-09-19 18:xx・optimizer・Opus 5・ultracode に直した所の門。
+
+    `docs/trigger_parent.md` は **2か所**（第1節 と「親がやらないこと」）で
+    「`--record` が書く `data/rounds.jsonl`・`data/model_choice.jsonl`」と言っていた。
+    **道具はそうなっていなかった** —— `record_model_choice` は
+    **GO を印字する枝の副作用**で、`--record` の枝は `rounds.jsonl` しか書かない。
+
+    **実測 2026-09-19 18:0x**: `rounds.jsonl` は 09/19 17:4x まで毎周 入っているのに、
+    `model_choice.jsonl` は **09/18 16:59 で止まっていた**（26時間・約17周）。
+    そのあいだ `quota.pace()['subs_per_lap']` は **0.00体**（1周に 1体も立っていない）で、
+    `tests/test_quota_fable_cost_per_sub.py` が赤いまま申し送られていた。
+
+    **印字の副作用に台帳を載せないこと** —— 印字の枝が 1回でも通らなければ、
+    台帳は黙って止まる（しかも当時は `except: pass` で理由も消えていた）。
+
+    **覆る条件**: `--record` を撃たずにサブを立てる形へ戻したら、この検査は
+    守るものを失う（そのときは `rounds.jsonl` も一緒に止まるので、**2つ 同時に黙る**
+    ＝ 片方だけ生きている形より気づける）。
+    """
+    src = NEXT_ROUND.read_text(encoding="utf-8")
+    i = src.index("if args.record:")
+    j = src.index("d = decide(live=args.live)", i)
+    branch = src[i:j]
+    assert "record_model_choice" in branch, (
+        "`--record` の枝が `record_model_choice` を呼んでいません —— "
+        "`docs/trigger_parent.md` が「`--record` が書く」と言っている 2つ目の台帳"
+        "（`data/model_choice.jsonl`）が、また印字の副作用に戻っています"
+    )
+    # **理由を消さないこと**（`except: pass` に戻すと、次に来た側は台帳の欠けしか見られない）
+    assert "pass" not in branch.split("record_model_choice")[1][:400], (
+        "`record_model_choice` の失敗を `pass` で握り潰しています —— 理由を印字すること"
+    )

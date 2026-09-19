@@ -2216,6 +2216,35 @@ def record(role: str, now: datetime | None = None,
     return row
 
 
+def _quota_mod():
+    """`scripts/quota.py` を、**どちらの撃ち方でも**引く（2026-09-19 18:xx）。
+
+    `python scripts/next_round.py` で撃つと `sys.path[0]` は `scripts/` になり、
+    `import scripts.quota` はカレントが repo の根のときにしか通りません
+    （`quota.py` 冒頭が `next_round` 側で踏んだのと同じ形・あちらは 2つ 試しています）。
+    **片方だけ試すと、落ちた回は黙って台帳が欠けます。**
+    """
+    last = None
+    for mod in ("scripts.quota", "quota"):
+        try:
+            return __import__(mod, fromlist=["sub_model"])
+        except Exception as exc:                               # noqa: BLE001
+            last = exc
+    raise last if last else ImportError("quota")
+
+
+def _sub_model_line(role: str) -> tuple[str, str]:
+    """その役の模型と理由（印字と台帳で**同じ1か所**から採る・2026-09-19 18:xx）。
+
+    **答えが出ない回も、模型は返します**（親を止めない）——
+    理由の字にそのまま「答えません」と入るので、台帳を読む側から見えます。
+    """
+    try:
+        return _quota_mod().sub_model(role=role)
+    except Exception as exc:                                   # noqa: BLE001
+        return "fable", f"quota.sub_model が答えません（{str(exc)[:60]}）"
+
+
 def record_many(roles: list[str], now: datetime | None = None) -> list[dict]:
     """**1回の呼びで書く行は、全部 同じ周**（2026-09-02 夜・親が実物で踏んだ）。
 
@@ -2496,6 +2525,40 @@ def main() -> int:
         for row in record_many(want):
             print(f"[next_round] 記録しました: {row['role']} at {row['at']}"
                   f"（周 {row['round']}）")
+        # **模型の台帳も、ここで書きます**（2026-09-19 18:xx・optimizer・Opus 5・ultracode）。
+        # **`docs/trigger_parent.md` は 2か所 で「`--record` が書くのは
+        #   `data/rounds.jsonl`・`data/model_choice.jsonl` の 2つ」と言っています**
+        # （第1節 149行・「親がやらないこと」990行）。**道具はそうなっていませんでした** ——
+        # `record_model_choice` は GO を印字する枝（`--live` の呼び）の副作用で、
+        # `--record` の枝は `rounds.jsonl` しか書きません。
+        # **実測 2026-09-19 18:0x**: `rounds.jsonl` は 09/19 17:4x まで毎周 入っているのに、
+        # `model_choice.jsonl` は **09/18 16:59 で止まっています**（26時間・約17周ぶん 欠け）。
+        # そのあいだ `quota.pace()['subs_per_lap']` は **0.00体**（＝ 1周に 1体も立っていない）で、
+        # `tests/test_quota_fable_cost_per_sub.py::test_pace_のサブの診断も生きている口から出ること`
+        # が赤いまま申し送られていました（`docs/JOURNAL.md` 09/19 17:0x の 5.）。
+        # **これは「死んだ台帳を読んでいる」の 2度目です** —— 1度目（09/11 09:4x）は
+        # `runs.jsonl` が止まった側で、読む口を `model_choice.jsonl` へ移して直しました。
+        # **同じ形がもう一度 起きたのは、書く口が「印字の副作用」だったから**です
+        # （印字の枝が 1回でも通らなければ、台帳は黙って止まる・`except: pass` が理由も消す）。
+        # **`--record` は親が必ず撃つ手**（第1節「立てる前」・検査
+        # `tests/test_parent_record_before_spawn.py`）なので、ここに移すと
+        # **周が記録された回には必ず 1行 入ります** ＝ 「1周に N体」が定義どおりになります。
+        # **二重に書きません** —— GO の枝の側は印字だけにしました（下の `_sub_model_line`）。
+        # **覆る条件**:
+        #  (1) 1周に 2行 入る回が出たら（`margin_series` の `MARGIN_SAME_SEC` が畳めない差で並ぶ）、
+        #      GO の枝に書きが戻っています。どちらか 1か所 に寄せること（**門は 1か所**）。
+        #  (2) 親が `--record` を撃たずにサブを立てる形へ戻ったら、この行は止まります ——
+        #      そのときは `rounds.jsonl` も同時に止まるので、**2つ 一緒に黙ります**
+        #      （片方だけ生きている いまの形より、気づける側）。
+        #  (3) `record_model_choice` が落ちた回は、下の 1行 が理由を印字します。
+        #      **`pass` に戻さないこと**（理由が消えると、次に来た側は台帳の欠けしか見られません）。
+        for role in want:
+            try:
+                _m, _why = _sub_model_line(role)
+                _quota_mod().record_model_choice(role, _m, _why)
+            except Exception as exc:                           # noqa: BLE001
+                print(f"[next_round] **模型の台帳に書けませんでした**（{role}）: "
+                      f"{type(exc).__name__}: {str(exc)[:120]}", file=sys.stderr)
         return 0
 
     d = decide(live=args.live)
@@ -2610,16 +2673,10 @@ def main() -> int:
         # 段と予備の線は `quota.ROLE_TIER` / `quota.FABLE_RESERVE_PCT`、
         # 選んだ理由は `data/model_choice.jsonl` に積む（`quota.record_model_choice`・
         # `docs/OWNER_INSTRUCTION_GATE.md` の 6）。
-        import scripts.quota as _quota
+        # **ここは印字だけです。台帳へ書くのは `--record` の枝**
+        # （2026-09-19 18:xx に移した・理由と覆る条件は あちらの註。**門は 1か所**）。
         for role in roles:
-            try:
-                _m, _why = _quota.sub_model(role=role)
-            except Exception as exc:                           # noqa: BLE001
-                _m, _why = "fable", f"quota.sub_model が答えません（{str(exc)[:60]}）"
-            try:
-                _quota.record_model_choice(role, _m, _why)
-            except Exception:                                  # noqa: BLE001
-                pass
+            _m, _why = _sub_model_line(role)
             print(f"  **model（`kind: {role}`）: \"{_m}\"**（{_why}。"
                   "上限は `quota.FABLE_CAP_PCT`・予備は `quota.FABLE_RESERVE_PCT`）")
         return 0

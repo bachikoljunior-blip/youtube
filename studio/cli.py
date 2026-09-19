@@ -3660,6 +3660,15 @@ def cta_gap_line(rows: list[dict], pubs: list[dict], now: dt.datetime) -> str:
 
 # ---- 出せる在庫（焼いてあって、まだ上げていない本）。**2026-09-18 18:xx・optimizer・Opus・API 0単位** ----
 
+#: **在庫の行に並べる本数の上限**（2026-09-19 19:xx）。
+#: **1日に上げられる本数（いま 6本）より大きいこと** —— 同じにすると、
+#: 「きょうの 6枠 をどう埋めるか」を決める回が、6本目 の先に在る本を 1本も見られません。
+#: **越えたぶんは「…ほか N本」と言います**（隠した事実を隠さない）。
+#: **覆る条件**: `day_upload_cap()` が 12 を越えたら、この数も一緒に上げること
+#: （**数の出どころは 1か所にできません** —— あちらは日枠から、こちらは画面の行数から出る）。
+SHIPPABLE_SHOW = 12
+
+
 def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
     """**焼いてあって まだ上げていない本**を、`schedule` が通る側と通らない側に分けて出す。
 
@@ -3737,15 +3746,31 @@ def shippable_line(rows: "list[dict]", now: "dt.datetime | None" = None) -> str:
                  "（台帳の `critique` が `done: false` ＝ **[real] が残っています**。"
                  "**止めてはいません** —— 出す前に `critique` を撃つかどうかは、その回が決めること）")
     out = [head]
-    for vid in ok[:6]:
+    # **数えた本は、全部 名前を出すこと**（2026-09-19 19:xx・optimizer・Opus 5・ultracode）。
+    # **ここは `[:6]` でした** —— 見出しは「出せる 7本」と数えながら、**並ぶのは 6本**。
+    # 落ちるのは名前の**いちばん後ろ**（`dirs` は名前順）＝ 実測 2026-09-19 18:5x、
+    # `2026-09-21-kuriage-64sai-short`（焼けて・輪も閉じて・上げていない本）が
+    # **見出しの数にだけ在って、行に無い**状態でした。
+    # **それは「1日 6本」を決める回がいちばん読む行です** —— ショートが 4本 しか見えなければ、
+    # その回は「2本 は長尺でしか埋まらない」と読みます（実物は 5本 で、長尺は 1本 でよい）。
+    # ＝ **数と行が食い違う印字は、次の回の判断をそのまま曲げます**
+    # （この repo でいちばん多い壊れ方の、印字の側）。
+    # **上限は残します**（在庫が暴れた回に 50行 出さない）が、**隠したぶんは必ず言います**。
+    # **覆る条件**: 「ほか N本」が 2周 続けて出たら、在庫が枠より速く増えています ＝
+    # 減らすのは行数ではなく**作る側**（そのとき理由を JOURNAL に）。
+    for vid in ok[:SHIPPABLE_SHOW]:
         r = verdict.get(vid) or {}
         if r.get("done") is False:
             out.append(f"    **輪が開いている** {vid}"
                        f"（`critique` `done: false`・[real] {r.get('n_real', '?')}件 ＝ 出す前に見ること）")
         else:
             out.append(f"    出せる       {vid}")
-    for vid in stale[:6]:
+    if len(ok) > SHIPPABLE_SHOW:
+        out.append(f"    …ほか **{len(ok) - SHIPPABLE_SHOW}本**（`ls {common.WORK}` で全部）")
+    for vid in stale[:SHIPPABLE_SHOW]:
         out.append(f"    焼き直す     {vid}（台本が build のあとに動いた ＝ `schedule` は止めます）")
+    if len(stale) > SHIPPABLE_SHOW:
+        out.append(f"    …ほか 焼き直しが要る **{len(stale) - SHIPPABLE_SHOW}本**")
     out.append(form_priority_line(ok, form_of_id))
     return "\n".join(x for x in out if x)
 
