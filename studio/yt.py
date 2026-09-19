@@ -6,6 +6,9 @@ videos.list 1・playlistItems.list 1。
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
+import os
 from pathlib import Path
 
 import google_auth_httplib2
@@ -16,7 +19,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 from . import asp, meter
-from .common import JST, env, now_jst
+from .common import JST, WORK, env, now_jst
 
 _svc = None
 
@@ -136,25 +139,156 @@ def _row(v: dict) -> dict:
 
 _ALL: list[dict] | None = None
 
+# ============================================================================
+# **全本の写しを、周（プロセス）をまたいで持つ**（2026-09-19 10:xx・optimizer・Fable 5.1・ultracode）。
+#
+# **なぜ**（実測・`data/studio/api.jsonl`・09/18 16:00 〜 09/19 09:15 JST）:
+#   `all_videos()` は同じプロセスでは 1度 しか引かないが、**プロセスごとには毎回 引いていた**。
+#   uploads は 16ページ ＝ playlistItems.list 16 ＋ videos.list 16 ＝ **32単位/回**。
+#   きょうは **25回**（`status`・`schedule` 5本・`measure`・`catchup`・`asp`…）＝ **816単位**
+#   （playlistItems.list 498 ＋ videos.list 318）。17:11〜17:17 の 6分 に 4回（128単位）。
+#   きょうの実測 10,330単位 のうち、上げた本 5本 が 8,000・**この写しが 816** ＝ 上げる以外の最大の口。
+#   その結果 09:03 に 403 が出て、16:00 まで 7時間 `status`／`measure` が読めなかった
+#   （`stall` が「停止」と印字した当のもの）。**同じ物を読み直すのに、毎日 0.5本ぶん を払っていた**。
+#
+# **型**: file `WORK/yt_cache/all_videos.<token の指紋>.json`・TTL `CACHE_TTL_H`（既定 6時間・環境変数で上書き）。
+#   - **こちらが書いた変化は、こちらが写しに書く**（`upload` → 1行 足す・`reschedule`／`make_private`／`update_meta` → その行を直す）
+#     ＝ 同じ周の `schedule` 5本 が、直前に上げた本を「きょうの枠」に数える（`today_lineup`）。
+#   - **刻の過ぎた予約は public と読む**（`_normalize`）。YouTube は刻に privacy を public にするが、写しは知らない。
+#     出たかどうかの本当の確かめは `pubcheck`（oEmbed・0単位）の側 —— **この写しで「出た」を判定しないこと**。
+#   - **再生の数は写しから読まない**: `measure`／`status` は `refresh_stats()`（50本 で **1単位**）で読み直してから使う。
+#     写しの `views` は、いちばん最後に読み直した時刻の値（`_load_cache` はそれを動かさない）。
+#   - **token が替わったら別の file**（指紋が変わる ＝ 別チャンネルの写しを読まない・GOAL (4-f) の型）。
+#   - **pytest の下では file を読まない・書かない**（`STUDIO_YT_CACHE_DIR` を明示したときだけ）—— 検査の偽の svc の返りを
+#     本物の写しに混ぜないため（`common` の台帳の門と同じ型）。
+#
+# **覆る条件**:
+#   (1) **写しに無い本が YouTube 側で動いた**形（オーナーが Studio で消した・別の道具が古い private の本に刻を打った）が
+#       出たら、TTL を縮めるのではなく、その口が `cache_invalidate()` を呼ぶ形にする（外の手なら `status` の
+#       `pubcheck` が「出ていない」を鳴らす ＝ そこで `all_videos(refresh=True)`）。
+#   (2) `refresh_stats` を通さずに写しの `views` を台帳へ書く呼び手が出たら、それは同じ数を別の時刻で書く穴 ＝
+#       `cmd_measure` の型（読み直してから書く）に揃えること。
+#   (3) playlistItems.list ＋ videos.list の実測が 1日 150単位 を越える日が 2日 続いたら、TTL より先に
+#       「誰が `refresh=True` を撃っているか」を `api.jsonl` の束で数えること（この註の実測の型）。
+# ============================================================================
 
-def all_videos(refresh: bool = False) -> list[dict]:
-    """**チャンネルの全本**（新しく上げた順・ID で重複を落とす）。同じ回では1度だけ引く。
+#: 写しの置き場（`STUDIO_YT_CACHE_DIR` で差し替え・検査は tmp へ向ける）。
+CACHE_DIR = Path(os.environ.get("STUDIO_YT_CACHE_DIR") or (WORK / "yt_cache"))
+#: 写しの寿命（時間）。**こちらの書きは写しに反映するので、寿命は「外の手」のための物**（覆る条件 (1)）。
+CACHE_TTL_H = float(os.environ.get("STUDIO_YT_CACHE_H") or 6.0)
 
-    755本 で playlistItems 16 + videos.list 16 ＝ **約 32単位**（日枠 10,000）。
 
-    **なぜ「上げた順の先頭 N本」では駄目か**（2026-09-07 16:4x・optimizer・Opus が実測）:
-    uploads の並びは**上げた順**で、**公開した順ではない**。08/16〜08/19 に上げて private のまま
-    置いてあった旧作りの本に、あとから publishAt が付いて公開されると、その本は
-    uploads の 690番目あたりに居るので `recent_videos(60)` には**永久に入らない**。
-    実測: 09/05 に 5本・09/06 に 8本・09/07 に 1本（`PhQ2KvuQASQ` 09:00・73回）が
-    こうして公開されていたのに、`status` の「きょうの枠」にも「直近 公開 10本」にも
-    出ず、`measure` は 1行も台帳に書いていなかった（6本 とも measured 0行）。
-    §6 の `scheduled_all()` は 09/06 02:1x に同じ穴を private 側だけ塞いだもので、
-    **public 側は空いたままだった。**
-    """
+def _cache_enabled() -> bool:
+    """検査（pytest）の下では、置き場を明示したときだけ使う（偽の svc の返りを本物の写しに混ぜない）。"""
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("STUDIO_YT_CACHE_DIR"):
+        return False
+    return True
+
+
+def cache_path() -> Path:
+    key = hashlib.sha256(os.environ.get("YT_REFRESH_TOKEN", "").strip().encode("utf-8")).hexdigest()[:12]
+    return CACHE_DIR / f"all_videos.{key}.json"
+
+
+def _normalize(rows: list[dict], now: dt.datetime | None = None) -> list[dict]:
+    """刻の過ぎた予約を public と読む（YouTube が刻に変える側を、写しの上でも同じにする）。"""
+    now = now or now_jst()
+    for v in rows:
+        if v.get("privacy") != "public" and v.get("publish_at"):
+            try:
+                if when(v) <= now:
+                    v["privacy"] = "public"
+            except ValueError:
+                pass
+    return rows
+
+
+def _load_cache() -> list[dict] | None:
+    """寿命の内なら写しを返す。無い・古い・読めない ＝ None（呼び手が引く）。"""
+    if not _cache_enabled():
+        return None
+    try:
+        d = json.loads(cache_path().read_text(encoding="utf-8"))
+        at = dt.datetime.fromisoformat(d["at"])
+        if (now_jst() - at).total_seconds() > CACHE_TTL_H * 3600:
+            return None
+        rows = d["rows"]
+        if not isinstance(rows, list):
+            return None
+        return _normalize(rows)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _save_cache(rows: list[dict], at: dt.datetime | None = None) -> None:
+    if not _cache_enabled():
+        return
+    try:
+        cache_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_path().with_suffix(".tmp")
+        tmp.write_text(json.dumps({"at": (at or now_jst()).isoformat(), "rows": rows}, ensure_ascii=False),
+                       encoding="utf-8")
+        tmp.replace(cache_path())
+    except OSError:
+        pass
+
+
+def cache_age_h() -> float | None:
+    """写しの齢（時間）。無ければ None（`status` が印字する側・**0単位**）。"""
+    try:
+        d = json.loads(cache_path().read_text(encoding="utf-8"))
+        return (now_jst() - dt.datetime.fromisoformat(d["at"])).total_seconds() / 3600
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def cache_invalidate() -> None:
+    """写しを捨てる（次の `all_videos()` が引き直す・32単位）。"""
     global _ALL
-    if _ALL is not None and not refresh:
-        return _ALL
+    _ALL = None
+    try:
+        cache_path().unlink()
+    except OSError:
+        pass
+
+
+def _cache_touch() -> None:
+    """プロセスの写しを file へ書き戻す（`_ALL` を直したあと）。**寿命の刻は動かさない**。"""
+    if _ALL is None:
+        return
+    keep = None
+    try:
+        keep = dt.datetime.fromisoformat(json.loads(cache_path().read_text(encoding="utf-8"))["at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    _save_cache(_ALL, keep)
+
+
+def cache_add(row: dict) -> None:
+    """こちらが上げた本を写しの先頭に足す（`upload` の直後・**0単位**）。写しが無ければ何もしない。"""
+    if _ALL is None:
+        return
+    if any(v["id"] == row["id"] for v in _ALL):
+        cache_patch(row["id"], **{k: x for k, x in row.items() if k != "id"})
+        return
+    _ALL.insert(0, row)
+    _cache_touch()
+
+
+def cache_patch(video_id: str, **fields) -> bool:
+    """写しのその行を直す（`reschedule`／`make_private`／`update_meta`・**0単位**）。行が無ければ False。"""
+    if _ALL is None:
+        return False
+    for v in _ALL:
+        if v["id"] == video_id:
+            v.update(fields)
+            _cache_touch()
+            return True
+    return False
+
+
+def _pull_all() -> list[dict]:
+    """YouTube から全本を引く（uploads 全ページ ＋ videos.list・**約 32単位**）。"""
     up = channel()["uploads"]
     ids, seen, tok = [], set(), None
     while True:
@@ -171,8 +305,60 @@ def all_videos(refresh: bool = False) -> list[dict]:
     for i in range(0, len(ids), 50):
         r = svc().videos().list(part="snippet,status,statistics,contentDetails", id=",".join(ids[i:i + 50])).execute()
         out += [_row(v) for v in r["items"]]
-    _ALL = out
     return out
+
+
+def refresh_stats(video_ids: list[str]) -> int:
+    """写しのその本たちの **再生・高評価・コメント数** を読み直す（`videos.list` **50本 で 1単位**）。返りは撃った回数。
+
+    写しの `views` は最後に読み直した時刻の値なので、**台帳へ書く前・印字する前に必ずここを通す**
+    （`cmd_measure`・`cmd_status`）。写しが無い（`_ALL is None`）なら 0回 で戻る（検査が `published` を差し替える形）。
+    """
+    if _ALL is None:
+        return 0
+    have = {v["id"]: v for v in _ALL}
+    ids = [i for i in video_ids if i in have]
+    n = 0
+    for i in range(0, len(ids), 50):
+        r = svc().videos().list(part="statistics", id=",".join(ids[i:i + 50])).execute()
+        n += 1
+        for item in r.get("items", []):
+            st = item.get("statistics", {})
+            views, absent = views_of(st)
+            have[item["id"]].update({"views": views, "views_absent": absent,
+                                     "likes": int(st.get("likeCount", 0)),
+                                     "comments": int(st.get("commentCount", 0))})
+    if n:
+        _cache_touch()
+    return n
+
+
+def all_videos(refresh: bool = False) -> list[dict]:
+    """**チャンネルの全本**（新しく上げた順・ID で重複を落とす）。同じ回では1度だけ引き、**周をまたいでは写し**（上の段）。
+
+    755本 で playlistItems 16 + videos.list 16 ＝ **約 32単位**（日枠 10,000）。**写しが在れば 0単位**。
+
+    **なぜ「上げた順の先頭 N本」では駄目か**（2026-09-07 16:4x・optimizer・Opus が実測）:
+    uploads の並びは**上げた順**で、**公開した順ではない**。08/16〜08/19 に上げて private のまま
+    置いてあった旧作りの本に、あとから publishAt が付いて公開されると、その本は
+    uploads の 690番目あたりに居るので `recent_videos(60)` には**永久に入らない**。
+    実測: 09/05 に 5本・09/06 に 8本・09/07 に 1本（`PhQ2KvuQASQ` 09:00・73回）が
+    こうして公開されていたのに、`status` の「きょうの枠」にも「直近 公開 10本」にも
+    出ず、`measure` は 1行も台帳に書いていなかった（6本 とも measured 0行）。
+    §6 の `scheduled_all()` は 09/06 02:1x に同じ穴を private 側だけ塞いだもので、
+    **public 側は空いたままだった。**
+    """
+    global _ALL
+    if _ALL is not None and not refresh:
+        return _ALL
+    if not refresh:
+        cached = _load_cache()
+        if cached is not None:
+            _ALL = cached
+            return _ALL
+    _ALL = _pull_all()
+    _save_cache(_ALL)
+    return _ALL
 
 
 def published(within_h: float | None = None) -> list[dict]:
@@ -235,6 +421,10 @@ def upload(path: Path, title: str, description: str, tags: list[str], publish_at
     resp = None
     while resp is None:
         _, resp = req.next_chunk()
+    # **こちらが上げた本は、こちらが写しに足す**（同じ周の次の `schedule` が「きょうの枠」に数える・0単位）。
+    cache_add({"id": resp["id"], "title": title, "privacy": "private", "publish_at": status.get("publishAt"),
+               "published_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "duration": "", "views": 0, "views_absent": False, "likes": 0, "comments": 0})
     return resp["id"]
 
 
@@ -391,6 +581,7 @@ def update_meta(video_id: str, title: str, description: str, tags: list[str]) ->
         "title": title, "description": description, "tags": [t[:30] for t in tags][:15],
         "categoryId": "27", "defaultLanguage": "ja", "defaultAudioLanguage": "ja"}}).execute()
     sn = resp.get("snippet") or {}
+    cache_patch(video_id, title=sn.get("title") or title)
     return {"title": sn.get("title"), "description": sn.get("description"),
             "tags": sn.get("tags"), "ok": sn.get("title") == title}
 
@@ -418,6 +609,7 @@ def make_private(video_id: str) -> None:
     """予約を外して private のまま残す（消さない。オーナー「消さなくて良いよ」）。"""
     svc().videos().update(part="status", body={"id": video_id, "status": {
         "privacyStatus": "private", "selfDeclaredMadeForKids": False}}).execute()
+    cache_patch(video_id, privacy="private", publish_at=None)
 
 
 def reschedule(video_id: str, publish_at: dt.datetime) -> dict:
@@ -451,6 +643,8 @@ def reschedule(video_id: str, publish_at: dt.datetime) -> dict:
         r = svc().videos().list(part="status", id=video_id).execute()
         got = ((r.get("items") or [{}])[0].get("status") or {}).get("publishAt")
     stuck = bool(got) and abs(_rfc3339(got) - publish_at) <= dt.timedelta(minutes=1)
+    if stuck:
+        cache_patch(video_id, privacy="private", publish_at=got)
     return {"want": want, "got": got, "stuck": stuck}
 
 

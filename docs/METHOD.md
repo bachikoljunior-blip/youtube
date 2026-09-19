@@ -1508,6 +1508,34 @@ derivation は `docs/JOURNAL.md` 2026-09-19 08:xx。検査は `tests/test_studio
 
 derivation は `docs/JOURNAL.md` 2026-09-19 09:xx。検査は `tests/test_studio_channel_desc.py`（**10件**・陽性対照 2件・陰性対照 2件）。
 
+**全本の写し（`yt.all_videos()`）は周をまたいで持つ。再生の数は写しから読まず `yt.refresh_stats()`（1単位）で読み直してから台帳へ**（2026-09-19 10:xx）。
+
+### **【2026-09-19 10:xx】日枠の 8% を、同じ物を読み直すのに毎日 払っていた —— 全本の写しを周をまたいで持つ**（optimizer・Fable 5.1・ultracode・1周 1体・**Data API 0単位**）
+
+**事実（`data/studio/api.jsonl`・09/18 16:00 〜 09/19 09:15 JST・撃った所で数えた）**:
+ - きょうの実測 10,330単位 の内訳: videos.insert 8,000（5本）／**playlistItems.list 498 ＋ videos.list 318 ＝ 816**／videos.update 550／channels.list 102／その他。
+ - その 816 は `yt.all_videos()` ＝ uploads 16ページ ＋ videos.list 16 ＝ **32単位/回 × 25回**（プロセスごとに引き直す作り。
+   `status`・`schedule` 5本・`measure`・`catchup`・`asp`… が 1回ずつ。17:11〜17:17 の 6分 に 4回）。
+ - 09:03 の 403 → 16:00 まで 7時間、`status`／`measure` が読めず `stall` が「停止」と印字した。**押し出したのは、この 816。**
+
+**決め（2つ）**:
+ (1) **写しは file**（`WORK/yt_cache/all_videos.<token の指紋>.json`・寿命 6時間）。こちらの書き（`upload`／`reschedule`／`make_private`／`update_meta`）は
+     こちらが写しへ書く ＝ 同じ周の `schedule` 5本 が直前の本を「きょうの枠」に数える。刻の過ぎた予約は写しの上で public と読む
+     （出たかの本当の確かめは `pubcheck` の oEmbed のまま）。token が替われば別の file（別チャンネルの写しを読まない）。
+ (2) **再生の数は写しから読まない** —— `cmd_measure`・`cmd_status` は `yt.refresh_stats()`（50本 で 1単位）で読み直してから台帳へ書く・印字する。
+
+**この決めが動かす数**: 816単位/日 → **約 32 × （寿命 6時間 ＝ 4回）＋ 1単位 × 周の数 ≒ 150単位/日**。**浮くのは約 650単位/日** ＝
+5本 ＋ コメント欄 250 ＋ 説明欄 51 ＋ 返信 を撃っても 403 に当たらない側（きょうは 10,330 で 330 超えていた）。
+**6本目（1,600）には届きません**（浮き 650 ＜ 1,600）—— 6本目 を狙うなら、次に落とすのは thumbnails.set（250/日・ショートは自動の絵）と
+コメント欄の塊（250/日・Shorts では押せない字）で、それでも 1,150 ＝ **まだ届かない**。**この段で 6本目 を追わないこと**（数が合わない）。
+
+**覆る条件**:
+ (20) 写しに無い動きが YouTube 側で起きた形（Studio で消した・別の道具が刻を打った）が出たら、寿命を縮めるのではなく その口が `cache_invalidate()` を呼ぶ形にする。
+ (21) `refresh_stats` を通さず写しの `views` を台帳へ書く呼び手が出たら、`cmd_measure` の型に揃える（同じ数を別の刻で書く穴）。
+ (22) playlistItems.list ＋ videos.list の実測が 1日 150単位 を越える日が 2日 続いたら、誰が `refresh=True` を撃っているかを `api.jsonl` の束で数える。
+
+derivation は `docs/JOURNAL.md` 2026-09-19 10:xx。検査は `tests/test_studio_yt_cache.py`（**11件**）。
+
 
 **【2026-09-18 05:xx】訊く数は 3つ です。その 0つ 目は「向き」** ——
 **(0) `channel_trajectory_line`（先週より配りが増えたか）→ (i) `form_yield_line` → (ii) `long_per_video_line`。**

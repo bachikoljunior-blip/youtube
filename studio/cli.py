@@ -874,6 +874,9 @@ def cmd_status(a):
         # `viewer_comments`）だけを畳みます。**目盛りは上で残っています。**
         return
     vids = yt.all_videos()
+    # **写しの再生は最後に読み直した刻の値**（`yt.py` の写しの段）＝ 印字・`views_over`・`zero_probe` の前に、
+    # 7日 以内の本だけ 1単位 で読み直す（50本 で 1単位・写しが無い周は 0回）。
+    yt.refresh_stats([v["id"] for v in yt.published(MEASURE_WITHIN_H)])
     sids = studio_video_ids()
     print(f"チャンネル: 登録 {ch['subscriberCount']}・総再生 {ch['viewCount']}・本数 {ch['videoCount']}")
     # 口が替わっていたら名指し（`channel_switch_line` の註・**`record_channel` より前**）。
@@ -1993,6 +1996,9 @@ def cmd_measure(a):
     # `trend.pair_gap` の註 —— この回に、前の周の測りの 7.1分 後に測って分母を動かせなかった）。
     print(trend.pair_gap_line(ledger_rows()))
     pub = yt.published(MEASURE_WITHIN_H)
+    # **写しから来た `views` は古い**（`yt.py` の写しの段・覆る条件 (2)）＝ 台帳へ書く前に 1単位 で読み直す。
+    # `settle_stats` は束（50本）に入る本しか読まないので、束の外の本はここでしか新しくならない。
+    yt.refresh_stats([v["id"] for v in pub])
     # **測る本は、読み直して落ち着かせてから台帳へ**（2026-09-09 19:1x・optimizer・Opus。
     # **09/10 06:3x に「齢が浅い本は」から広げた** —— 上の `SETTLE_MAX_IDS` の註）。
     # `videos.list` は伸びている本を、遅れの違う複数の複製から返す（`yt.settle_stats` の註と実測）。
