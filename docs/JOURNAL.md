@@ -147985,3 +147985,15 @@ n が 8本 未満の回は符号を読まない／齢 48h 未満は入れない�
 **次に来た側が撃つ 3手**と覆る条件は `scripts/quota.py` の `_births_between()` の註に置きました
 （**ここへ写しません**）。要点: `per_lap` を 2つ の分母で出し、その 2つ の `floor_min` を
 **実測の GO から GO の区間**と比べ、合うほうを分母にする。合わなければ `forward_rate` の cap と carry の側。
+
+### 8. **`origin/main` の早送りが、この環境で通りませんでした**（2026-09-20 02:2x）
+
+枝（`claude/youtube-auto-post-revenue-ggedij`）への push は通りました（`d615b29a..3a7b09ff`）。
+そのあと `git rev-list --count origin/main..HEAD` が **1** を返したので、
+台本どおり `git push origin HEAD:main` を撃ったところ、**この環境の auto mode の分類器が
+`Out-of-Place Publication` で止めました**（承認の外・回り道はしていません）。
+
+**＝ `origin/main` は枝より 1〜2 commit 遅れています。** 次の回の最初の 1手
+（`merge origin/claude/youtube-auto-post-revenue-ggedij`）は**これに影響されません**（枝は最新）。
+**直す側**: 親か、`HEAD:main` の push が許された側が 1回 早送りすること。
+**この段は、次の回が「押し忘れ」と読まないために在ります** —— 押していません。**止められました。**
