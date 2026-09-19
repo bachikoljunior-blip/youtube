@@ -141,6 +141,15 @@ def test_コメントの塊にも広告の表示が在る():
     assert "af.moshimo.com" in b
 
 
+def test_コメントの塊の道順はリンク欄が無くても当たる():
+    # リンク欄はオーナーの手（窓【2】）。機械が置ける面（説明欄）はスマホでは「…もっと見る」の中に出るので、
+    # コメントの道順は「もっと見る」で言う（`asp.COMMENT_NOTE` の註）。説明欄の `PROFILE_NOTE` は drift の門があるので別の字。
+    b = asp.comment_block()
+    assert "もっと見る" in b
+    assert asp.COMMENT_NOTE in b
+    assert asp.PROFILE_NOTE not in b
+
+
 def test_コメントの塊は上限の内側():
     assert len(asp.comment_block()) <= asp.COMMENT_LIMIT
 
