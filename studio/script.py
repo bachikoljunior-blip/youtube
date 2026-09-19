@@ -492,6 +492,10 @@ def stale_note_quotes(notes: str, says: list[str]) -> list[str]:
 #   1 … 板を行ごとに `|` で継ぐ（12:3x）
 #   2 … 板を継いでから署名する（13:1x。行の割り直しでは動かない ＝ 覆る条件 (1)）
 LOOP_SIG_VERSION = 2
+#: `Script.family_sig` の版（作り方を変えたら上げること ＝ `LOOP_SIG_VERSION` と同じ理由）。
+FAMILY_SIG_VERSION = 1
+#: 型のあいだで動くのは**数だけ** ＝ 家族の指紋は数を落としてから取る（`Script.family_sig`）。
+_DIGITS_ANY = re.compile(r"[0-9０-９〇一二三四五六七八九十百千万億]+")
 
 # 焼き（mp4）の指紋の**作り方**の版（`Script.build_sig`）。**作り方を変えたら必ず上げること**
 # （`LOOP_SIG_VERSION` と同じ理由 —— 上げないと古い刻印と比べて「本文が動いた」と嘘を言う）。
@@ -643,6 +647,36 @@ class Script(BaseModel):
                          + (f"\x1f{_viz_key(g.viz)}" if g.viz else "")
                          for g in self.segments)
         return f"{LOOP_SIG_VERSION}:{hashlib.sha256(body.encode('utf-8')).hexdigest()[:12]}"
+
+    def family_sig(self) -> str:
+        """**同じ台本の型から作った本**の指紋（2026-09-19 17:xx・optimizer・Opus 5・ultracode）。
+
+        なぜ: `series_kuriage` は **1つ の型から 5本**（60〜64歳）を作ります。本文は
+        **数だけ違って、文は同じ**です。ところが `critic.repeat_reals` は `id` で数えるので、
+        **連作のあいだの繰り返しが 1度も見えません** —— 実測 2026-09-19 15:1x〜17:xx:
+
+            コマ8「毎月15万円は減り600円の250倍…」  60歳 nitpick ／ 61歳 **real** ／ 62歳 **real**
+                                                  63歳 nitpick ／ 64歳 nitpick
+
+        **同じ文に、同じ周で、別々の札が立ちました。** `not_converging` の門は 3 で、
+        **家族で数えれば この周に届いていました**（61歳・62歳 ＋ 60歳 の過去の real）。
+        `id` で数えるかぎり、5本 は永久に「1周目」のままです。
+
+        **指紋の作り方**: `say` を継ぎ、**数字を全部 落として**から署名します
+        （半角・全角の 0-9 と 〇一二三四五六七八九十百千万億。歳も月数も額も、型のあいだで動くのは数だけ）。
+        `show`・`sub`・`board` は入れません —— **声が同じなら同じ型**で、
+        画面の字は同じ型でも本ごとに割り方が変わります（入れると家族が割れます）。
+
+        **覆る条件**:
+         (1) 数を落としたら**別の題材の本が同じ指紋になった**ら、範囲が狭すぎる ＝ `tag` の列を足すこと。
+         (2) 同じ連作の本が**別々の指紋**になったら（型の側を書き換えた回）、それは
+             **別の型**です ＝ そのときは家族が割れて当たり前で、直す所はありません。
+         (3) この門で閉じた本の 48h が、閉じるまで回した本の中位を 2本 続けて下回ったら、
+             `critic.REPEAT_GATE` の覆る条件 (1) と同じ扱い（門を上げる）。
+        """
+        import hashlib
+        body = _DIGITS_ANY.sub("", "\n".join(g.say or "" for g in self.segments))
+        return f"{FAMILY_SIG_VERSION}:{hashlib.sha256(body.encode('utf-8')).hexdigest()[:12]}"
 
     def build_sig(self, image=None) -> str:
         """**焼いた mp4 が、いまの本文で焼かれた物かの指紋**（2026-09-11 20:5x・hourly・Opus が足した）。

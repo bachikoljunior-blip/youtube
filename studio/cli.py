@@ -1324,7 +1324,10 @@ def cmd_critique(a):
     done = critic.loop_done(c)
     # **札で閉じない周は、台帳の `wheres` で閉じられるか見ます**（2026-09-15 19:1x・`critic.not_converging`）
     # —— 直して指紋が動いたのに同じ所がまた 1番目に立つなら、動いていないのは判じる側です。
-    stuck, why = (False, "") if done else critic.not_converging(a.id, c)
+    # **連作は 1つ の型から 5本** ＝ 同じ文に立った real は、どの本で立っても同じ 1つ の所です
+    # （`script.family_sig` の註・2026-09-19 17:xx）。**古い行には `family` が無い**ので、
+    # 家族として数えられるのは この周より後に書いた行だけです。
+    stuck, why = (False, "") if done else critic.not_converging(a.id, c, family=s.family_sig())
     print("輪:", "閉じてよい（1番目が言いがかり）" if done else
           ("閉じてよい（同じ所が何度も立つ ＝ 判じる側が動いていない）" if stuck else "まだ（1番目が real）"))
     if why:
@@ -1346,7 +1349,8 @@ def cmd_critique(a):
     # 20行 たまっても 0件 なら、この欄は外してよい（critique の promt は長く、英語へ倒れにくい側）。
     ledger("critique", a.id, understand=c.get("understand"),
            n_real=sum(1 for i in c.get("items") or [] if i.get("severity") == "real"),
-           done=done, sig=s.loop_sig(), lang=critic.lang_of(c.get("takeaway")),
+           done=done, sig=s.loop_sig(), family=s.family_sig(),
+           lang=critic.lang_of(c.get("takeaway")),
            wheres=[{"where": (it.get("where") or "")[:40], "sev": it.get("severity")} for it in c.get("items") or []])
     return 0 if done else 1
 

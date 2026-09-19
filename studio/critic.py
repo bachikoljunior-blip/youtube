@@ -302,15 +302,24 @@ def _koma_no(where: str) -> str:
     return m.group(1) if m else (where or "")[:12]
 
 
-def repeat_reals(vid: str, rows=None) -> dict:
+def repeat_reals(vid: str, rows=None, family: str = "") -> dict:
     """その本の**過去の** critique の行から、`real` で挙がった所 → それを挙げた指紋（`sig`）の集合。
 
     指紋で数えるのは、**同じ本文で 2回 挙がった**のを 2回 と数えないためです
-    （同じ本文なら、同じ所が挙がるのは当たり前で、閉じない理由になりません）。"""
+    （同じ本文なら、同じ所が挙がるのは当たり前で、閉じない理由になりません）。
+
+    **`family` を渡すと、同じ台本の型から作った本も数えます**（2026-09-19 17:xx・`script.family_sig`）。
+    連作は **1つ の型から 5本**で、本文は数だけ違います ＝ **同じ文に立った real は、
+    どの本で立っても同じ 1つ の所**です。`id` だけで数えていたあいだ、5本 は永久に「1周目」でした
+    （実測: コマ8 の同じ文が 60歳 nitpick・61歳 real・62歳 real・63歳 nitpick・64歳 nitpick）。
+    **古い台帳の行には `family` が在りません** ＝ この口は**この周より後の行だけ**を家族として数えます。
+    """
     from .common import ledger_rows
     out: dict = {}
     for r in (ledger_rows() if rows is None else rows):
-        if r.get("event") != "critique" or r.get("id") != vid:
+        if r.get("event") != "critique":
+            continue
+        if r.get("id") != vid and not (family and r.get("family") == family):
             continue
         for w in r.get("wheres") or []:
             if w.get("sev") != "real":
@@ -319,13 +328,16 @@ def repeat_reals(vid: str, rows=None) -> dict:
     return out
 
 
-def not_converging(vid: str, c: dict, rows=None) -> tuple:
-    """(閉じてよいか, 印字する1行)。`loop_done` が閉じない周にだけ意味があります。"""
+def not_converging(vid: str, c: dict, rows=None, family: str = "") -> tuple:
+    """(閉じてよいか, 印字する1行)。`loop_done` が閉じない周にだけ意味があります。
+
+    `family`（`script.family_sig`）を渡すと、**同じ型から作った連作の本**も一緒に数えます。
+    """
     items = c.get("items") or []
     if not items or items[0].get("severity") == "nitpick":
         return False, ""
     k = _koma_no(items[0].get("where") or "")
-    sigs = repeat_reals(vid, rows).get(k, set())
+    sigs = repeat_reals(vid, rows, family).get(k, set())
     if len(sigs) >= REPEAT_GATE:
         return True, (f"1番目の所（コマ{k}）は、**別々の本文 {len(sigs)}つ** で real に挙がっています"
                       f"（門 {REPEAT_GATE}）＝ 直しても同じ所がまた立つ ＝ **動いていないのは判じる側**"
